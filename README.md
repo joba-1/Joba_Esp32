@@ -5,7 +5,7 @@ A modular ESP32 firmware built with PlatformIO and Arduino framework, featuring 
 ## Features
 
 - **WiFiManager** - Captive portal for WiFi configuration
-- **Logging** - Centralized logging with configurable levels
+- **Logging** - Centralized logging with serial output, optional syslog, and boot/runtime log levels
 - **Time Sync** - NTP-based time synchronization
 - **Web Server** - Async HTTP server with REST API
 - **OTA Updates** - Over-the-air firmware updates
@@ -129,12 +129,28 @@ All configuration is done via build flags in `platformio.ini`:
 |-----------|---------|-------------|
 | `WIFI_AP_NAME` | ESP32-Config | Config portal AP name |
 | `WIFI_CONFIG_PORTAL_TIMEOUT` | 180 | Portal timeout (seconds) |
-| `LOG_LEVEL` | 4 | Log level (0-5) |
+| `LOG_SERIAL_BOOT_LEVEL` | 4 | Serial log level during boot (0-5) |
+| `LOG_SERIAL_RUNTIME_LEVEL` | 3 | Serial log level after boot (0-5) |
+| `LOG_BOOT_DURATION_MS` | 30000 | Boot phase duration (ms) |
+| `LOG_SYSLOG_LEVEL` | 3 | Syslog log level (0-5) |
+| `LOG_SYSLOG_SERVER` | "" | Syslog server IP (empty=disabled) |
+| `LOG_SYSLOG_PORT` | 514 | Syslog UDP port |
 | `NTP_SERVER1` | pool.ntp.org | Primary NTP server |
 | `TIMEZONE` | CET-1CEST... | POSIX timezone |
 | `WEBSERVER_PORT` | 80 | HTTP server port |
 | `OTA_HOSTNAME` | esp32-device | mDNS hostname |
 | `OTA_PASSWORD` | otapassword | OTA update password |
+
+### Enabling Syslog
+
+To send logs to a syslog server, set the server IP in `platformio.ini`:
+
+```ini
+build_flags =
+    -D LOG_SYSLOG_SERVER=\"192.168.1.100\"
+```
+
+Logs are sent via UDP in RFC 3164 BSD syslog format.
 
 ## Web Interface
 

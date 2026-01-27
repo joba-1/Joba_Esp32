@@ -93,19 +93,36 @@ public:
 
 ### 2. LoggingFeature
 
-**Purpose:** Centralized logging with configurable output (Serial, remote syslog, etc.)
+**Purpose:** Centralized logging with serial output, parallel syslog output, and configurable boot/runtime log levels.
 
-**Library:** None (custom implementation) or `thijse/ArduinoLog`
+**Library:** None (custom implementation)
+
+**Features:**
+- Separate log levels for serial and syslog outputs
+- Boot phase with higher verbosity, automatically transitioning to runtime level
+- Parallel UDP syslog output (RFC 3164 BSD format)
+- Timestamp support with NTP time or millis() fallback
 
 **Constructor Parameters:**
 - `uint32_t baudRate` - Serial baud rate
-- `uint8_t logLevel` - Log level (0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=VERBOSE)
+- `uint8_t serialBootLogLevel` - Log level for serial during boot phase
+- `uint8_t serialRuntimeLogLevel` - Log level for serial after boot phase ends
+- `uint32_t bootDurationMs` - Duration of boot phase in milliseconds
+- `uint8_t syslogLogLevel` - Log level for syslog output
+- `const char* syslogServer` - Syslog server hostname/IP (empty string = disabled)
+- `uint16_t syslogPort` - Syslog server UDP port
+- `const char* hostname` - Device hostname for syslog messages
 - `bool enableTimestamp` - Include timestamp in log messages
 
 **Build Flags:**
 ```ini
 -D LOG_BAUD_RATE=115200
--D LOG_LEVEL=4
+-D LOG_SERIAL_BOOT_LEVEL=4
+-D LOG_SERIAL_RUNTIME_LEVEL=3
+-D LOG_BOOT_DURATION_MS=30000
+-D LOG_SYSLOG_LEVEL=3
+-D LOG_SYSLOG_SERVER=\"\"
+-D LOG_SYSLOG_PORT=514
 -D LOG_ENABLE_TIMESTAMP=true
 ```
 
@@ -113,8 +130,17 @@ public:
 ```cpp
 class LoggingFeature : public Feature {
 public:
-    LoggingFeature(uint32_t baudRate, uint8_t logLevel, bool enableTimestamp);
+    LoggingFeature(uint32_t baudRate,
+                   uint8_t serialBootLogLevel,
+                   uint8_t serialRuntimeLogLevel,
+                   uint32_t bootDurationMs,
+                   uint8_t syslogLogLevel,
+                   const char* syslogServer,
+                   uint16_t syslogPort,
+                   const char* hostname,
+                   bool enableTimestamp);
     void setup() override;
+    void loop() override;  // Handles boot-to-runtime transition
     const char* getName() const override { return "Logging"; }
     
     void error(const char* format, ...);
@@ -124,6 +150,13 @@ public:
     void verbose(const char* format, ...);
     
     static LoggingFeature* getInstance();  // Singleton access for global logging
+    
+    uint8_t getSerialLogLevel() const;
+    void setSerialLogLevel(uint8_t level);
+    uint8_t getSyslogLogLevel() const;
+    void setSyslogLogLevel(uint8_t level);
+    bool isSyslogEnabled() const;
+    bool isBootPhase() const;
 };
 
 // Global convenience macros

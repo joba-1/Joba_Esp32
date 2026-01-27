@@ -6,7 +6,17 @@
 #include "OTAFeature.h"
 
 // Feature instances - parameters come from platformio.ini build_flags
-LoggingFeature logging(LOG_BAUD_RATE, LOG_LEVEL, LOG_ENABLE_TIMESTAMP);
+LoggingFeature logging(
+    LOG_BAUD_RATE,
+    LOG_SERIAL_BOOT_LEVEL,
+    LOG_SERIAL_RUNTIME_LEVEL,
+    LOG_BOOT_DURATION_MS,
+    LOG_SYSLOG_LEVEL,
+    LOG_SYSLOG_SERVER,
+    LOG_SYSLOG_PORT,
+    OTA_HOSTNAME,  // Reuse OTA hostname for syslog
+    LOG_ENABLE_TIMESTAMP
+);
 WiFiManagerFeature wifiManager(WIFI_AP_NAME, WIFI_AP_PASSWORD, WIFI_CONFIG_PORTAL_TIMEOUT);
 TimeSyncFeature timeSync(NTP_SERVER1, NTP_SERVER2, TIMEZONE, NTP_SYNC_INTERVAL);
 WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, WEBSERVER_PASSWORD);
