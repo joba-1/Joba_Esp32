@@ -6,6 +6,7 @@ ModbusDeviceManager::ModbusDeviceManager(ModbusRTUFeature& modbus, StorageFeatur
     , _storage(storage)
     , _currentPollUnit(0)
     , _currentPollIndex(0)
+    , _valueChangeCallback(nullptr)
 {
 }
 
@@ -83,6 +84,7 @@ bool ModbusDeviceManager::loadDeviceMappings(const char* path) {
         
         ModbusDeviceInstance instance;
         instance.unitId = unitId;
+        instance.deviceName = name;
         instance.deviceTypeName = typeName;
         instance.deviceType = &(typeIt->second);
         instance.lastPollTime = 0;
@@ -196,6 +198,9 @@ bool ModbusDeviceManager::readRegister(uint8_t unitId, const char* registerName,
                     cached.value = value;
                     cached.valid = true;
                     device->successCount++;
+                    
+                    // Notify value change callback
+                    notifyValueChange(device->unitId, reg->name, value, reg->unit);
                 } else {
                     device->errorCount++;
                     auto& cached = device->currentValues[reg->name];
@@ -491,6 +496,83 @@ std::vector<uint16_t> ModbusDeviceManager::convertValueToRaw(const ModbusRegiste
         default:
             result.push_back((uint16_t)rawValue);
             break;
+    }
+    
+    return result;
+}
+
+void ModbusDeviceManager::notifyValueChange(uint8_t unitId, const char* registerName,
+                                             float value, const char* unit) {
+    if (_valueChangeCallback) {
+        auto it = _devices.find(unitId);
+        if (it != _devices.end()) {
+            _valueChangeCallback(unitId, it->second.deviceName.c_str(),
+                                  registerName, value, unit);
+        }
+    }
+}
+
+String ModbusDeviceManager::toLineProtocol(uint8_t unitId, const char* measurement) const {
+    auto it = _devices.find(unitId);
+    if (it == _devices.end()) return "";
+    
+    const auto& device = it->second;
+    String lines;
+    
+    for (const auto& kv : device.currentValues) {
+        if (!kv.second.valid) continue;
+        
+        // Format: measurement,device=name,unit_id=N,register=RegName value=X timestamp
+        String line = measurement;
+        line += ",device=";
+        line += device.deviceName;
+        line += ",unit_id=";
+        line += String(unitId);
+        line += ",register=";
+        line += kv.first;
+        if (strlen(kv.second.unit) > 0) {
+            line += ",unit=";
+            line += kv.second.unit;
+        }
+        line += " value=";
+        line += String(kv.second.value, 4);
+        line += " ";
+        line += String((uint64_t)kv.second.timestamp * 1000000000ULL);  // ns
+        line += "\n";
+        lines += line;
+    }
+    
+    return lines;
+}
+
+std::vector<String> ModbusDeviceManager::allToLineProtocol(const char* measurement) const {
+    std::vector<String> result;
+    
+    for (const auto& kv : _devices) {
+        const auto& device = kv.second;
+        
+        for (const auto& regKv : device.currentValues) {
+            if (!regKv.second.valid) continue;
+            
+            // Format: measurement,device=name,unit_id=N,register=RegName value=X timestamp
+            String line = measurement;
+            line += ",device=";
+            line += device.deviceName;
+            line += ",unit_id=";
+            line += String(device.unitId);
+            line += ",register=";
+            line += regKv.first;
+            if (strlen(regKv.second.unit) > 0) {
+                line += ",unit=";
+                line += regKv.second.unit;
+            }
+            line += " value=";
+            line += String(regKv.second.value, 4);
+            line += " ";
+            line += String((uint64_t)regKv.second.timestamp * 1000000000ULL);  // ns
+            
+            result.push_back(line);
+        }
     }
     
     return result;

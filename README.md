@@ -14,6 +14,7 @@ A modular ESP32 firmware built with PlatformIO and Arduino framework, featuring 
 - **MQTT** - MQTT client with Home Assistant autodiscovery
 - **Data Collections** - Typed data structures with JSON serialization and web views
 - **Modbus RTU** - Bus monitoring, automatic register discovery, and device polling
+- **Modbus Integration** - Automatic InfluxDB logging and Home Assistant autodiscovery for Modbus devices
 
 All features are implemented as modular, non-blocking classes derived from a common `Feature` base class.
 
@@ -310,6 +311,70 @@ Use these constants from `HADeviceClass` namespace:
 - `SIGNAL_STRENGTH`, `ILLUMINANCE`
 - `CO2`, `PM25`, `PM10`
 - `TIMESTAMP`, `DURATION`
+
+## Modbus Integration with InfluxDB & Home Assistant
+
+Modbus device values are automatically integrated with InfluxDB and MQTT/Home Assistant when both features are enabled.
+
+### Automatic Data Flow
+
+When a Modbus register is polled and updated:
+
+1. **InfluxDB** - Value is queued for batch upload with tags:
+   - `device` - Device name from mapping
+   - `unit_id` - Modbus unit ID
+   - `register` - Register name
+   - `unit` - Unit of measurement
+
+2. **MQTT** - Value is published to:
+   - Individual topic: `<base_topic>/modbus/unit_N/RegisterName`
+   - State topic: `<base_topic>/modbus/unit_N/state` (JSON with all values)
+
+3. **Home Assistant** - Autodiscovery published for each register:
+   - Sensors automatically appear in HA
+   - Device class inferred from unit (V→voltage, W→power, etc.)
+   - State class inferred from name (Energy→total_increasing, etc.)
+
+### MQTT Topics for Modbus
+
+| Topic | Purpose |
+|-------|---------|
+| `homeassistant/sensor/<device_id>_<register>/config` | Autodiscovery |
+| `<base_topic>/modbus/unit_N/state` | All device values as JSON |
+| `<base_topic>/modbus/unit_N/<register>` | Individual register value |
+| `<base_topic>/modbus/status` | Device availability |
+
+### InfluxDB Line Protocol Format
+
+```
+modbus,device=HybridInverter,unit_id=1,register=PV1Power,unit=W value=3245.5000
+modbus,device=GridMeter,unit_id=10,register=TotalPower,unit=W value=1523.2500
+```
+
+### Example: Grafana Dashboard Query
+
+```sql
+SELECT mean("value") FROM "modbus"
+WHERE "device" = 'HybridInverter' AND "register" =~ /^PV.*Power$/
+GROUP BY time(5m), "register"
+```
+
+### Device Class Inference
+
+The integration automatically infers Home Assistant device classes:
+
+| Unit | Device Class |
+|------|--------------|
+| °C, °F | temperature |
+| V, mV | voltage |
+| A, mA | current |
+| W, kW | power |
+| Wh, kWh | energy |
+| Hz | frequency |
+| VA, kVA | apparent_power |
+| VAr, kVAr | reactive_power |
+
+Registers with "Energy", "Total", "Import", or "Export" in the name are set to `state_class: total_increasing`.
 
 ## Data Filesystem Management
 

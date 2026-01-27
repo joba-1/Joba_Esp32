@@ -13,6 +13,7 @@
 #include "ModbusRTU.h"
 #include "ModbusDevice.h"
 #include "ModbusWeb.h"
+#include "ModbusIntegration.h"
 
 // ============================================
 // Example Data Collection Definition
@@ -142,6 +143,9 @@ const size_t featureCount = sizeof(features) / sizeof(features[0]);
 unsigned long lastDataCollection = 0;
 const unsigned long DATA_COLLECTION_INTERVAL = 60000;  // Collect every 60 seconds
 bool haDiscoveryPublished = false;
+bool modbusHADiscoveryPublished = false;
+unsigned long lastModbusStatePublish = 0;
+const unsigned long MODBUS_STATE_PUBLISH_INTERVAL = 30000;  // Publish state every 30s
 
 void collectSensorData() {
     SensorData reading;
@@ -208,6 +212,21 @@ void setup() {
         LOG_I("Modbus devices loaded: %d device types, %d mapped units",
               modbusDevices->getDeviceTypeNames().size(),
               modbusDevices->getDevices().size());
+        
+        // Register callback for Modbus value changes -> InfluxDB + MQTT
+        modbusDevices->onValueChange([](uint8_t unitId, const char* deviceName,
+                                        const char* registerName, float value,
+                                        const char* unit) {
+            // Queue to InfluxDB
+            ModbusIntegration::queueValueToInfluxDB(&influxDB, unitId, deviceName,
+                                                     registerName, value, unit, "modbus");
+            
+            // Publish individual value to MQTT
+            ModbusIntegration::publishRegisterValue(&mqtt, unitId, deviceName,
+                                                     registerName, value, MQTT_BASE_TOPIC "/modbus");
+            
+            LOG_V("Modbus value: %s/%s = %.4f %s", deviceName, registerName, value, unit);
+        });
     }
     
     // Register Modbus web endpoints
@@ -238,6 +257,28 @@ void loop() {
         );
         haDiscoveryPublished = true;
         LOG_I("Home Assistant autodiscovery published");
+    }
+    
+    // Publish Modbus Home Assistant autodiscovery once MQTT is connected
+    if (mqtt.isConnected() && !modbusHADiscoveryPublished && modbusDevices) {
+        ModbusIntegration::publishDiscovery(
+            &mqtt,
+            *modbusDevices,
+            MQTT_BASE_TOPIC "/modbus",
+            "Custom",              // Manufacturer
+            "ESP32 Modbus Gateway", // Model
+            "1.0.0"                // Software version
+        );
+        modbusHADiscoveryPublished = true;
+        LOG_I("Modbus Home Assistant autodiscovery published");
+    }
+    
+    // Periodic Modbus state publishing to MQTT
+    if (mqtt.isConnected() && modbusDevices &&
+        millis() - lastModbusStatePublish >= MODBUS_STATE_PUBLISH_INTERVAL) {
+        lastModbusStatePublish = millis();
+        ModbusIntegration::publishAllDeviceStates(&mqtt, *modbusDevices,
+                                                   MQTT_BASE_TOPIC "/modbus");
     }
     
     // Periodic data collection

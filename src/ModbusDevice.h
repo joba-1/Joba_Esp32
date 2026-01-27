@@ -76,6 +76,7 @@ const FieldDescriptor ModbusRegisterValueSchema[] = {
  */
 struct ModbusDeviceInstance {
     uint8_t unitId;
+    String deviceName;          // Friendly name from mapping
     String deviceTypeName;
     const ModbusDeviceType* deviceType;
     std::map<String, ModbusRegisterValue> currentValues;  // name -> value
@@ -92,6 +93,18 @@ struct ModbusDeviceInstance {
  */
 class ModbusDeviceManager {
 public:
+    /**
+     * @brief Callback type for value changes
+     * @param unitId Device unit ID
+     * @param deviceName Device name from mapping
+     * @param registerName Register name
+     * @param value Converted value
+     * @param unit Unit string
+     */
+    using ValueChangeCallback = std::function<void(uint8_t unitId, const char* deviceName,
+                                                    const char* registerName, float value,
+                                                    const char* unit)>;
+    
     /**
      * @brief Construct device manager
      * @param modbus Reference to ModbusRTU feature
@@ -216,12 +229,34 @@ public:
      * @brief Get list of loaded device types
      */
     std::vector<String> getDeviceTypeNames() const;
+    
+    /**
+     * @brief Register callback for value changes
+     * Called whenever a register value is successfully updated
+     */
+    void onValueChange(ValueChangeCallback callback) { _valueChangeCallback = callback; }
+    
+    /**
+     * @brief Generate InfluxDB line protocol for a device's current values
+     * @param unitId Device unit ID
+     * @param measurement InfluxDB measurement name
+     * @return Line protocol string (empty if device not found)
+     */
+    String toLineProtocol(uint8_t unitId, const char* measurement = "modbus") const;
+    
+    /**
+     * @brief Generate InfluxDB line protocol for all devices
+     * @param measurement InfluxDB measurement name
+     * @return Vector of line protocol strings (one per register value)
+     */
+    std::vector<String> allToLineProtocol(const char* measurement = "modbus") const;
 
 private:
     float convertRawToValue(const ModbusRegisterDef& def, const uint16_t* rawData) const;
     std::vector<uint16_t> convertValueToRaw(const ModbusRegisterDef& def, float value) const;
     const ModbusRegisterDef* findRegister(const ModbusDeviceType* type, const char* name) const;
     ModbusDataType parseDataType(const char* str) const;
+    void notifyValueChange(uint8_t unitId, const char* registerName, float value, const char* unit);
     
     ModbusRTUFeature& _modbus;
     StorageFeature& _storage;
@@ -232,6 +267,9 @@ private:
     // Polling state
     uint8_t _currentPollUnit;
     size_t _currentPollIndex;
+    
+    // Value change callback
+    ValueChangeCallback _valueChangeCallback;
 };
 
 #endif // MODBUS_DEVICE_H
