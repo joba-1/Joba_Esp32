@@ -1,0 +1,9 @@
+.pio
+.vscode
+.idea
+*.o
+*.obj
+*.log
+*.swp
+*~
+.DS_Store
