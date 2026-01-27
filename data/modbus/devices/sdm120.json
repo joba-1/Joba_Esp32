@@ -1,0 +1,116 @@
+{
+    "name": "SDM120",
+    "description": "Eastron SDM120 Single Phase Energy Meter",
+    "registers": [
+        {
+            "name": "Voltage",
+            "address": 0,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "V",
+            "pollInterval": 5000
+        },
+        {
+            "name": "Current",
+            "address": 6,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "A",
+            "pollInterval": 5000
+        },
+        {
+            "name": "ActivePower",
+            "address": 12,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "W",
+            "pollInterval": 5000
+        },
+        {
+            "name": "ApparentPower",
+            "address": 18,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "VA",
+            "pollInterval": 10000
+        },
+        {
+            "name": "ReactivePower",
+            "address": 24,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "var",
+            "pollInterval": 10000
+        },
+        {
+            "name": "PowerFactor",
+            "address": 30,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "",
+            "pollInterval": 10000
+        },
+        {
+            "name": "Frequency",
+            "address": 70,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "Hz",
+            "pollInterval": 30000
+        },
+        {
+            "name": "ImportActiveEnergy",
+            "address": 72,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "kWh",
+            "pollInterval": 60000
+        },
+        {
+            "name": "ExportActiveEnergy",
+            "address": 74,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "kWh",
+            "pollInterval": 60000
+        },
+        {
+            "name": "TotalActiveEnergy",
+            "address": 342,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "kWh",
+            "pollInterval": 60000
+        }
+    ]
+}

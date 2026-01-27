@@ -1,0 +1,20 @@
+{
+    "description": "Modbus device to unit ID mapping",
+    "devices": [
+        {
+            "unitId": 1,
+            "type": "SDM120",
+            "name": "Main Meter"
+        },
+        {
+            "unitId": 2,
+            "type": "SDM120",
+            "name": "Solar Inverter Meter"
+        },
+        {
+            "unitId": 10,
+            "type": "SDM630",
+            "name": "Three Phase Meter"
+        }
+    ]
+}

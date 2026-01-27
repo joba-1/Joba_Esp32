@@ -30,9 +30,19 @@ esp32-firmware/
 │   ├── MQTTFeature.cpp
 │   ├── DataCollection.h          # Template for typed data collections
 │   ├── DataCollectionWeb.h       # Web endpoints for data collections
-│   └── DataCollectionMQTT.h      # MQTT/Home Assistant integration
-├── data/                         # SPIFFS/LittleFS web files (if needed)
-└── spec.md
+│   ├── DataCollectionMQTT.h      # MQTT/Home Assistant integration
+│   ├── ModbusRTU.h               # Low-level Modbus RTU bus monitor
+│   ├── ModbusRTU.cpp
+│   ├── ModbusDevice.h            # High-level device definitions
+│   ├── ModbusDevice.cpp
+│   └── ModbusWeb.h               # Modbus web endpoints
+├── data/
+│   └── modbus/
+│       ├── devices.json          # Unit ID to device type mapping
+│       └── devices/
+│           ├── sdm120.json       # SDM120 register definitions
+│           └── sdm630.json       # SDM630 register definitions
+└── SPEC.md
 ```
 
 ## Feature Base Class
@@ -544,6 +554,152 @@ DataCollectionMQTT::publishDiscovery(&mqtt, "sensors", sensorHAConfig, 3,
 DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
 ```
 
+### 10. ModbusRTUFeature
+
+**Purpose:** Monitor Modbus RTU bus traffic, maintain register maps per unit/function code, and send Modbus requests with proper bus silence detection.
+
+**Library:** Built-in (no external library)
+
+**Constructor Parameters:**
+- `HardwareSerial& serial` - Hardware serial port (Serial1, Serial2)
+- `uint32_t baudRate` - Baud rate (typically 9600, 19200)
+- `uint32_t config` - Serial config (SERIAL_8N1, SERIAL_8E1)
+- `int8_t rxPin` - RX pin (-1 for default)
+- `int8_t txPin` - TX pin (-1 for default)
+- `int8_t dePin` - RS485 DE pin (-1 if not used)
+- `size_t maxQueueSize` - Maximum pending requests
+- `uint32_t responseTimeoutMs` - Response timeout
+
+**Build Flags:**
+```ini
+-D MODBUS_SERIAL_RX=16
+-D MODBUS_SERIAL_TX=17
+-D MODBUS_BAUD_RATE=9600
+-D MODBUS_SERIAL_CONFIG=SERIAL_8N1
+-D MODBUS_DE_PIN=-1
+-D MODBUS_RESPONSE_TIMEOUT=1000
+-D MODBUS_QUEUE_SIZE=10
+-D MODBUS_DEVICE_TYPES_PATH=\"/modbus/devices\"
+-D MODBUS_DEVICE_MAP_PATH=\"/modbus/devices.json\"
+```
+
+**Class Interface:**
+```cpp
+class ModbusRTUFeature : public Feature {
+public:
+    ModbusRTUFeature(HardwareSerial& serial, uint32_t baudRate, uint32_t config,
+                     int8_t rxPin, int8_t txPin, int8_t dePin,
+                     size_t maxQueueSize, uint32_t responseTimeoutMs);
+    void setup() override;
+    void loop() override;
+    const char* getName() const override { return "ModbusRTU"; }
+    
+    // Bus state
+    bool isBusSilent() const;
+    unsigned long getTimeSinceLastActivity() const;
+    
+    // Register callback for all frames
+    void onFrame(std::function<void(const ModbusFrame&, bool isRequest)> callback);
+    
+    // Get register map for unit/FC combination
+    ModbusRegisterMap* getRegisterMap(uint8_t unitId, uint8_t functionCode);
+    const std::map<uint16_t, ModbusRegisterMap>& getAllRegisterMaps() const;
+    
+    // Queue requests (waits for bus silence automatically)
+    bool queueReadRegisters(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty,
+                            std::function<void(bool, const ModbusFrame&)> callback);
+    bool queueWriteSingleRegister(uint8_t unitId, uint16_t addr, uint16_t value,
+                                   std::function<void(bool, const ModbusFrame&)> callback);
+    bool queueWriteMultipleRegisters(uint8_t unitId, uint16_t startAddr,
+                                      const std::vector<uint16_t>& values,
+                                      std::function<void(bool, const ModbusFrame&)> callback);
+    
+    size_t getPendingRequestCount() const;
+    void clearQueue();
+    
+    struct Stats { uint32_t framesReceived, framesSent, crcErrors, timeouts, queueOverflows; };
+    const Stats& getStats() const;
+};
+```
+
+### 11. ModbusDeviceManager
+
+**Purpose:** High-level device abstraction reading register definitions from filesystem.
+
+**Device Type Definition Format** (`/modbus/devices/sdm120.json`):
+```json
+{
+    "name": "SDM120",
+    "registers": [
+        {
+            "name": "Voltage",
+            "address": 0,
+            "length": 2,
+            "functionCode": 4,
+            "dataType": "float32_be",
+            "factor": 1.0,
+            "offset": 0,
+            "unit": "V",
+            "pollInterval": 5000
+        }
+    ]
+}
+```
+
+**Device Mapping Format** (`/modbus/devices.json`):
+```json
+{
+    "devices": [
+        {"unitId": 1, "type": "SDM120", "name": "Main Meter"},
+        {"unitId": 2, "type": "SDM120", "name": "Solar Meter"}
+    ]
+}
+```
+
+**Supported Data Types:**
+- `uint16`, `int16`
+- `uint32_be`, `uint32_le`, `int32_be`, `int32_le`
+- `float32_be`, `float32_le`
+- `bool`, `string`
+
+**Class Interface:**
+```cpp
+class ModbusDeviceManager {
+public:
+    ModbusDeviceManager(ModbusRTUFeature& modbus, StorageFeature& storage);
+    
+    bool loadDeviceType(const char* path);
+    bool loadDeviceMappings(const char* path);
+    bool loadAllDeviceTypes(const char* directory);
+    
+    const ModbusDeviceType* getDeviceType(const char* name) const;
+    ModbusDeviceInstance* getDevice(uint8_t unitId);
+    const std::map<uint8_t, ModbusDeviceInstance>& getDevices() const;
+    
+    bool readRegister(uint8_t unitId, const char* registerName,
+                      std::function<void(bool, float)> callback);
+    bool readAllRegisters(uint8_t unitId, std::function<void(bool)> callback);
+    bool writeRegister(uint8_t unitId, const char* registerName, float value,
+                       std::function<void(bool)> callback);
+    
+    bool getValue(uint8_t unitId, const char* registerName, float& value) const;
+    String getDeviceValuesJson(uint8_t unitId) const;
+    
+    void loop();  // Handle automatic polling
+    std::vector<String> getDeviceTypeNames() const;
+};
+```
+
+**Web Endpoints (via ModbusWeb):**
+- `GET /api/modbus/devices` - List all mapped devices
+- `GET /api/modbus/device?unit=1` - Get device values
+- `GET /api/modbus/read?unit=1&register=Voltage` - Read register
+- `POST /api/modbus/write` - Write register
+- `GET /api/modbus/status` - Bus status and statistics
+- `GET /api/modbus/maps` - Raw register maps from monitoring
+- `GET /api/modbus/types` - List loaded device types
+- `GET /view/modbus` - HTML dashboard
+
 ## PlatformIO Configuration
 
 ```ini
@@ -703,6 +859,15 @@ void loop() {
 | MQTT | `MQTT_PASSWORD` | `""` |
 | MQTT | `MQTT_BASE_TOPIC` | `"esp32"` |
 | MQTT | `MQTT_RECONNECT_INTERVAL` | `5000` ms |
+| Modbus | `MODBUS_SERIAL_RX` | `16` |
+| Modbus | `MODBUS_SERIAL_TX` | `17` |
+| Modbus | `MODBUS_BAUD_RATE` | `9600` |
+| Modbus | `MODBUS_SERIAL_CONFIG` | `SERIAL_8N1` |
+| Modbus | `MODBUS_DE_PIN` | `-1` (none) |
+| Modbus | `MODBUS_RESPONSE_TIMEOUT` | `1000` ms |
+| Modbus | `MODBUS_QUEUE_SIZE` | `10` |
+| Modbus | `MODBUS_DEVICE_TYPES_PATH` | `"/modbus/devices"` |
+| Modbus | `MODBUS_DEVICE_MAP_PATH` | `"/modbus/devices.json"` |
 
 ## Dependencies
 

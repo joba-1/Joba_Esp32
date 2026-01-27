@@ -10,6 +10,9 @@
 #include "DataCollection.h"
 #include "DataCollectionWeb.h"
 #include "DataCollectionMQTT.h"
+#include "ModbusRTU.h"
+#include "ModbusDevice.h"
+#include "ModbusWeb.h"
 
 // ============================================
 // Example Data Collection Definition
@@ -97,12 +100,27 @@ MQTTFeature mqtt(
     MQTT_RECONNECT_INTERVAL
 );
 
+// Modbus RTU feature - monitors bus and handles requests
+ModbusRTUFeature modbus(
+    Serial2,                    // Hardware serial port
+    MODBUS_BAUD_RATE,
+    MODBUS_SERIAL_CONFIG,
+    MODBUS_SERIAL_RX,
+    MODBUS_SERIAL_TX,
+    MODBUS_DE_PIN,              // RS485 DE pin (-1 if not used)
+    MODBUS_RESPONSE_TIMEOUT,
+    MODBUS_QUEUE_SIZE
+);
+
 // Home Assistant sensor configuration for our data collection
 const HASensorConfig sensorHAConfig[] = {
     { "temperature", "Temperature", HADeviceClass::TEMPERATURE, "°C", nullptr },
     { "humidity", "Humidity", HADeviceClass::HUMIDITY, "%", nullptr },
     { "rssi", "WiFi Signal", HADeviceClass::SIGNAL_STRENGTH, "dBm", nullptr },
 };
+
+// Modbus device manager (declared here, initialized after storage is ready)
+ModbusDeviceManager* modbusDevices = nullptr;
 
 // Array of all features for easy iteration
 Feature* features[] = {
@@ -113,7 +131,8 @@ Feature* features[] = {
     &webServer,
     &ota,
     &influxDB,
-    &mqtt          // MQTT after network is ready
+    &mqtt,         // MQTT after network is ready
+    &modbus        // Modbus RTU bus monitor
 };
 const size_t featureCount = sizeof(features) / sizeof(features[0]);
 
@@ -177,6 +196,23 @@ void setup() {
         5000  // Refresh every 5 seconds
     );
     
+    // Initialize Modbus device manager with device definitions from filesystem
+    modbusDevices = new ModbusDeviceManager(modbus, storage);
+    if (storage.isReady()) {
+        // Load device type definitions from /modbus/devices/*.json
+        modbusDevices->loadAllDeviceTypes(MODBUS_DEVICE_TYPES_PATH);
+        
+        // Load unit ID to device type mapping
+        modbusDevices->loadDeviceMappings(MODBUS_DEVICE_MAP_PATH);
+        
+        LOG_I("Modbus devices loaded: %d device types, %d mapped units",
+              modbusDevices->getDeviceTypeNames().size(),
+              modbusDevices->getDevices().size());
+    }
+    
+    // Register Modbus web endpoints
+    ModbusWeb::setup(webServer, modbus, *modbusDevices);
+    
     LOG_I("All features initialized");
     LOG_I("Free heap: %d bytes", ESP.getFreeHeap());
 }
@@ -212,4 +248,9 @@ void loop() {
     
     // Handle data collection persistence
     sensorData.loop();
+    
+    // Run Modbus device polling
+    if (modbusDevices) {
+        modbusDevices->loop();
+    }
 }
