@@ -161,7 +161,40 @@ Default credentials: `admin` / `admin`
 **Endpoints:**
 - `/` - Status page
 - `/api/status` - JSON status
+- `/api/<collection>` - JSON data for a data collection
+- `/api/<collection>/latest` - Latest JSON entry
+- `/view/<collection>` - HTML table view with auto-refresh
 - `/health` - Health check (no auth)
+
+### Data Collection Web Views
+
+For any registered data collection, you get:
+- **API endpoint**: `/api/sensors` - Full JSON array of all data
+- **Latest API**: `/api/sensors/latest` - Latest entry as JSON
+- **HTML View**: `/view/sensors` - Interactive table with auto-refresh
+
+The HTML view features:
+- Dark themed responsive table
+- Connection status indicator
+- Entry count and last update time
+- Auto-refresh (configurable, default 5 seconds)
+- Newest entries highlighted at top
+- Automatic timestamp formatting
+- Manual refresh button
+
+#### Registering a Collection
+
+```cpp
+#include "DataCollectionWeb.h"
+
+// In setup(), after webServer.setup():
+DataCollectionWeb::registerCollection(
+    webServer.getServer(),
+    sensorData,           // Your DataCollection instance
+    "sensors",            // Base path -> /api/sensors, /view/sensors
+    5000                  // Refresh interval (ms)
+);
+```
 
 ## License
 

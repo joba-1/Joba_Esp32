@@ -20,8 +20,14 @@ esp32-firmware/
 │   ├── TimeSyncFeature.cpp
 │   ├── WebServerFeature.h
 │   ├── WebServerFeature.cpp
-│   └── OTAFeature.h
-│   └── OTAFeature.cpp
+│   ├── OTAFeature.h
+│   ├── OTAFeature.cpp
+│   ├── StorageFeature.h
+│   ├── StorageFeature.cpp
+│   ├── InfluxDBFeature.h
+│   ├── InfluxDBFeature.cpp
+│   ├── DataCollection.h          # Template for typed data collections
+│   └── DataCollectionWeb.h       # Web endpoints for data collections
 ├── data/                         # SPIFFS/LittleFS web files (if needed)
 └── spec.md
 ```
@@ -262,6 +268,57 @@ public:
     void loop() override;  // Handle OTA requests
     const char* getName() const override { return "OTA"; }
 };
+```
+
+### 6. DataCollectionWeb
+
+**Purpose:** Automatically register web endpoints for DataCollection instances.
+
+**Library:** Requires `ESPAsyncWebServer`
+
+**Features:**
+- JSON API endpoint for all data (`/api/<basePath>`)
+- JSON API endpoint for latest entry (`/api/<basePath>/latest`)
+- Interactive HTML table view (`/view/<basePath>`)
+- Dark theme with responsive design
+- Auto-refresh with configurable interval
+- Connection status indicator
+- Timestamp formatting
+
+**Static Methods:**
+```cpp
+class DataCollectionWeb {
+public:
+    // Register endpoints with custom callbacks
+    static void registerEndpoints(
+        AsyncWebServer* server,
+        const char* basePath,
+        std::function<String()> getJsonCallback,
+        std::function<String()> getLatestJsonCallback,
+        std::function<String()> getSchemaCallback,
+        uint32_t refreshIntervalMs = 5000
+    );
+    
+    // Convenience method for DataCollection instances
+    template<typename T, size_t N>
+    static void registerCollection(
+        AsyncWebServer* server,
+        DataCollection<T, N>& collection,
+        const char* basePath,
+        uint32_t refreshIntervalMs = 5000
+    );
+};
+```
+
+**Usage Example:**
+```cpp
+// In setup(), after webServer.setup():
+DataCollectionWeb::registerCollection(
+    webServer.getServer(),
+    sensorData,           // DataCollection<SensorData, 100>
+    "sensors",            // Creates /api/sensors, /view/sensors
+    5000                  // Auto-refresh every 5 seconds
+);
 ```
 
 ## PlatformIO Configuration

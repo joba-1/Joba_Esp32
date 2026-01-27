@@ -7,6 +7,7 @@
 #include "StorageFeature.h"
 #include "InfluxDBFeature.h"
 #include "DataCollection.h"
+#include "DataCollectionWeb.h"
 
 // ============================================
 // Example Data Collection Definition
@@ -128,19 +129,14 @@ void setup() {
         }
     }
     
-    // Add API endpoint for sensor data
-    webServer.getServer()->on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest* request) {
-        request->send(200, "application/json", sensorData.toJson());
-    });
-    
-    // Add API endpoint for latest reading
-    webServer.getServer()->on("/api/sensors/latest", HTTP_GET, [](AsyncWebServerRequest* request) {
-        if (sensorData.isEmpty()) {
-            request->send(404, "application/json", "{\"error\":\"No data\"}");
-        } else {
-            request->send(200, "application/json", sensorData.toJson(sensorData.count() - 1));
-        }
-    });
+    // Register web endpoints for sensor data collection
+    // Creates: /api/sensors (JSON all), /api/sensors/latest (JSON latest), /view/sensors (HTML table)
+    DataCollectionWeb::registerCollection(
+        webServer.getServer(),
+        sensorData,
+        "sensors",
+        5000  // Refresh every 5 seconds
+    );
     
     LOG_I("All features initialized");
     LOG_I("Free heap: %d bytes", ESP.getFreeHeap());
