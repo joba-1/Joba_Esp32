@@ -273,7 +273,109 @@ public:
 };
 ```
 
-### 6. DataCollectionWeb
+### 6. StorageFeature
+
+**Purpose:** LittleFS filesystem wrapper for persistent storage.
+
+**Library:** Built-in `LittleFS`
+
+**Constructor Parameters:**
+- `bool formatOnFail` - Format filesystem if mount fails
+
+**Class Interface:**
+```cpp
+class StorageFeature : public Feature {
+public:
+    StorageFeature(bool formatOnFail = true);
+    void setup() override;
+    const char* getName() const override { return "Storage"; }
+    bool isReady() const override;
+    
+    bool writeFile(const char* path, const String& content);
+    String readFile(const char* path);
+    bool appendFile(const char* path, const String& content);
+    bool exists(const char* path);
+    bool remove(const char* path);
+    bool mkdir(const char* path);
+    void listDir(const char* path, std::vector<String>& files);
+};
+```
+
+### 7. InfluxDBFeature
+
+**Purpose:** Write data to InfluxDB using line protocol over HTTP.
+
+**Supports:** Both InfluxDB 1.x (user/password) and 2.x (org/bucket/token)
+
+**Library:** Built-in `HTTPClient`
+
+**InfluxDB 1.x Build Flags:**
+```ini
+-D INFLUXDB_URL=\"http://192.168.1.100:8086\"
+-D INFLUXDB_VERSION=1
+-D INFLUXDB_DATABASE=\"sensors\"
+-D INFLUXDB_USERNAME=\"myuser\"
+-D INFLUXDB_PASSWORD=\"mypassword\"
+-D INFLUXDB_RP=\"\"
+-D INFLUXDB_BATCH_INTERVAL=10000
+-D INFLUXDB_BATCH_SIZE=50
+```
+
+**InfluxDB 2.x Build Flags:**
+```ini
+-D INFLUXDB_URL=\"http://192.168.1.100:8086\"
+-D INFLUXDB_VERSION=2
+-D INFLUXDB_ORG=\"my-org\"
+-D INFLUXDB_BUCKET=\"my-bucket\"
+-D INFLUXDB_TOKEN=\"my-api-token\"
+-D INFLUXDB_BATCH_INTERVAL=10000
+-D INFLUXDB_BATCH_SIZE=50
+```
+
+**Class Interface:**
+```cpp
+class InfluxDBFeature : public Feature {
+public:
+    // InfluxDB 2.x constructor
+    InfluxDBFeature(const char* serverUrl, const char* org, const char* bucket,
+                    const char* token, uint32_t batchIntervalMs = 10000,
+                    size_t batchSize = 100);
+    
+    // InfluxDB 1.x factory method
+    static InfluxDBFeature createV1(const char* serverUrl, const char* database,
+                                     const char* username = "", const char* password = "",
+                                     const char* retentionPolicy = "",
+                                     uint32_t batchIntervalMs = 10000,
+                                     size_t batchSize = 100);
+    
+    void setup() override;
+    void loop() override;
+    const char* getName() const override { return "InfluxDB"; }
+    
+    void queue(const String& lineProtocol);  // Queue line protocol data
+    bool upload();                            // Force immediate upload
+    bool isConnected() const;
+    size_t pendingCount() const;
+};
+```
+
+**Usage in main.cpp:**
+```cpp
+// InfluxDB 1.x (configured via INFLUXDB_VERSION=1)
+InfluxDBFeature influxDB = InfluxDBFeature::createV1(
+    INFLUXDB_URL, INFLUXDB_DATABASE,
+    INFLUXDB_USERNAME, INFLUXDB_PASSWORD, INFLUXDB_RP,
+    INFLUXDB_BATCH_INTERVAL, INFLUXDB_BATCH_SIZE
+);
+
+// InfluxDB 2.x (configured via INFLUXDB_VERSION=2)
+InfluxDBFeature influxDB(
+    INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN,
+    INFLUXDB_BATCH_INTERVAL, INFLUXDB_BATCH_SIZE
+);
+```
+
+### 8. DataCollectionWeb
 
 **Purpose:** Automatically register web endpoints for DataCollection instances.
 
@@ -324,7 +426,7 @@ DataCollectionWeb::registerCollection(
 );
 ```
 
-### 7. MQTTFeature
+### 9. MQTTFeature
 
 **Purpose:** MQTT client with auto-reconnect for publishing sensor data.
 
@@ -373,7 +475,7 @@ public:
 };
 ```
 
-### 8. DataCollectionMQTT
+### 10. DataCollectionMQTT
 
 **Purpose:** Home Assistant autodiscovery integration for data collections.
 
@@ -585,9 +687,14 @@ void loop() {
 | OTA | `OTA_PASSWORD` | `"otapassword"` |
 | OTA | `OTA_PORT` | `3232` |
 | InfluxDB | `INFLUXDB_URL` | `""` (disabled) |
-| InfluxDB | `INFLUXDB_ORG` | `""` |
-| InfluxDB | `INFLUXDB_BUCKET` | `""` |
-| InfluxDB | `INFLUXDB_TOKEN` | `""` |
+| InfluxDB | `INFLUXDB_VERSION` | `1` (1.x or 2) |
+| InfluxDB | `INFLUXDB_DATABASE` | `""` (V1 only) |
+| InfluxDB | `INFLUXDB_USERNAME` | `""` (V1 only) |
+| InfluxDB | `INFLUXDB_PASSWORD` | `""` (V1 only) |
+| InfluxDB | `INFLUXDB_RP` | `""` (V1 retention policy) |
+| InfluxDB | `INFLUXDB_ORG` | `""` (V2 only) |
+| InfluxDB | `INFLUXDB_BUCKET` | `""` (V2 only) |
+| InfluxDB | `INFLUXDB_TOKEN` | `""` (V2 only) |
 | InfluxDB | `INFLUXDB_BATCH_INTERVAL` | `10000` ms |
 | InfluxDB | `INFLUXDB_BATCH_SIZE` | `50` |
 | MQTT | `MQTT_SERVER` | `""` (disabled) |
@@ -600,11 +707,13 @@ void loop() {
 ## Dependencies
 
 | Library | Version | Purpose |
-|---------|---------|---------|
+|---------|---------|----------|
 | `tzapu/WiFiManager` | ^2.0.17 | WiFi configuration portal |
 | `me-no-dev/ESPAsyncWebServer` | ^1.2.4 | Async HTTP server |
-| `me-no-dev/AsyncTCP` | ^1.1.1 | Async TCP for ESP32 || `bblanchon/ArduinoJson` | ^7.0.0 | JSON serialization |
+| `me-no-dev/AsyncTCP` | ^1.1.1 | Async TCP for ESP32 |
+| `bblanchon/ArduinoJson` | ^7.0.0 | JSON serialization |
 | `knolleary/PubSubClient` | ^2.8 | MQTT client |
+
 ## Notes
 
 1. **Feature Initialization Order:** LoggingFeature must be initialized first, followed by WiFiManagerFeature before any network-dependent features.

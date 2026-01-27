@@ -7,12 +7,13 @@
 #include "Feature.h"
 
 /**
- * @brief InfluxDB 2.x data writer using line protocol over HTTP
+ * @brief InfluxDB data writer using line protocol over HTTP
+ *        Supports both InfluxDB 1.x (user/password) and 2.x (org/bucket/token)
  */
 class InfluxDBFeature : public Feature {
 public:
     /**
-     * @brief Construct InfluxDB feature
+     * @brief Construct InfluxDB 2.x feature (org/bucket/token auth)
      * @param serverUrl InfluxDB server URL (e.g., "http://192.168.1.50:8086")
      * @param org Organization name
      * @param bucket Bucket name
@@ -26,6 +27,24 @@ public:
                     const char* token,
                     uint32_t batchIntervalMs = 10000,
                     size_t batchSize = 100);
+    
+    /**
+     * @brief Construct InfluxDB 1.x feature (database/user/password auth)
+     * @param serverUrl InfluxDB server URL (e.g., "http://192.168.1.50:8086")
+     * @param database Database name
+     * @param username Username (empty string if no auth)
+     * @param password Password (empty string if no auth)
+     * @param retentionPolicy Retention policy (empty = default)
+     * @param batchIntervalMs Interval between batch uploads (0 = immediate)
+     * @param batchSize Max lines to accumulate before auto-upload
+     */
+    static InfluxDBFeature createV1(const char* serverUrl,
+                                     const char* database,
+                                     const char* username = "",
+                                     const char* password = "",
+                                     const char* retentionPolicy = "",
+                                     uint32_t batchIntervalMs = 10000,
+                                     size_t batchSize = 100);
     
     void setup() override;
     void loop() override;
@@ -83,12 +102,26 @@ public:
 private:
     bool sendData(const String& data);
     
+    // Constructor for internal use (V1 mode)
+    InfluxDBFeature(const char* serverUrl,
+                    const char* database,
+                    const char* username,
+                    const char* password,
+                    const char* retentionPolicy,
+                    uint32_t batchIntervalMs,
+                    size_t batchSize,
+                    bool isV1);
+    
     const char* _serverUrl;
-    const char* _org;
-    const char* _bucket;
-    const char* _token;
+    const char* _org;       // V2: org, V1: unused
+    const char* _bucket;    // V2: bucket, V1: database
+    const char* _token;     // V2: token, V1: unused
+    const char* _username;  // V1 only
+    const char* _password;  // V1 only
+    const char* _retentionPolicy;  // V1 only
     uint32_t _batchIntervalMs;
     size_t _batchSize;
+    bool _isV1;             // true = InfluxDB 1.x, false = 2.x
     
     std::vector<String> _buffer;
     bool _ready;

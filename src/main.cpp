@@ -63,6 +63,9 @@ TimeSyncFeature timeSync(NTP_SERVER1, NTP_SERVER2, TIMEZONE, NTP_SYNC_INTERVAL);
 StorageFeature storage(true);  // Format on fail
 WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, WEBSERVER_PASSWORD);
 OTAFeature ota(OTA_HOSTNAME, OTA_PASSWORD, OTA_PORT);
+
+// InfluxDB: supports V1.x (user/password) and V2.x (org/bucket/token)
+#if INFLUXDB_VERSION == 2
 InfluxDBFeature influxDB(
     INFLUXDB_URL,
     INFLUXDB_ORG,
@@ -71,6 +74,19 @@ InfluxDBFeature influxDB(
     INFLUXDB_BATCH_INTERVAL,
     INFLUXDB_BATCH_SIZE
 );
+#else
+// Default to V1.x
+InfluxDBFeature influxDB = InfluxDBFeature::createV1(
+    INFLUXDB_URL,
+    INFLUXDB_DATABASE,
+    INFLUXDB_USERNAME,
+    INFLUXDB_PASSWORD,
+    INFLUXDB_RP,
+    INFLUXDB_BATCH_INTERVAL,
+    INFLUXDB_BATCH_SIZE
+);
+#endif
+
 MQTTFeature mqtt(
     MQTT_SERVER,
     MQTT_PORT,

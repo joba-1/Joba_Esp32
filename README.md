@@ -145,9 +145,13 @@ All configuration is done via build flags in `platformio.ini`:
 | `OTA_HOSTNAME` | esp32-device | mDNS hostname |
 | `OTA_PASSWORD` | otapassword | OTA update password |
 | `INFLUXDB_URL` | "" | InfluxDB server URL (empty=disabled) |
-| `INFLUXDB_ORG` | "" | InfluxDB organization |
-| `INFLUXDB_BUCKET` | "" | InfluxDB bucket |
-| `INFLUXDB_TOKEN` | "" | InfluxDB API token |
+| `INFLUXDB_VERSION` | 1 | InfluxDB version (1 or 2) |
+| `INFLUXDB_DATABASE` | "" | Database name (V1) |
+| `INFLUXDB_USERNAME` | "" | Username (V1) |
+| `INFLUXDB_PASSWORD` | "" | Password (V1) |
+| `INFLUXDB_ORG` | "" | Organization (V2) |
+| `INFLUXDB_BUCKET` | "" | Bucket (V2) |
+| `INFLUXDB_TOKEN` | "" | API token (V2) |
 | `MQTT_SERVER` | "" | MQTT broker address (empty=disabled) |
 | `MQTT_PORT` | 1883 | MQTT broker port |
 | `MQTT_USERNAME` | "" | MQTT username |
@@ -164,6 +168,31 @@ build_flags =
 ```
 
 Logs are sent via UDP in RFC 3164 BSD syslog format.
+
+### Enabling InfluxDB
+
+The firmware supports both InfluxDB 1.x and 2.x.
+
+**InfluxDB 1.x** (user/password authentication):
+```ini
+build_flags =
+    -D INFLUXDB_URL=\"http://192.168.1.100:8086\"
+    -D INFLUXDB_VERSION=1
+    -D INFLUXDB_DATABASE=\"sensors\"
+    -D INFLUXDB_USERNAME=\"myuser\"
+    -D INFLUXDB_PASSWORD=\"mypassword\"
+    -D INFLUXDB_RP=\"autogen\"           ; Optional: retention policy
+```
+
+**InfluxDB 2.x** (token authentication):
+```ini
+build_flags =
+    -D INFLUXDB_URL=\"http://192.168.1.100:8086\"
+    -D INFLUXDB_VERSION=2
+    -D INFLUXDB_ORG=\"my-org\"
+    -D INFLUXDB_BUCKET=\"my-bucket\"
+    -D INFLUXDB_TOKEN=\"my-api-token\"
+```
 
 ## Web Interface
 

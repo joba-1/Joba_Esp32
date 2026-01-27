@@ -2,6 +2,7 @@
 #include "LoggingFeature.h"
 #include <WiFi.h>
 
+// InfluxDB 2.x constructor
 InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
                                  const char* org,
                                  const char* bucket,
@@ -12,8 +13,12 @@ InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
     , _org(org)
     , _bucket(bucket)
     , _token(token)
+    , _username("")
+    , _password("")
+    , _retentionPolicy("")
     , _batchIntervalMs(batchIntervalMs)
     , _batchSize(batchSize)
+    , _isV1(false)
     , _ready(false)
     , _connected(false)
     , _enabled(false)
@@ -22,17 +27,69 @@ InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
 {
 }
 
+// InfluxDB 1.x constructor (private, used by factory)
+InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
+                                 const char* database,
+                                 const char* username,
+                                 const char* password,
+                                 const char* retentionPolicy,
+                                 uint32_t batchIntervalMs,
+                                 size_t batchSize,
+                                 bool isV1)
+    : _serverUrl(serverUrl)
+    , _org("")
+    , _bucket(database)  // Reuse bucket field for database name
+    , _token("")
+    , _username(username)
+    , _password(password)
+    , _retentionPolicy(retentionPolicy)
+    , _batchIntervalMs(batchIntervalMs)
+    , _batchSize(batchSize)
+    , _isV1(isV1)
+    , _ready(false)
+    , _connected(false)
+    , _enabled(false)
+    , _lastUploadTime(0)
+    , _stats{0, 0, 0, 0}
+{
+}
+
+// Factory method for InfluxDB 1.x
+InfluxDBFeature InfluxDBFeature::createV1(const char* serverUrl,
+                                           const char* database,
+                                           const char* username,
+                                           const char* password,
+                                           const char* retentionPolicy,
+                                           uint32_t batchIntervalMs,
+                                           size_t batchSize) {
+    return InfluxDBFeature(serverUrl, database, username, password, 
+                           retentionPolicy, batchIntervalMs, batchSize, true);
+}
+
 void InfluxDBFeature::setup() {
     if (_ready) return;
     
-    // Check if InfluxDB is configured (URL not empty)
-    _enabled = strlen(_serverUrl) > 0 && strlen(_token) > 0;
+    // Check if InfluxDB is configured
+    if (_isV1) {
+        // V1: needs URL and database
+        _enabled = strlen(_serverUrl) > 0 && strlen(_bucket) > 0;
+        if (_enabled) {
+            LOG_I("InfluxDB 1.x configured: %s (db=%s, user=%s)", 
+                  _serverUrl, _bucket, strlen(_username) > 0 ? _username : "(none)");
+        }
+    } else {
+        // V2: needs URL and token
+        _enabled = strlen(_serverUrl) > 0 && strlen(_token) > 0;
+        if (_enabled) {
+            LOG_I("InfluxDB 2.x configured: %s (org=%s, bucket=%s)", 
+                  _serverUrl, _org, _bucket);
+        }
+    }
     
     if (_enabled) {
-        LOG_I("InfluxDB configured: %s (org=%s, bucket=%s)", _serverUrl, _org, _bucket);
         LOG_I("  Batch interval: %lu ms, max size: %u", _batchIntervalMs, _batchSize);
     } else {
-        LOG_I("InfluxDB disabled (no server URL or token configured)");
+        LOG_I("InfluxDB disabled (not configured)");
     }
     
     _ready = true;
@@ -125,15 +182,41 @@ bool InfluxDBFeature::upload() {
 
 bool InfluxDBFeature::sendData(const String& data) {
     HTTPClient http;
+    String url;
     
-    // Build URL: /api/v2/write?org=ORG&bucket=BUCKET&precision=ns
-    String url = String(_serverUrl) + "/api/v2/write?org=" + _org + 
-                 "&bucket=" + _bucket + "&precision=ns";
+    if (_isV1) {
+        // InfluxDB 1.x: /write?db=DATABASE&precision=ns
+        url = String(_serverUrl) + "/write?db=" + _bucket + "&precision=ns";
+        
+        // Add retention policy if specified
+        if (strlen(_retentionPolicy) > 0) {
+            url += "&rp=" + String(_retentionPolicy);
+        }
+        
+        // Add credentials as query params (alternative to Basic Auth)
+        if (strlen(_username) > 0) {
+            url += "&u=" + String(_username) + "&p=" + String(_password);
+        }
+    } else {
+        // InfluxDB 2.x: /api/v2/write?org=ORG&bucket=BUCKET&precision=ns
+        url = String(_serverUrl) + "/api/v2/write?org=" + _org + 
+              "&bucket=" + _bucket + "&precision=ns";
+    }
     
     http.begin(url);
-    http.addHeader("Authorization", String("Token ") + _token);
     http.addHeader("Content-Type", "text/plain; charset=utf-8");
     http.setTimeout(10000);  // 10 second timeout
+    
+    // Add authentication header
+    if (_isV1) {
+        // V1: Basic auth if credentials provided
+        if (strlen(_username) > 0) {
+            http.setAuthorization(_username, _password);
+        }
+    } else {
+        // V2: Bearer token
+        http.addHeader("Authorization", String("Token ") + _token);
+    }
     
     int httpCode = http.POST(data);
     
