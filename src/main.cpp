@@ -6,8 +6,10 @@
 #include "OTAFeature.h"
 #include "StorageFeature.h"
 #include "InfluxDBFeature.h"
+#include "MQTTFeature.h"
 #include "DataCollection.h"
 #include "DataCollectionWeb.h"
+#include "DataCollectionMQTT.h"
 
 // ============================================
 // Example Data Collection Definition
@@ -69,6 +71,22 @@ InfluxDBFeature influxDB(
     INFLUXDB_BATCH_INTERVAL,
     INFLUXDB_BATCH_SIZE
 );
+MQTTFeature mqtt(
+    MQTT_SERVER,
+    MQTT_PORT,
+    MQTT_USERNAME,
+    MQTT_PASSWORD,
+    OTA_HOSTNAME,       // Use OTA hostname as client ID
+    MQTT_BASE_TOPIC,
+    MQTT_RECONNECT_INTERVAL
+);
+
+// Home Assistant sensor configuration for our data collection
+const HASensorConfig sensorHAConfig[] = {
+    { "temperature", "Temperature", HADeviceClass::TEMPERATURE, "°C", nullptr },
+    { "humidity", "Humidity", HADeviceClass::HUMIDITY, "%", nullptr },
+    { "rssi", "WiFi Signal", HADeviceClass::SIGNAL_STRENGTH, "dBm", nullptr },
+};
 
 // Array of all features for easy iteration
 Feature* features[] = {
@@ -78,7 +96,8 @@ Feature* features[] = {
     &storage,      // Filesystem before features that need it
     &webServer,
     &ota,
-    &influxDB
+    &influxDB,
+    &mqtt          // MQTT after network is ready
 };
 const size_t featureCount = sizeof(features) / sizeof(features[0]);
 
@@ -87,6 +106,7 @@ const size_t featureCount = sizeof(features) / sizeof(features[0]);
 // ============================================
 unsigned long lastDataCollection = 0;
 const unsigned long DATA_COLLECTION_INTERVAL = 60000;  // Collect every 60 seconds
+bool haDiscoveryPublished = false;
 
 void collectSensorData() {
     SensorData reading;
@@ -105,6 +125,9 @@ void collectSensorData() {
     
     // Queue for InfluxDB upload
     influxDB.queue(sensorData.latestToLineProtocol());
+    
+    // Publish to MQTT for Home Assistant
+    DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
     
     LOG_D("Collected: temp=%.1f, humidity=%.1f, rssi=%d", 
           reading.temperature, reading.humidity, reading.rssi);
@@ -146,6 +169,23 @@ void loop() {
     // Run all feature loop handlers
     for (size_t i = 0; i < featureCount; i++) {
         features[i]->loop();
+    }
+    
+    // Publish Home Assistant autodiscovery once MQTT is connected
+    if (mqtt.isConnected() && !haDiscoveryPublished) {
+        DataCollectionMQTT::publishDiscovery(
+            &mqtt,
+            "sensors",
+            sensorHAConfig,
+            sizeof(sensorHAConfig) / sizeof(sensorHAConfig[0]),
+            OTA_HOSTNAME,          // Device name in HA
+            OTA_HOSTNAME,          // Device unique ID
+            "Custom",              // Manufacturer
+            "ESP32 Sensor Node",   // Model
+            "1.0.0"                // Software version
+        );
+        haDiscoveryPublished = true;
+        LOG_I("Home Assistant autodiscovery published");
     }
     
     // Periodic data collection
