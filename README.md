@@ -311,6 +311,109 @@ Use these constants from `HADeviceClass` namespace:
 - `CO2`, `PM25`, `PM10`
 - `TIMESTAMP`, `DURATION`
 
+## Data Filesystem Management
+
+The `data/` folder contains configuration files that are uploaded to the ESP32's LittleFS filesystem. This includes Modbus device definitions and mappings.
+
+### Uploading the Filesystem
+
+After modifying any files in the `data/` folder, upload them to the device:
+
+**Via Serial:**
+```bash
+pio run -e serial -t uploadfs
+```
+
+**Via OTA:**
+```bash
+pio run -e ota -t uploadfs
+```
+
+> **Note:** Filesystem upload erases and replaces all files. Make sure all needed files are in the `data/` folder before uploading.
+
+### Modbus Device Configuration
+
+Device definitions are stored in `data/modbus/devices/` as JSON files. The device mapping in `data/modbus/devices.json` assigns unit IDs to device types.
+
+#### Adding a New Device
+
+1. **Create the device definition** (if the type doesn't exist):
+   ```bash
+   # Create a new device type file
+   touch data/modbus/devices/my_device.json
+   ```
+
+   Example structure:
+   ```json
+   {
+       "name": "MyDevice",
+       "description": "Custom Modbus device",
+       "registers": [
+           {
+               "name": "Voltage",
+               "address": 0,
+               "length": 2,
+               "functionCode": 4,
+               "dataType": "float32_be",
+               "factor": 1.0,
+               "offset": 0,
+               "unit": "V",
+               "pollInterval": 5000
+           }
+       ]
+   }
+   ```
+
+2. **Add the device to the mapping** (`data/modbus/devices.json`):
+   ```json
+   {
+       "devices": [
+           {"unitId": 1, "type": "MyDevice", "name": "My Sensor"}
+       ]
+   }
+   ```
+
+3. **Upload the filesystem:**
+   ```bash
+   pio run -e serial -t uploadfs
+   ```
+
+4. **Reboot the ESP32** to load the new configuration.
+
+#### Removing a Device
+
+1. Remove the entry from `data/modbus/devices.json`
+2. Optionally delete the device type file from `data/modbus/devices/`
+3. Upload the filesystem: `pio run -e serial -t uploadfs`
+
+#### Register Definition Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Register name (used in API) |
+| `address` | integer | Modbus register address (0-based) |
+| `length` | integer | Number of registers (1 for 16-bit, 2 for 32-bit) |
+| `functionCode` | integer | 3 = holding registers, 4 = input registers |
+| `dataType` | string | See supported types below |
+| `factor` | float | Multiply raw value by this factor |
+| `offset` | float | Add to value after factor |
+| `unit` | string | Unit of measurement |
+| `pollInterval` | integer | Polling interval in milliseconds |
+
+#### Supported Data Types
+
+| Type | Description |
+|------|-------------|
+| `uint16` | Unsigned 16-bit integer |
+| `int16` | Signed 16-bit integer |
+| `uint32_be` | Unsigned 32-bit, big-endian |
+| `uint32_le` | Unsigned 32-bit, little-endian |
+| `int32_be` | Signed 32-bit, big-endian |
+| `int32_le` | Signed 32-bit, little-endian |
+| `float32_be` | 32-bit float, big-endian (common) |
+| `float32_le` | 32-bit float, little-endian |
+| `bool` | Boolean (0 or 1) |
+
 ## License
 
 MIT
