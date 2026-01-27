@@ -13,8 +13,20 @@ A modular ESP32 firmware built with PlatformIO and Arduino framework, featuring 
 - **InfluxDB** - Batch upload to InfluxDB 2.x time-series database
 - **MQTT** - MQTT client with Home Assistant autodiscovery
 - **Data Collections** - Typed data structures with JSON serialization and web views
+- **Modbus RTU** - Bus monitoring, automatic register discovery, and device polling
 
 All features are implemented as modular, non-blocking classes derived from a common `Feature` base class.
+
+### Supported Modbus Devices
+
+| Device | Description | Registers |
+|--------|-------------|----------|
+| SDM120 | Eastron SDM120 single-phase energy meter | ~20 |
+| SDM630 | Eastron SDM630 three-phase energy meter | ~60 |
+| SDM72 | Eastron SDM72 three-phase energy meter | ~40 |
+| SolplanetASWHybrid | Solplanet ASW 05-12k H-T2/T3 hybrid inverter | ~65 |
+| SolplanetApolloSOL11H | Solplanet Apollo SOL 11H wallbox (EV charger) | ~40 |
+| SolplanetAiHBG2Pro | Solplanet Ai-HB G2 Pro 150A 15.36kWh battery | ~85 |
 
 ## Prerequisites
 

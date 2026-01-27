@@ -1,20 +1,25 @@
 {
-    "description": "Modbus device to unit ID mapping",
+    "description": "Modbus device to unit ID mapping. Available types: SDM120, SDM630, SDM72, SolplanetASWHybrid, SolplanetApolloSOL11H, SolplanetAiHBG2Pro",
     "devices": [
         {
             "unitId": 1,
-            "type": "SDM120",
-            "name": "Main Meter"
+            "type": "SolplanetASWHybrid",
+            "name": "Hybrid Inverter"
         },
         {
             "unitId": 2,
-            "type": "SDM120",
-            "name": "Solar Inverter Meter"
+            "type": "SolplanetAiHBG2Pro",
+            "name": "Battery System"
+        },
+        {
+            "unitId": 3,
+            "type": "SolplanetApolloSOL11H",
+            "name": "EV Charger"
         },
         {
             "unitId": 10,
-            "type": "SDM630",
-            "name": "Three Phase Meter"
+            "type": "SDM72",
+            "name": "Grid Meter"
         }
     ]
 }

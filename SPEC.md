@@ -40,8 +40,12 @@ esp32-firmware/
 │   └── modbus/
 │       ├── devices.json          # Unit ID to device type mapping
 │       └── devices/
-│           ├── sdm120.json       # SDM120 register definitions
-│           └── sdm630.json       # SDM630 register definitions
+│           ├── sdm120.json                 # Eastron SDM120 single-phase meter
+│           ├── sdm630.json                 # Eastron SDM630 three-phase meter
+│           ├── sdm72.json                  # Eastron SDM72 three-phase meter
+│           ├── solplanet_asw_hybrid.json   # Solplanet ASW 05-12k hybrid inverter
+│           ├── solplanet_apollo_sol11h.json # Solplanet Apollo SOL 11H wallbox
+│           └── solplanet_aihb_g2pro.json   # Solplanet Ai-HB G2 Pro battery
 └── SPEC.md
 ```
 
