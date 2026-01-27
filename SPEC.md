@@ -26,8 +26,11 @@ esp32-firmware/
 │   ├── StorageFeature.cpp
 │   ├── InfluxDBFeature.h
 │   ├── InfluxDBFeature.cpp
+│   ├── MQTTFeature.h
+│   ├── MQTTFeature.cpp
 │   ├── DataCollection.h          # Template for typed data collections
-│   └── DataCollectionWeb.h       # Web endpoints for data collections
+│   ├── DataCollectionWeb.h       # Web endpoints for data collections
+│   └── DataCollectionMQTT.h      # MQTT/Home Assistant integration
 ├── data/                         # SPIFFS/LittleFS web files (if needed)
 └── spec.md
 ```
@@ -321,6 +324,124 @@ DataCollectionWeb::registerCollection(
 );
 ```
 
+### 7. MQTTFeature
+
+**Purpose:** MQTT client with auto-reconnect for publishing sensor data.
+
+**Library:** `knolleary/PubSubClient`
+
+**Constructor Parameters:**
+- `const char* server` - MQTT broker hostname/IP
+- `uint16_t port` - MQTT broker port
+- `const char* username` - MQTT username (empty = no auth)
+- `const char* password` - MQTT password
+- `const char* clientId` - MQTT client identifier
+- `const char* baseTopic` - Base topic for all messages
+- `uint32_t reconnectIntervalMs` - Reconnect attempt interval
+
+**Build Flags:**
+```ini
+-D MQTT_SERVER=\"\"
+-D MQTT_PORT=1883
+-D MQTT_USERNAME=\"\"
+-D MQTT_PASSWORD=\"\"
+-D MQTT_BASE_TOPIC=\"esp32\"
+-D MQTT_RECONNECT_INTERVAL=5000
+```
+
+**Class Interface:**
+```cpp
+class MQTTFeature : public Feature {
+public:
+    MQTTFeature(const char* server, uint16_t port,
+                const char* username, const char* password,
+                const char* clientId, const char* baseTopic,
+                uint32_t reconnectIntervalMs = 5000);
+    void setup() override;
+    void loop() override;  // Handle reconnection and message processing
+    const char* getName() const override { return "MQTT"; }
+    bool isReady() const override { return _connected; }
+    
+    bool publish(const char* topic, const char* payload, bool retain = false);
+    bool publishToBase(const char* subtopic, const char* payload, bool retain = false);
+    bool subscribe(const char* topic);
+    void onMessage(MessageCallback callback);
+    
+    bool isConnected() const;
+    const char* getBaseTopic() const;
+    static MQTTFeature* getInstance();
+};
+```
+
+### 8. DataCollectionMQTT
+
+**Purpose:** Home Assistant autodiscovery integration for data collections.
+
+**Features:**
+- Publishes HA-compatible discovery config to `homeassistant/sensor/...`
+- State updates to `<base_topic>/<collection>/state`
+- Availability tracking via `<base_topic>/status`
+- Device grouping (all sensors appear as one device in HA)
+
+**Static Methods:**
+```cpp
+class DataCollectionMQTT {
+public:
+    // Publish Home Assistant autodiscovery config
+    static void publishDiscovery(
+        MQTTFeature* mqtt,
+        const char* collectionName,
+        const HASensorConfig* sensorConfigs,
+        size_t configCount,
+        const char* deviceName,
+        const char* deviceId,
+        const char* manufacturer = "ESP32",
+        const char* model = "ESP32 Sensor",
+        const char* swVersion = "1.0.0"
+    );
+    
+    // Publish latest data entry
+    template<typename T, size_t N>
+    static void publishLatest(MQTTFeature* mqtt, DataCollection<T, N>& collection, const char* name);
+    
+    // Remove discovery config
+    static void removeDiscovery(MQTTFeature* mqtt, const char* name, 
+                                const HASensorConfig* configs, size_t count, const char* deviceId);
+};
+
+// Sensor configuration for Home Assistant
+struct HASensorConfig {
+    const char* fieldName;      // Field name in DataCollection
+    const char* displayName;    // Human-readable name in HA
+    const char* deviceClass;    // HA device class (HADeviceClass::*)
+    const char* unit;           // Unit of measurement
+    const char* icon;           // MDI icon (optional)
+};
+```
+
+**Available Device Classes (HADeviceClass namespace):**
+- `TEMPERATURE`, `HUMIDITY`, `PRESSURE`
+- `BATTERY`, `VOLTAGE`, `CURRENT`, `POWER`, `ENERGY`
+- `SIGNAL_STRENGTH`, `ILLUMINANCE`
+- `CO2`, `PM25`, `PM10`
+- `TIMESTAMP`, `DURATION`
+
+**Usage Example:**
+```cpp
+const HASensorConfig sensorHAConfig[] = {
+    { "temperature", "Temperature", HADeviceClass::TEMPERATURE, "°C", nullptr },
+    { "humidity", "Humidity", HADeviceClass::HUMIDITY, "%", nullptr },
+    { "rssi", "WiFi Signal", HADeviceClass::SIGNAL_STRENGTH, "dBm", nullptr },
+};
+
+// Publish discovery once when MQTT connects
+DataCollectionMQTT::publishDiscovery(&mqtt, "sensors", sensorHAConfig, 3,
+    "Living Room", "esp32-living", "Custom", "ESP32 Node", "1.0.0");
+
+// Publish data on each collection
+DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
+```
+
 ## PlatformIO Configuration
 
 ```ini
@@ -463,6 +584,18 @@ void loop() {
 | OTA | `OTA_HOSTNAME` | `"esp32-device"` |
 | OTA | `OTA_PASSWORD` | `"otapassword"` |
 | OTA | `OTA_PORT` | `3232` |
+| InfluxDB | `INFLUXDB_URL` | `""` (disabled) |
+| InfluxDB | `INFLUXDB_ORG` | `""` |
+| InfluxDB | `INFLUXDB_BUCKET` | `""` |
+| InfluxDB | `INFLUXDB_TOKEN` | `""` |
+| InfluxDB | `INFLUXDB_BATCH_INTERVAL` | `10000` ms |
+| InfluxDB | `INFLUXDB_BATCH_SIZE` | `50` |
+| MQTT | `MQTT_SERVER` | `""` (disabled) |
+| MQTT | `MQTT_PORT` | `1883` |
+| MQTT | `MQTT_USERNAME` | `""` |
+| MQTT | `MQTT_PASSWORD` | `""` |
+| MQTT | `MQTT_BASE_TOPIC` | `"esp32"` |
+| MQTT | `MQTT_RECONNECT_INTERVAL` | `5000` ms |
 
 ## Dependencies
 
@@ -470,8 +603,8 @@ void loop() {
 |---------|---------|---------|
 | `tzapu/WiFiManager` | ^2.0.17 | WiFi configuration portal |
 | `me-no-dev/ESPAsyncWebServer` | ^1.2.4 | Async HTTP server |
-| `me-no-dev/AsyncTCP` | ^1.1.1 | Async TCP for ESP32 |
-
+| `me-no-dev/AsyncTCP` | ^1.1.1 | Async TCP for ESP32 || `bblanchon/ArduinoJson` | ^7.0.0 | JSON serialization |
+| `knolleary/PubSubClient` | ^2.8 | MQTT client |
 ## Notes
 
 1. **Feature Initialization Order:** LoggingFeature must be initialized first, followed by WiFiManagerFeature before any network-dependent features.

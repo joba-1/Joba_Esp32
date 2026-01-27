@@ -9,6 +9,10 @@ A modular ESP32 firmware built with PlatformIO and Arduino framework, featuring 
 - **Time Sync** - NTP-based time synchronization
 - **Web Server** - Async HTTP server with REST API
 - **OTA Updates** - Over-the-air firmware updates
+- **Storage** - LittleFS filesystem for persistent data
+- **InfluxDB** - Batch upload to InfluxDB 2.x time-series database
+- **MQTT** - MQTT client with Home Assistant autodiscovery
+- **Data Collections** - Typed data structures with JSON serialization and web views
 
 All features are implemented as modular, non-blocking classes derived from a common `Feature` base class.
 
@@ -140,6 +144,15 @@ All configuration is done via build flags in `platformio.ini`:
 | `WEBSERVER_PORT` | 80 | HTTP server port |
 | `OTA_HOSTNAME` | esp32-device | mDNS hostname |
 | `OTA_PASSWORD` | otapassword | OTA update password |
+| `INFLUXDB_URL` | "" | InfluxDB server URL (empty=disabled) |
+| `INFLUXDB_ORG` | "" | InfluxDB organization |
+| `INFLUXDB_BUCKET` | "" | InfluxDB bucket |
+| `INFLUXDB_TOKEN` | "" | InfluxDB API token |
+| `MQTT_SERVER` | "" | MQTT broker address (empty=disabled) |
+| `MQTT_PORT` | 1883 | MQTT broker port |
+| `MQTT_USERNAME` | "" | MQTT username |
+| `MQTT_PASSWORD` | "" | MQTT password |
+| `MQTT_BASE_TOPIC` | esp32 | Base topic for all messages |
 
 ### Enabling Syslog
 
@@ -195,6 +208,67 @@ DataCollectionWeb::registerCollection(
     5000                  // Refresh interval (ms)
 );
 ```
+
+## MQTT & Home Assistant
+
+The firmware supports MQTT with automatic Home Assistant autodiscovery. When configured, sensors automatically appear in Home Assistant without manual YAML configuration.
+
+### Enabling MQTT
+
+Set the MQTT broker in `platformio.ini`:
+
+```ini
+build_flags =
+    -D MQTT_SERVER=\"192.168.1.100\"
+    -D MQTT_USERNAME=\"mqtt_user\"
+    -D MQTT_PASSWORD=\"mqtt_pass\"
+    -D MQTT_BASE_TOPIC=\"esp32/living_room\"
+```
+
+### Home Assistant Autodiscovery
+
+Define sensor configurations and publish discovery:
+
+```cpp
+#include "DataCollectionMQTT.h"
+
+// Define Home Assistant sensor mapping
+const HASensorConfig sensorHAConfig[] = {
+    { "temperature", "Temperature", HADeviceClass::TEMPERATURE, "°C", nullptr },
+    { "humidity", "Humidity", HADeviceClass::HUMIDITY, "%", nullptr },
+    { "rssi", "WiFi Signal", HADeviceClass::SIGNAL_STRENGTH, "dBm", nullptr },
+};
+
+// Publish autodiscovery (once when MQTT connects)
+DataCollectionMQTT::publishDiscovery(
+    &mqtt, "sensors", sensorHAConfig, 3,
+    "Living Room Sensor",    // Device name in HA
+    "esp32-living-room",     // Unique device ID
+    "Custom",                // Manufacturer
+    "ESP32 Sensor Node",     // Model
+    "1.0.0"                  // Software version
+);
+
+// Publish data updates (on each reading)
+DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
+```
+
+### MQTT Topics
+
+| Topic | Purpose |
+|-------|---------|
+| `homeassistant/sensor/<device>/.../config` | Autodiscovery (retained) |
+| `<base_topic>/sensors/state` | Latest sensor values as JSON |
+| `<base_topic>/status` | Device availability (online/offline) |
+
+### Available Device Classes
+
+Use these constants from `HADeviceClass` namespace:
+- `TEMPERATURE`, `HUMIDITY`, `PRESSURE`
+- `BATTERY`, `VOLTAGE`, `CURRENT`, `POWER`, `ENERGY`
+- `SIGNAL_STRENGTH`, `ILLUMINANCE`
+- `CO2`, `PM25`, `PM10`
+- `TIMESTAMP`, `DURATION`
 
 ## License
 
