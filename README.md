@@ -1,22 +1,49 @@
 # ESP32 Firmware
 
-A modular ESP32 firmware built with PlatformIO and Arduino framework, featuring WiFi management, time synchronization, async web server, and OTA updates.
+A production-ready, modular ESP32 firmware framework for IoT data collection and home automation. Built with PlatformIO and Arduino framework, featuring automatic device identification, comprehensive data logging, and seamless Home Assistant integration.
 
-## Features
+## What It Does
 
-- **WiFiManager** - Captive portal for WiFi configuration
-- **Logging** - Centralized logging with serial output, optional syslog, and boot/runtime log levels
-- **Time Sync** - NTP-based time synchronization
-- **Web Server** - Async HTTP server with REST API
-- **OTA Updates** - Over-the-air firmware updates
-- **Storage** - LittleFS filesystem for persistent data
-- **InfluxDB** - Batch upload to InfluxDB 2.x time-series database
-- **MQTT** - MQTT client with Home Assistant autodiscovery
-- **Data Collections** - Typed data structures with JSON serialization and web views
-- **Modbus RTU** - Bus monitoring, automatic register discovery, and device polling
-- **Modbus Integration** - Automatic InfluxDB logging and Home Assistant autodiscovery for Modbus devices
+This firmware transforms your ESP32 into a smart data collection gateway with:
 
-All features are implemented as modular, non-blocking classes derived from a common `Feature` base class.
+- **Automatic Device Identity** - Unique device IDs based on MAC address, dynamic hostnames, and unified passwords
+- **Zero-Touch Configuration** - WiFi captive portal, automatic time sync, and self-configuring services
+- **Comprehensive Data Collection** - Typed data structures with automatic persistence and web visualization
+- **Time-Series Logging** - Batch uploads to InfluxDB with automatic device tagging
+- **Home Automation Ready** - MQTT with Home Assistant autodiscovery for sensors and Modbus devices
+- **Industrial I/O** - Modbus RTU support with automatic register discovery and device polling
+- **Remote Management** - Web interface, REST API, OTA updates, and syslog integration
+- **Visual Feedback** - Built-in LED indicator for setup and data activity
+
+## Key Features
+
+### Core Infrastructure
+- **WiFiManager** - Captive portal (`{DeviceID}-Config`) for initial WiFi setup
+- **Device Identity** - Dynamic hostname, MQTT topics, and passwords based on firmware name + MAC address
+- **Logging** - Centralized logging with configurable levels, serial output, and remote syslog
+- **Time Sync** - NTP synchronization with EU/DE regional servers
+- **Web Server** - Async HTTP server with device-specific titles and REST API
+- **OTA Updates** - Over-the-air firmware updates via mDNS (`{hostname}.local`)
+- **Storage** - LittleFS filesystem for configuration and data persistence
+- **LED Indicator** - Visual feedback during setup and data collection (GPIO 2)
+
+### Data Management
+- **Data Collections** - Type-safe data structures with JSON/InfluxDB serialization
+- **InfluxDB Integration** - Batch uploads with device_id, firmware, and version tags
+- **MQTT Client** - Per-device topics (`{firmware}/{hostname}/*`) with auto-reconnect
+- **Home Assistant** - Automatic discovery for all sensors and Modbus devices
+- **Web Visualization** - Live data tables with auto-refresh
+
+### Modbus RTU Support
+- **Bus Monitoring** - Low-level packet capture and analysis
+- **Device Polling** - Automatic register reading with configurable intervals
+- **Hot Discovery** - Automatic register scanning for unknown devices
+- **JSON Configuration** - Filesystem-based device definitions
+- **Multi-Device** - Support for multiple devices on same bus
+- **InfluxDB Logging** - Automatic logging of all Modbus register values
+- **HA Integration** - Automatic Home Assistant discovery for each register
+
+All features are non-blocking and run concurrently via a modular architecture.
 
 ### Supported Modbus Devices
 
@@ -132,112 +159,103 @@ All features are implemented as modular, non-blocking classes derived from a com
 
 ## Initial WiFi Configuration
 
-After flashing, the ESP32 starts a WiFi access point:
+After flashing, the ESP32 starts a WiFi access point with a unique name:
 
-1. Connect to WiFi network **ESP32-Config** (open network)
-2. A captive portal should open automatically, or navigate to `192.168.4.1`
-3. Select your WiFi network and enter the password
-4. The ESP32 reboots and connects to your network
+1. Connect to WiFi network **{FirmwareName}-{DeviceID}-Config** (e.g., `ESP32-Firmware-A1B2C3-Config`)
+2. Password is auto-generated from firmware name + MAC (or set via `DEFAULT_PASSWORD`)
+3. A captive portal should open automatically, or navigate to `192.168.4.1`
+4. Select your WiFi network and enter the password
+5. The ESP32 reboots and connects to your network
+
+**Device Identity:**
+- Device ID: `{FIRMWARE_NAME}-{MAC_SUFFIX}` (e.g., `ESP32-Firmware-A1B2C3`)
+- Hostname: `{firmware-name}-{mac-suffix}` (e.g., `esp32-firmware-a1b2c3`)
+- mDNS: `{hostname}.local` (e.g., `esp32-firmware-a1b2c3.local`)
+- Default Password: `{FIRMWARE_NAME}-{MAC_SUFFIX}` (or custom via `DEFAULT_PASSWORD`)
 
 ## OTA Updates
 
 Once the ESP32 is connected to your network:
 
-1. **Find the device IP** from serial monitor or your router's DHCP client list.
-
-2. **Ensure mDNS works** (or use IP address):
+1. **Find the device**:
    ```bash
-   ping esp32-device.local
+   # Using mDNS (hostname from serial output or logs)
+   ping esp32-firmware-a1b2c3.local
+   
+   # Or find IP from router's DHCP client list
    ```
 
-3. **Update via OTA**:
+2. **Update the OTA environment** in `platformio.ini`:
+   ```ini
+   [env:ota]
+   upload_port = esp32-firmware-a1b2c3.local
+   ; Or use IP address:
+   ; upload_port = 192.168.1.xxx
+   ```
+
+3. **Upload via OTA**:
    ```bash
    pio run -e ota -t upload
    ```
 
-   If using IP address instead of hostname, update `platformio.ini`:
-   ```ini
-   [env:ota]
-   upload_port = 192.168.1.xxx
-   ```
+## Configuration Overview
 
-## Configuration
+Configuration is split between build-time and runtime settings:
 
-All configuration is done via build flags in `platformio.ini`:
+### config.ini (User-Specific Settings)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `WIFI_AP_NAME` | ESP32-Config | Config portal AP name |
-| `WIFI_CONFIG_PORTAL_TIMEOUT` | 180 | Portal timeout (seconds) |
-| `LOG_SERIAL_BOOT_LEVEL` | 4 | Serial log level during boot (0-5) |
-| `LOG_SERIAL_RUNTIME_LEVEL` | 3 | Serial log level after boot (0-5) |
-| `LOG_BOOT_DURATION_MS` | 30000 | Boot phase duration (ms) |
-| `LOG_SYSLOG_LEVEL` | 3 | Syslog log level (0-5) |
-| `LOG_SYSLOG_SERVER` | "" | Syslog server IP (empty=disabled) |
-| `LOG_SYSLOG_PORT` | 514 | Syslog UDP port |
-| `NTP_SERVER1` | pool.ntp.org | Primary NTP server |
-| `TIMEZONE` | CET-1CEST... | POSIX timezone |
-| `WEBSERVER_PORT` | 80 | HTTP server port |
-| `OTA_HOSTNAME` | esp32-device | mDNS hostname |
-| `OTA_PASSWORD` | otapassword | OTA update password |
-| `INFLUXDB_URL` | "" | InfluxDB server URL (empty=disabled) |
-| `INFLUXDB_VERSION` | 1 | InfluxDB version (1 or 2) |
-| `INFLUXDB_DATABASE` | "" | Database name (V1) |
-| `INFLUXDB_USERNAME` | "" | Username (V1) |
-| `INFLUXDB_PASSWORD` | "" | Password (V1) |
-| `INFLUXDB_ORG` | "" | Organization (V2) |
-| `INFLUXDB_BUCKET` | "" | Bucket (V2) |
-| `INFLUXDB_TOKEN` | "" | API token (V2) |
-| `MQTT_SERVER` | "" | MQTT broker address (empty=disabled) |
-| `MQTT_PORT` | 1883 | MQTT broker port |
-| `MQTT_USERNAME` | "" | MQTT username |
-| `MQTT_PASSWORD` | "" | MQTT password |
-| `MQTT_BASE_TOPIC` | esp32 | Base topic for all messages |
-
-### Enabling Syslog
-
-To send logs to a syslog server, set the server IP in `platformio.ini`:
-
-```ini
-build_flags =
-    -D LOG_SYSLOG_SERVER=\"192.168.1.100\"
+Create from template and customize for your environment:
+```bash
+python3 pre_build.py
+nano config.ini
 ```
 
-Logs are sent via UDP in RFC 3164 BSD syslog format.
+**Firmware Identity:**
+- `firmware_name`: Your project name (used in device ID, MQTT topics, InfluxDB)
+- `firmware_version`: Semantic version
+- `device_instance`: 0 = use MAC-based ID, >0 = manual instance number
+- `default_password`: Leave empty for auto-generated, or set custom
 
-### Enabling InfluxDB
+**Logging:**
+- `log_serial_boot_level`: Serial verbosity during boot (0=OFF, 4=DEBUG)
+- `log_serial_runtime_level`: Serial verbosity after boot (0=OFF, 3=INFO)
+- `log_boot_duration_ms`: Time to keep boot log level (default: 300000 = 5 minutes)
+- `log_syslog_level`: Syslog verbosity (0=OFF, 3=INFO)
+- `syslog_server`: Remote syslog server IP (empty = disabled)
 
-The firmware supports both InfluxDB 1.x and 2.x.
+**Network:**
+- `wifi_config_portal_timeout`: Seconds before portal closes (180)
+- `ntp_server1`, `ntp_server2`: NTP servers (de.pool.ntp.org, europe.pool.ntp.org)
+- `timezone`: POSIX timezone string (CET-1CEST,M3.5.0,M10.5.0/3)
 
-**InfluxDB 1.x** (user/password authentication):
-```ini
-build_flags =
-    -D INFLUXDB_URL=\"http://192.168.1.100:8086\"
-    -D INFLUXDB_VERSION=1
-    -D INFLUXDB_DATABASE=\"sensors\"
-    -D INFLUXDB_USERNAME=\"myuser\"
-    -D INFLUXDB_PASSWORD=\"mypassword\"
-    -D INFLUXDB_RP=\"autogen\"           ; Optional: retention policy
-```
+**InfluxDB:**
+- `influxdb_url`: Server URL (http://192.168.1.100:8086)
+- `influxdb_version`: 1 or 2
+- `influxdb_database`: Database/bucket name (empty = use firmware name)
+- Authentication: username/password (v1) or org/token (v2)
 
-**InfluxDB 2.x** (token authentication):
-```ini
-build_flags =
-    -D INFLUXDB_URL=\"http://192.168.1.100:8086\"
-    -D INFLUXDB_VERSION=2
-    -D INFLUXDB_ORG=\"my-org\"
-    -D INFLUXDB_BUCKET=\"my-bucket\"
-    -D INFLUXDB_TOKEN=\"my-api-token\"
-```
+**MQTT:**
+- `mqtt_server`: Broker IP or hostname
+- `mqtt_username`, `mqtt_password`: Optional authentication
+- **Base topic automatically set to:** `{firmware_name}/{hostname}`
+
+**Modbus RTU:**
+- `modbus_serial_rx`, `modbus_serial_tx`: GPIO pins
+- `modbus_baud_rate`: Communication speed (9600)
+- `modbus_de_pin`: RS485 direction control (-1 if not used)
+
+**LED Indicator:**
+- `led_pin`: GPIO pin for status LED (2 = built-in)
+- `led_active_low`: true for active-low logic (built-in ESP32 LED)
 
 ## Web Interface
 
-Access the web interface at `http://<device-ip>/` or `http://esp32-device.local/`
+Access the web interface at `http://<device-ip>/` or `http://{hostname}.local/` (e.g., `http://esp32-firmware-a1b2c3.local/`)
 
-Default credentials: `admin` / `admin`
+Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in serial log at boot), or your custom password from config.ini.
 
 **Endpoints:**
-- `/` - Status page
+- `/` - Status page with firmware info and device identity
 - `/api/status` - JSON status
 - `/api/<collection>` - JSON data for a data collection
 - `/api/<collection>/latest` - Latest JSON entry
@@ -276,23 +294,32 @@ DataCollectionWeb::registerCollection(
 
 ## MQTT & Home Assistant
 
-The firmware supports MQTT with automatic Home Assistant autodiscovery. When configured, sensors automatically appear in Home Assistant without manual YAML configuration.
+The firmware supports MQTT with automatic Home Assistant autodiscovery. Each device gets unique MQTT topics based on its device identity.
+
+### Dynamic MQTT Topics
+
+MQTT topics are automatically generated per device:
+- **Base topic format**: `{firmware_name}/{hostname}/`
+- **Example**: `ESP32-Firmware/esp32-firmware-a1b2c3/`
+- **Client ID**: `{hostname}` (unique per device)
+
+This ensures multiple devices can coexist on the same broker without conflicts.
 
 ### Enabling MQTT
 
-Set the MQTT broker in `platformio.ini`:
+Configure MQTT broker in config.ini:
 
 ```ini
-build_flags =
-    -D MQTT_SERVER=\"192.168.1.100\"
-    -D MQTT_USERNAME=\"mqtt_user\"
-    -D MQTT_PASSWORD=\"mqtt_pass\"
-    -D MQTT_BASE_TOPIC=\"esp32/living_room\"
+mqtt_server = 192.168.1.100
+mqtt_username = mqtt_user
+mqtt_password = mqtt_pass
 ```
+
+The base topic is automatically set. Do not configure `MQTT_BASE_TOPIC` manually.
 
 ### Home Assistant Autodiscovery
 
-Define sensor configurations and publish discovery:
+Sensors are automatically discovered with device identity information:
 
 ```cpp
 #include "DataCollectionMQTT.h"
@@ -305,13 +332,14 @@ const HASensorConfig sensorHAConfig[] = {
 };
 
 // Publish autodiscovery (once when MQTT connects)
+// Device info is automatically pulled from DeviceInfo
 DataCollectionMQTT::publishDiscovery(
     &mqtt, "sensors", sensorHAConfig, 3,
-    "Living Room Sensor",    // Device name in HA
-    "esp32-living-room",     // Unique device ID
-    "Custom",                // Manufacturer
-    "ESP32 Sensor Node",     // Model
-    "1.0.0"                  // Software version
+    DeviceInfo::getDeviceId().c_str(),     // Device name: "ESP32-Firmware-A1B2C3"
+    DeviceInfo::getDeviceId().c_str(),     // Unique device ID
+    "joba-1",                               // Manufacturer (GitHub username)
+    DeviceInfo::getFirmwareName().c_str(), // Model
+    DeviceInfo::getFirmwareVersion().c_str() // Software version
 );
 
 // Publish data updates (on each reading)
@@ -320,11 +348,15 @@ DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
 
 ### MQTT Topics
 
+All topics are prefixed with `{firmware_name}/{hostname}/`:
+
 | Topic | Purpose |
 |-------|---------|
-| `homeassistant/sensor/<device>/.../config` | Autodiscovery (retained) |
-| `<base_topic>/sensors/state` | Latest sensor values as JSON |
-| `<base_topic>/status` | Device availability (online/offline) |
+| `homeassistant/sensor/{deviceId}_{field}/config` | Autodiscovery (retained) |
+| `{base_topic}/sensors/state` | Latest sensor values as JSON |
+| `{base_topic}/status` | Device availability (online/offline) |
+| `{base_topic}/modbus/unit_N/state` | Modbus device state JSON |
+| `{base_topic}/modbus/unit_N/{register}` | Individual register value |
 
 ### Available Device Classes
 
@@ -337,21 +369,24 @@ Use these constants from `HADeviceClass` namespace:
 
 ## Modbus Integration with InfluxDB & Home Assistant
 
-Modbus device values are automatically integrated with InfluxDB and MQTT/Home Assistant when both features are enabled.
+Modbus device values are automatically integrated with InfluxDB and MQTT/Home Assistant when both features are enabled. All metrics include device identity tags.
 
 ### Automatic Data Flow
 
 When a Modbus register is polled and updated:
 
 1. **InfluxDB** - Value is queued for batch upload with tags:
-   - `device` - Device name from mapping
+   - `device_id` - Device identity (e.g., "ESP32-Firmware-A1B2C3")
+   - `firmware` - Firmware name
+   - `version` - Firmware version
+   - `device` - Modbus device name from mapping
    - `unit_id` - Modbus unit ID
    - `register` - Register name
    - `unit` - Unit of measurement
 
-2. **MQTT** - Value is published to:
-   - Individual topic: `<base_topic>/modbus/unit_N/RegisterName`
-   - State topic: `<base_topic>/modbus/unit_N/state` (JSON with all values)
+2. **MQTT** - Value is published to device-specific topics:
+   - Individual: `{firmware_name}/{hostname}/modbus/unit_N/RegisterName`
+   - State JSON: `{firmware_name}/{hostname}/modbus/unit_N/state`
 
 3. **Home Assistant** - Autodiscovery published for each register:
    - Sensors automatically appear in HA
@@ -360,26 +395,38 @@ When a Modbus register is polled and updated:
 
 ### MQTT Topics for Modbus
 
+All topics are prefixed with `{firmware_name}/{hostname}/`:
+
 | Topic | Purpose |
 |-------|---------|
-| `homeassistant/sensor/<device_id>_<register>/config` | Autodiscovery |
-| `<base_topic>/modbus/unit_N/state` | All device values as JSON |
-| `<base_topic>/modbus/unit_N/<register>` | Individual register value |
-| `<base_topic>/modbus/status` | Device availability |
+| `homeassistant/sensor/{deviceId}_{register}/config` | Autodiscovery |
+| `{base_topic}/modbus/unit_N/state` | All device values as JSON |
+| `{base_topic}/modbus/unit_N/{register}` | Individual register value |
+| `{base_topic}/modbus/status` | Device availability |
 
 ### InfluxDB Line Protocol Format
 
+All metrics include device identity tags automatically:
+
 ```
-modbus,device=HybridInverter,unit_id=1,register=PV1Power,unit=W value=3245.5000
-modbus,device=GridMeter,unit_id=10,register=TotalPower,unit=W value=1523.2500
+modbus,device_id=ESP32-Firmware-A1B2C3,firmware=ESP32-Firmware,version=1.0.0,device=HybridInverter,unit_id=1,register=PV1Power,unit=W value=3245.5
+modbus,device_id=ESP32-Firmware-A1B2C3,firmware=ESP32-Firmware,version=1.0.0,device=GridMeter,unit_id=10,register=TotalPower,unit=W value=1523.2
 ```
 
 ### Example: Grafana Dashboard Query
 
+Query specific device or aggregate across devices:
+
 ```sql
+-- Single device
 SELECT mean("value") FROM "modbus"
-WHERE "device" = 'HybridInverter' AND "register" =~ /^PV.*Power$/
+WHERE "device_id" = 'ESP32-Firmware-A1B2C3' AND "register" =~ /^PV.*Power$/
 GROUP BY time(5m), "register"
+
+-- All devices with same firmware
+SELECT mean("value") FROM "modbus"
+WHERE "firmware" = 'ESP32-Firmware' AND "register" = 'TotalPower'
+GROUP BY time(5m), "device_id"
 ```
 
 ### Device Class Inference

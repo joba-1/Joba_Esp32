@@ -2,52 +2,315 @@
 
 ## Project Overview
 
-ESP32 firmware project using Arduino framework with PlatformIO build system. The project implements a modular feature-based architecture where each functionality is encapsulated in a class derived from a common base class.
+ESP32 firmware project using Arduino framework with PlatformIO build system. The project implements:
+
+- **Modular feature-based architecture** with Feature base class pattern
+- **Automatic device identification** based on firmware name and MAC address
+- **Configuration management** split between build-essential (platformio.ini) and user-specific (config.ini)
+- **Zero-configuration deployment** with auto-generated device identities, passwords, and MQTT topics
+- **Time-series data logging** to InfluxDB with automatic device tagging
+- **Home Assistant integration** via MQTT autodiscovery
+- **Modbus RTU support** with JSON-based device definitions
 
 ## Project Structure
 
 ```
 esp32-firmware/
-├── platformio.ini
+├── platformio.ini              # Build configuration (references config.ini)
+├── config.ini                  # User-specific settings (gitignored)
+├── config.ini.template         # Template for user configuration
+├── pre_build.py                # Auto-creates config.ini from template
 ├── src/
-│   ├── main.cpp
-│   ├── Feature.h                 # Base class for all features
-│   ├── WiFiManagerFeature.h
-│   ├── WiFiManagerFeature.cpp
-│   ├── LoggingFeature.h
-│   ├── LoggingFeature.cpp
-│   ├── TimeSyncFeature.h
-│   ├── TimeSyncFeature.cpp
-│   ├── WebServerFeature.h
-│   ├── WebServerFeature.cpp
-│   ├── OTAFeature.h
-│   ├── OTAFeature.cpp
-│   ├── StorageFeature.h
-│   ├── StorageFeature.cpp
-│   ├── InfluxDBFeature.h
-│   ├── InfluxDBFeature.cpp
-│   ├── MQTTFeature.h
-│   ├── MQTTFeature.cpp
-│   ├── DataCollection.h          # Template for typed data collections
-│   ├── DataCollectionWeb.h       # Web endpoints for data collections
-│   ├── DataCollectionMQTT.h      # MQTT/Home Assistant integration
-│   ├── ModbusRTU.h               # Low-level Modbus RTU bus monitor
-│   ├── ModbusRTU.cpp
-│   ├── ModbusDevice.h            # High-level device definitions
-│   ├── ModbusDevice.cpp
-│   └── ModbusWeb.h               # Modbus web endpoints
+│   ├── main.cpp                # Device identity setup and feature orchestration
+│   ├── DeviceInfo.h            # Device identification helper (NEW)
+│   ├── Feature.h               # Base class for all features
+│   ├── WiFiManagerFeature.h/cpp
+│   ├── LoggingFeature.h/cpp
+│   ├── TimeSyncFeature.h/cpp
+│   ├── WebServerFeature.h/cpp
+│   ├── OTAFeature.h/cpp
+│   ├── StorageFeature.h/cpp
+│   ├── InfluxDBFeature.h/cpp
+│   ├── MQTTFeature.h/cpp
+│   ├── LEDFeature.h/cpp        # Visual activity indicator (NEW)
+│   ├── DataCollection.h        # Template for typed data collections
+│   ├── DataCollectionWeb.h     # Web endpoints for data collections
+│   ├── DataCollectionMQTT.h    # MQTT/Home Assistant integration
+│   ├── ModbusRTU.h/cpp         # Low-level Modbus RTU bus monitor
+│   ├── ModbusDevice.h/cpp      # High-level device definitions
+│   └── ModbusWeb.h             # Modbus web endpoints
 ├── data/
 │   └── modbus/
-│       ├── devices.json          # Unit ID to device type mapping
-│       └── devices/
-│           ├── sdm120.json                 # Eastron SDM120 single-phase meter
-│           ├── sdm630.json                 # Eastron SDM630 three-phase meter
-│           ├── sdm72.json                  # Eastron SDM72 three-phase meter
-│           ├── solplanet_asw_hybrid.json   # Solplanet ASW 05-12k hybrid inverter
-│           ├── solplanet_apollo_sol11h.json # Solplanet Apollo SOL 11H wallbox
-│           └── solplanet_aihb_g2pro.json   # Solplanet Ai-HB G2 Pro battery
+│       ├── devices.json        # Unit ID to device type mapping
+│       └── devices/            # Device definition JSON files
 └── SPEC.md
 ```
+
+## Configuration Management
+
+### Configuration Split
+
+The project separates build-essential settings from user-specific configuration:
+
+**platformio.ini** - Build settings and references to config.ini:
+- Platform, board, framework
+- Library dependencies
+- Build flags that reference `${user_config.setting_name}`
+- Pre-build script reference
+
+**config.ini** - User-specific settings (gitignored):
+- Firmware identity (name, version, device instance)
+- Passwords and credentials
+- Network settings (WiFi, NTP, syslog)
+- Service endpoints (InfluxDB, MQTT)
+- Hardware configuration (Modbus pins, LED)
+
+**config.ini.template** - Template for user configuration:
+- Committed to git with sensible defaults
+- Documentation for each setting
+- Copied to config.ini by pre_build.py if missing
+
+### Pre-Build Script
+
+**File:** `pre_build.py`
+
+**Purpose:** Auto-create config.ini from template on first build
+
+```python
+Import("env")
+import shutil
+from pathlib import Path
+
+def copy_config_template(source, target, env):
+    config_file = Path("config.ini")
+    template_file = Path("config.ini.template")
+    
+    if not config_file.exists() and template_file.exists():
+        shutil.copy(template_file, config_file)
+        print("=" * 60)
+        print("Created config.ini from template")
+        print("Please edit config.ini to customize your settings")
+        print("=" * 60)
+
+env.AddPreAction("$BUILD_DIR/src/main.cpp.o", copy_config_template)
+```
+
+**Integration in platformio.ini:**
+```ini
+extra_scripts = pre:pre_build.py
+extra_configs = config.ini
+```
+
+### config.ini Structure
+
+```ini
+[user_config]
+# Firmware Identity
+firmware_name = ESP32-Firmware
+firmware_version = 1.0.0
+device_instance = 0
+default_password = 
+
+# Logging
+log_serial_boot_level = 4
+log_serial_runtime_level = 3
+log_boot_duration_ms = 300000
+log_syslog_level = 3
+syslog_server = 
+
+# Network
+wifi_config_portal_timeout = 180
+ntp_server1 = de.pool.ntp.org
+ntp_server2 = europe.pool.ntp.org
+timezone = CET-1CEST,M3.5.0,M10.5.0/3
+
+# InfluxDB
+influxdb_url = http://192.168.1.100:8086
+influxdb_version = 1
+influxdb_database = 
+influxdb_username = 
+influxdb_password = 
+
+# MQTT (base topic auto-generated per device)
+mqtt_server = 
+mqtt_username = 
+mqtt_password = 
+
+# Modbus RTU
+modbus_serial_rx = 16
+modbus_serial_tx = 17
+modbus_baud_rate = 9600
+modbus_de_pin = -1
+
+# LED Indicator
+led_pin = 2
+led_active_low = true
+```
+
+### Build Flags in platformio.ini
+
+Build flags reference config.ini values:
+
+```ini
+build_flags = 
+    -D FIRMWARE_NAME=\"${user_config.firmware_name}\"
+    -D FIRMWARE_VERSION=\"${user_config.firmware_version}\"
+    -D DEVICE_INSTANCE=${user_config.device_instance}
+    -D DEFAULT_PASSWORD=\"${user_config.default_password}\"
+    -D LOG_BAUD_RATE=115200
+    -D LOG_SERIAL_BOOT_LEVEL=${user_config.log_serial_boot_level}
+    -D LOG_SERIAL_RUNTIME_LEVEL=${user_config.log_serial_runtime_level}
+    -D LOG_BOOT_DURATION_MS=${user_config.log_boot_duration_ms}
+    -D LOG_SYSLOG_LEVEL=${user_config.log_syslog_level}
+    ; ... etc
+```
+
+## Device Identity System
+
+### DeviceInfo Helper (NEW)
+
+**File:** `src/DeviceInfo.h`
+
+**Purpose:** Centralized device identity generation based on firmware name and MAC address
+
+**Implementation:**
+```cpp
+#ifndef DEVICEINFO_H
+#define DEVICEINFO_H
+
+#include <Arduino.h>
+#include <WiFi.h>
+
+class DeviceInfo {
+public:
+    // Get unique device ID: "FirmwareName-A1B2C3" or "FirmwareName-NN"
+    static String getDeviceId() {
+        static String deviceId;
+        if (deviceId.isEmpty()) {
+            if (DEVICE_INSTANCE == 0) {
+                deviceId = String(FIRMWARE_NAME) + "-" + getMacSuffix();
+            } else {
+                deviceId = String(FIRMWARE_NAME) + "-" + String(DEVICE_INSTANCE);
+            }
+        }
+        return deviceId;
+    }
+    
+    // Get hostname: "firmware-name-a1b2c3" (lowercase, hyphenated)
+    static String getHostname() {
+        static String hostname;
+        if (hostname.isEmpty()) {
+            hostname = getDeviceId();
+            hostname.toLowerCase();
+            hostname.replace("_", "-");
+            hostname.replace(" ", "-");
+        }
+        return hostname;
+    }
+    
+    // Get default password: "FirmwareName-A1B2C3" or custom
+    static String getDefaultPassword() {
+        static String password;
+        if (password.isEmpty()) {
+            String configPassword = DEFAULT_PASSWORD;
+            if (configPassword.length() > 0) {
+                password = configPassword;
+            } else {
+                password = getDeviceId();
+            }
+        }
+        return password;
+    }
+    
+    // Get last 3 bytes of MAC as hex: "A1B2C3"
+    static String getMacSuffix() {
+        static String suffix;
+        if (suffix.isEmpty()) {
+            uint8_t mac[6];
+            WiFi.macAddress(mac);
+            char buffer[7];
+            sprintf(buffer, "%02X%02X%02X", mac[3], mac[4], mac[5]);
+            suffix = String(buffer);
+        }
+        return suffix;
+    }
+    
+    static const char* getFirmwareName() { return FIRMWARE_NAME; }
+    static const char* getFirmwareVersion() { return FIRMWARE_VERSION; }
+};
+
+#endif
+```
+
+**Usage in main.cpp:**
+
+```cpp
+#include "DeviceInfo.h"
+
+// Global device identity strings
+String deviceId;
+String hostname;
+String apName;
+String mqttClientId;
+String mqttBaseTopic;
+String defaultPassword;
+
+void setup() {
+    // Enable WiFi station mode to get MAC address
+    WiFi.mode(WIFI_STA);
+    delay(100);
+    
+    // Generate device identity
+    deviceId = DeviceInfo::getDeviceId();
+    hostname = DeviceInfo::getHostname();
+    apName = deviceId + "-Setup";
+    mqttClientId = hostname;
+    mqttBaseTopic = String(FIRMWARE_NAME) + "/" + hostname;
+    defaultPassword = DeviceInfo::getDefaultPassword();
+    
+    // Log device identity
+    LOG_I("Device ID: %s", deviceId.c_str());
+    LOG_I("Hostname: %s", hostname.c_str());
+    LOG_I("Password: %s", defaultPassword.c_str());
+    LOG_I("MQTT Base Topic: %s", mqttBaseTopic.c_str());
+    
+    // Configure features with dynamic values
+    wifi.setAPName(apName.c_str());
+    wifi.setAPPassword(defaultPassword.c_str());
+    ota.setHostname(hostname.c_str());
+    ota.setPassword(defaultPassword.c_str());
+    logger.setHostname(hostname.c_str());
+    mqtt.setClientId(mqttClientId.c_str());
+    mqtt.setBaseTopic(mqttBaseTopic.c_str());
+    webServer.setPassword(defaultPassword.c_str());
+    
+    // Set device ID on data collections for InfluxDB tagging
+    sensorData.setDeviceId(deviceId.c_str());
+    modbusData.setDeviceId(deviceId.c_str());
+    
+    // ... setup features
+}
+```
+
+### Dynamic Device Properties
+
+All device-specific strings are derived from DeviceInfo:
+
+| Property | Format | Example |
+|----------|--------|---------|
+| Device ID | `{FIRMWARE_NAME}-{MAC_SUFFIX}` | `ESP32-Firmware-A1B2C3` |
+| Hostname | `{firmware-name}-{mac-suffix}` (lowercase) | `esp32-firmware-a1b2c3` |
+| AP Name | `{DeviceID}-Setup` | `ESP32-Firmware-A1B2C3-Setup` |
+| mDNS | `{hostname}.local` | `esp32-firmware-a1b2c3.local` |
+| Default Password | `{DeviceID}` or custom | `ESP32-Firmware-A1B2C3` |
+| MQTT Client ID | `{hostname}` | `esp32-firmware-a1b2c3` |
+| MQTT Base Topic | `{FIRMWARE_NAME}/{hostname}` | `ESP32-Firmware/esp32-firmware-a1b2c3` |
+
+**Benefits:**
+- Unique device identity across multiple instances
+- No manual configuration required
+- No conflicts on shared MQTT brokers
+- Easy identification in logs, web interfaces, Home Assistant
 
 ## Feature Base Class
 
@@ -89,15 +352,22 @@ public:
 **Library:** `tzapu/WiFiManager`
 
 **Constructor Parameters:**
-- `const char* apName` - Access point name for configuration portal
-- `const char* apPassword` - Access point password (optional, can be empty)
+- `const char* apName` - Access point name for configuration portal (set dynamically)
+- `const char* apPassword` - Access point password (set dynamically from DeviceInfo)
 - `uint16_t configPortalTimeout` - Timeout in seconds for config portal
 
 **Build Flags:**
 ```ini
--D WIFI_AP_NAME=\"ESP32-Config\"
--D WIFI_AP_PASSWORD=\"\"
--D WIFI_CONFIG_PORTAL_TIMEOUT=180
+wifi_config_portal_timeout = 180
+```
+
+**Dynamic Configuration:**
+```cpp
+// In main.cpp setup()
+String apName = DeviceInfo::getDeviceId() + "-Setup";  // "ESP32-Firmware-A1B2C3-Setup"
+String password = DeviceInfo::getDefaultPassword();    // "ESP32-Firmware-A1B2C3" or custom
+wifi.setAPName(apName.c_str());
+wifi.setAPPassword(password.c_str());
 ```
 
 **Class Interface:**
@@ -106,8 +376,11 @@ class WiFiManagerFeature : public Feature {
 public:
     WiFiManagerFeature(const char* apName, const char* apPassword, uint16_t configPortalTimeout);
     void setup() override;
-    void loop() override;  // Handle reconnection if needed
+    void loop() override;
     const char* getName() const override { return "WiFiManager"; }
+    
+    void setAPName(const char* name);      // NEW: Set AP name dynamically
+    void setAPPassword(const char* pass);   // NEW: Set AP password dynamically
     
     bool isConnected() const;
     String getIPAddress() const;
@@ -122,31 +395,43 @@ public:
 
 **Features:**
 - Separate log levels for serial and syslog outputs
-- Boot phase with higher verbosity, automatically transitioning to runtime level
+- Boot phase with higher verbosity (5 minutes default), transitioning to runtime level
 - Parallel UDP syslog output (RFC 3164 BSD format)
 - Timestamp support with NTP time or millis() fallback
+- Firmware name in syslog app field
 
 **Constructor Parameters:**
 - `uint32_t baudRate` - Serial baud rate
 - `uint8_t serialBootLogLevel` - Log level for serial during boot phase
 - `uint8_t serialRuntimeLogLevel` - Log level for serial after boot phase ends
-- `uint32_t bootDurationMs` - Duration of boot phase in milliseconds
+- `uint32_t bootDurationMs` - Duration of boot phase in milliseconds (300000 = 5 min)
 - `uint8_t syslogLogLevel` - Log level for syslog output
 - `const char* syslogServer` - Syslog server hostname/IP (empty string = disabled)
 - `uint16_t syslogPort` - Syslog server UDP port
-- `const char* hostname` - Device hostname for syslog messages
+- `const char* hostname` - Device hostname for syslog messages (set dynamically)
 - `bool enableTimestamp` - Include timestamp in log messages
 
 **Build Flags:**
 ```ini
--D LOG_BAUD_RATE=115200
--D LOG_SERIAL_BOOT_LEVEL=4
--D LOG_SERIAL_RUNTIME_LEVEL=3
--D LOG_BOOT_DURATION_MS=30000
--D LOG_SYSLOG_LEVEL=3
--D LOG_SYSLOG_SERVER=\"\"
--D LOG_SYSLOG_PORT=514
--D LOG_ENABLE_TIMESTAMP=true
+log_serial_boot_level = 4
+log_serial_runtime_level = 3
+log_boot_duration_ms = 300000
+log_syslog_level = 3
+syslog_server = 
+```
+
+**Syslog Format:**
+```
+<PRI>timestamp hostname FIRMWARE_NAME: message
+```
+
+Example: `<134>Jan 15 10:23:45 esp32-firmware-a1b2c3 ESP32-Firmware: WiFi connected`
+
+**Dynamic Configuration:**
+```cpp
+// In main.cpp setup()
+String hostname = DeviceInfo::getHostname();  // "esp32-firmware-a1b2c3"
+logger.setHostname(hostname.c_str());
 ```
 
 **Class Interface:**
@@ -163,8 +448,10 @@ public:
                    const char* hostname,
                    bool enableTimestamp);
     void setup() override;
-    void loop() override;  // Handles boot-to-runtime transition
+    void loop() override;
     const char* getName() const override { return "Logging"; }
+    
+    void setHostname(const char* hostname);  // NEW: Set hostname dynamically
     
     void error(const char* format, ...);
     void warn(const char* format, ...);
@@ -172,7 +459,7 @@ public:
     void debug(const char* format, ...);
     void verbose(const char* format, ...);
     
-    static LoggingFeature* getInstance();  // Singleton access for global logging
+    static LoggingFeature* getInstance();
     
     uint8_t getSerialLogLevel() const;
     void setSerialLogLevel(uint8_t level);
@@ -196,8 +483,15 @@ public:
 
 **Library:** Built-in ESP32 SNTP
 
+**Build Flags:**
+```ini
+ntp_server1 = de.pool.ntp.org
+ntp_server2 = europe.pool.ntp.org
+timezone = CET-1CEST,M3.5.0,M10.5.0/3
+```
+
 **Constructor Parameters:**
-- `const char* ntpServer1` - Primary NTP server
+- `const char* ntpServer1` - Primary NTP server (EU/DE pool)
 - `const char* ntpServer2` - Secondary NTP server
 - `const char* timezone` - POSIX timezone string
 - `uint32_t syncIntervalMs` - Re-sync interval in milliseconds
@@ -228,21 +522,33 @@ public:
 
 ### 4. WebServerFeature
 
-**Purpose:** Async web server for REST API and web interface.
+**Purpose:** Async web server for REST API and web interface with dynamic device identification.
 
 **Library:** `me-no-dev/ESPAsyncWebServer` + `me-no-dev/AsyncTCP`
 
 **Constructor Parameters:**
 - `uint16_t port` - HTTP server port
 - `const char* username` - Basic auth username (empty = no auth)
-- `const char* password` - Basic auth password
+- `const char* password` - Basic auth password (set dynamically from DeviceInfo)
 
 **Build Flags:**
 ```ini
--D WEBSERVER_PORT=80
--D WEBSERVER_USERNAME=\"admin\"
--D WEBSERVER_PASSWORD=\"admin\"
+webserver_port = 80
+webserver_username = admin
+; Password set dynamically
 ```
+
+**Dynamic Configuration:**
+```cpp
+// In main.cpp setup()
+String password = DeviceInfo::getDefaultPassword(); // "ESP32-Firmware-A1B2C3" or custom
+webServer.setPassword(password.c_str());
+```
+
+**Web Interface:**
+- Page title shows device identity: `{FirmwareName} {DeviceID}`
+- Example: "ESP32-Firmware ESP32-Firmware-A1B2C3"
+- Accessible via mDNS: `http://{hostname}.local/`
 
 **Class Interface:**
 ```cpp
@@ -252,7 +558,9 @@ public:
     void setup() override;
     const char* getName() const override { return "WebServer"; }
     
-    AsyncWebServer* getServer();  // Access server for adding routes
+    void setPassword(const char* password);  // NEW: Set password dynamically
+    
+    AsyncWebServer* getServer();
     void addHandler(AsyncWebHandler* handler);
     void on(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest);
 };
@@ -265,15 +573,23 @@ public:
 **Library:** Built-in `ArduinoOTA`
 
 **Constructor Parameters:**
-- `const char* hostname` - mDNS hostname for OTA discovery
-- `const char* password` - OTA password (empty = no password)
-- `uint16_t port` - OTA port
+- `const char* hostname` - mDNS hostname for OTA discovery (set dynamically)
+- `const char* password` - OTA password (set dynamically from DeviceInfo)
+- `uint16_t port` - OTA port (3232)
 
 **Build Flags:**
 ```ini
--D OTA_HOSTNAME=\"esp32-device\"
--D OTA_PASSWORD=\"otapassword\"
--D OTA_PORT=3232
+; No hostname or password - set dynamically
+ota_port = 3232
+```
+
+**Dynamic Configuration:**
+```cpp
+// In main.cpp setup()
+String hostname = DeviceInfo::getHostname();      // "esp32-firmware-a1b2c3"
+String password = DeviceInfo::getDefaultPassword(); // "ESP32-Firmware-A1B2C3" or custom
+ota.setHostname(hostname.c_str());
+ota.setPassword(password.c_str());
 ```
 
 **Class Interface:**
@@ -282,8 +598,11 @@ class OTAFeature : public Feature {
 public:
     OTAFeature(const char* hostname, const char* password, uint16_t port);
     void setup() override;
-    void loop() override;  // Handle OTA requests
+    void loop() override;
     const char* getName() const override { return "OTA"; }
+    
+    void setHostname(const char* hostname);  // NEW: Set hostname dynamically
+    void setPassword(const char* password);   // NEW: Set password dynamically
 };
 ```
 
@@ -317,34 +636,41 @@ public:
 
 ### 7. InfluxDBFeature
 
-**Purpose:** Write data to InfluxDB using line protocol over HTTP.
+**Purpose:** Write data to InfluxDB using line protocol over HTTP with automatic device tagging.
 
 **Supports:** Both InfluxDB 1.x (user/password) and 2.x (org/bucket/token)
 
 **Library:** Built-in `HTTPClient`
 
-**InfluxDB 1.x Build Flags:**
+**Build Flags in config.ini:**
 ```ini
--D INFLUXDB_URL=\"http://192.168.1.100:8086\"
--D INFLUXDB_VERSION=1
--D INFLUXDB_DATABASE=\"sensors\"
--D INFLUXDB_USERNAME=\"myuser\"
--D INFLUXDB_PASSWORD=\"mypassword\"
--D INFLUXDB_RP=\"\"
--D INFLUXDB_BATCH_INTERVAL=10000
--D INFLUXDB_BATCH_SIZE=50
+influxdb_url = http://192.168.1.100:8086
+influxdb_version = 1
+influxdb_database =           ; Empty = use FIRMWARE_NAME as database
+influxdb_username = myuser
+influxdb_password = mypassword
 ```
 
-**InfluxDB 2.x Build Flags:**
-```ini
--D INFLUXDB_URL=\"http://192.168.1.100:8086\"
--D INFLUXDB_VERSION=2
--D INFLUXDB_ORG=\"my-org\"
--D INFLUXDB_BUCKET=\"my-bucket\"
--D INFLUXDB_TOKEN=\"my-api-token\"
--D INFLUXDB_BATCH_INTERVAL=10000
--D INFLUXDB_BATCH_SIZE=50
+**Automatic Device Tagging:**
+
+DataCollection entries automatically include device identity tags in line protocol:
+
 ```
+measurement,device_id=ESP32-Firmware-A1B2C3,firmware=ESP32-Firmware,version=1.0.0,other=tags field=value timestamp
+```
+
+Setup device ID on collections:
+```cpp
+// In main.cpp setup()
+sensorData.setDeviceId(deviceId.c_str());
+modbusData.setDeviceId(deviceId.c_str());
+```
+
+**Benefits:**
+- Query by device: `WHERE "device_id" = 'ESP32-Firmware-A1B2C3'`
+- Query by firmware: `WHERE "firmware" = 'ESP32-Firmware'`
+- Track versions: `WHERE "version" = '1.0.0'`
+- Aggregate across devices: `GROUP BY "device_id"`
 
 **Class Interface:**
 ```cpp
@@ -366,10 +692,22 @@ public:
     void loop() override;
     const char* getName() const override { return "InfluxDB"; }
     
-    void queue(const String& lineProtocol);  // Queue line protocol data
-    bool upload();                            // Force immediate upload
+    void queue(const String& lineProtocol);
+    bool upload();
     bool isConnected() const;
     size_t pendingCount() const;
+};
+```
+
+**DataCollection Device ID Support:**
+```cpp
+template<typename T, size_t MaxEntries>
+class DataCollection {
+public:
+    void setDeviceId(const char* deviceId);  // NEW: Set device ID for tagging
+    
+    // entryToLineProtocol() automatically adds device_id, firmware, version tags
+    String entryToLineProtocol(size_t index) const;
 };
 ```
 
@@ -442,7 +780,7 @@ DataCollectionWeb::registerCollection(
 
 ### 9. MQTTFeature
 
-**Purpose:** MQTT client with auto-reconnect for publishing sensor data.
+**Purpose:** MQTT client with auto-reconnect and dynamic per-device topics.
 
 **Library:** `knolleary/PubSubClient`
 
@@ -451,19 +789,33 @@ DataCollectionWeb::registerCollection(
 - `uint16_t port` - MQTT broker port
 - `const char* username` - MQTT username (empty = no auth)
 - `const char* password` - MQTT password
-- `const char* clientId` - MQTT client identifier
-- `const char* baseTopic` - Base topic for all messages
+- `const char* clientId` - MQTT client identifier (set dynamically to hostname)
+- `const char* baseTopic` - Base topic prefix (set dynamically per device)
 - `uint32_t reconnectIntervalMs` - Reconnect attempt interval
 
 **Build Flags:**
 ```ini
--D MQTT_SERVER=\"\"
--D MQTT_PORT=1883
--D MQTT_USERNAME=\"\"
--D MQTT_PASSWORD=\"\"
--D MQTT_BASE_TOPIC=\"esp32\"
--D MQTT_RECONNECT_INTERVAL=5000
+mqtt_server = 192.168.1.100
+mqtt_port = 1883
+mqtt_username = 
+mqtt_password = 
+; clientId and baseTopic set dynamically
+mqtt_reconnect_interval = 5000
 ```
+
+**Dynamic Configuration:**
+```cpp
+// In main.cpp setup()
+String mqttClientId = DeviceInfo::getHostname();  // "esp32-firmware-a1b2c3"
+String mqttBaseTopic = String(FIRMWARE_NAME) + "/" + hostname;  // "ESP32-Firmware/esp32-firmware-a1b2c3"
+mqtt.setClientId(mqttClientId.c_str());
+mqtt.setBaseTopic(mqttBaseTopic.c_str());
+```
+
+**Topic Structure:**
+- Base: `{FIRMWARE_NAME}/{hostname}/`
+- Example: `ESP32-Firmware/esp32-firmware-a1b2c3/sensors/state`
+- Benefit: Multiple devices can coexist without topic conflicts
 
 **Class Interface:**
 ```cpp
@@ -474,9 +826,12 @@ public:
                 const char* clientId, const char* baseTopic,
                 uint32_t reconnectIntervalMs = 5000);
     void setup() override;
-    void loop() override;  // Handle reconnection and message processing
+    void loop() override;
     const char* getName() const override { return "MQTT"; }
     bool isReady() const override { return _connected; }
+    
+    void setClientId(const char* clientId);    // NEW: Set client ID dynamically
+    void setBaseTopic(const char* baseTopic);  // NEW: Set base topic dynamically
     
     bool publish(const char* topic, const char* payload, bool retain = false);
     bool publishToBase(const char* subtopic, const char* payload, bool retain = false);
@@ -550,15 +905,90 @@ const HASensorConfig sensorHAConfig[] = {
     { "rssi", "WiFi Signal", HADeviceClass::SIGNAL_STRENGTH, "dBm", nullptr },
 };
 
-// Publish discovery once when MQTT connects
+// Publish discovery using DeviceInfo for identity
 DataCollectionMQTT::publishDiscovery(&mqtt, "sensors", sensorHAConfig, 3,
-    "Living Room", "esp32-living", "Custom", "ESP32 Node", "1.0.0");
+    DeviceInfo::getDeviceId().c_str(),      // Device name: "ESP32-Firmware-A1B2C3"
+    DeviceInfo::getDeviceId().c_str(),      // Unique device ID
+    "joba-1",                                // Manufacturer (GitHub username)
+    DeviceInfo::getFirmwareName(),          // Model: "ESP32-Firmware"
+    DeviceInfo::getFirmwareVersion());      // Version: "1.0.0"
 
 // Publish data on each collection
 DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
 ```
 
-### 10. ModbusRTUFeature
+**Home Assistant Device Properties:**
+| Property | Source | Example |
+|----------|--------|---------|
+| Device Name | `DeviceInfo::getDeviceId()` | ESP32-Firmware-A1B2C3 |
+| Device ID | `DeviceInfo::getDeviceId()` | ESP32-Firmware-A1B2C3 |
+| Manufacturer | Hardcoded | joba-1 |
+| Model | `FIRMWARE_NAME` | ESP32-Firmware |
+| SW Version | `FIRMWARE_VERSION` | 1.0.0 |
+
+### 10. LEDFeature (NEW)
+
+**Purpose:** Visual activity indicator - LED stays on during setup, pulses briefly on sensor data activity.
+
+**Library:** None (GPIO only)
+
+**Constructor Parameters:**
+- `uint8_t pin` - GPIO pin for LED (2 for built-in)
+- `bool activeLow` - Invert logic for active-low LEDs (true for ESP32 built-in)
+
+**Build Flags:**
+```ini
+led_pin = 2
+led_active_low = true
+```
+
+**Behavior:**
+- **During setup:** LED stays ON (solid) to indicate initialization
+- **After setup:** LED turns OFF
+- **On activity:** LED pulses briefly (50ms) when `pulse()` is called
+- **Overflow-safe:** Uses subtraction-based timing to handle millis() overflow
+
+**Class Interface:**
+```cpp
+class LEDFeature : public Feature {
+public:
+    LEDFeature(uint8_t pin, bool activeLow = false);
+    void setup() override;  // Turns LED ON during setup
+    void loop() override;   // Handles pulse timing
+    const char* getName() const override { return "LED"; }
+    
+    void turnOn();          // Keep LED on
+    void turnOff();         // Turn LED off
+    void pulse(uint32_t durationMs = 50);  // Brief flash
+    void endSetup();        // Call after setup complete to turn off
+};
+```
+
+**Usage in main.cpp:**
+```cpp
+LEDFeature led(LED_PIN, LED_ACTIVE_LOW);
+
+void setup() {
+    led.setup();  // LED turns on
+    
+    // ... other setup ...
+    
+    led.endSetup();  // LED turns off when setup complete
+}
+
+void collectSensorData() {
+    // ... read sensors ...
+    
+    led.pulse();  // Brief flash to indicate activity
+}
+```
+
+**Implementation Notes:**
+- Uses explicit `_isPulsing` boolean flag instead of sentinel value
+- Safe across millis() overflow: `if (millis() - _pulseStart >= _pulseDuration)`
+- Does NOT use: `if (millis() >= _pulseEndTime)` which fails on overflow
+
+### 11. ModbusRTUFeature
 
 **Purpose:** Monitor Modbus RTU bus traffic, maintain register maps per unit/function code, and send Modbus requests with proper bus silence detection.
 
@@ -576,15 +1006,10 @@ DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
 
 **Build Flags:**
 ```ini
--D MODBUS_SERIAL_RX=16
--D MODBUS_SERIAL_TX=17
--D MODBUS_BAUD_RATE=9600
--D MODBUS_SERIAL_CONFIG=SERIAL_8N1
--D MODBUS_DE_PIN=-1
--D MODBUS_RESPONSE_TIMEOUT=1000
--D MODBUS_QUEUE_SIZE=10
--D MODBUS_DEVICE_TYPES_PATH=\"/modbus/devices\"
--D MODBUS_DEVICE_MAP_PATH=\"/modbus/devices.json\"
+modbus_serial_rx = 16
+modbus_serial_tx = 17
+modbus_baud_rate = 9600
+modbus_de_pin = -1
 ```
 
 **Class Interface:**
@@ -706,79 +1131,139 @@ public:
 
 ## PlatformIO Configuration
 
+The project uses a split configuration approach:
+
+### platformio.ini (Build Configuration)
+
 ```ini
 ; platformio.ini
-
 [platformio]
 default_envs = serial
 
-; ============================================
-; Shared configuration for all environments
-; ============================================
 [env]
-platform = espressif32
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip
 board = esp32dev
 framework = arduino
 monitor_speed = 115200
+
+; Pre-build script and user configuration
+extra_scripts = pre:pre_build.py
+extra_configs = config.ini
 
 ; Library dependencies
 lib_deps = 
     tzapu/WiFiManager@^2.0.17
     me-no-dev/ESPAsyncWebServer@^1.2.4
     me-no-dev/AsyncTCP@^1.1.1
+    knolleary/PubSubClient@^2.8
 
-; Common build flags
+; Build flags reference config.ini values
 build_flags = 
-    ; Logging configuration
+    ; Firmware Identity (from config.ini)
+    -D FIRMWARE_NAME=\"${user_config.firmware_name}\"
+    -D FIRMWARE_VERSION=\"${user_config.firmware_version}\"
+    -D DEVICE_INSTANCE=${user_config.device_instance}
+    -D DEFAULT_PASSWORD=\"${user_config.default_password}\"
+    
+    ; Logging (from config.ini)
     -D LOG_BAUD_RATE=115200
-    -D LOG_LEVEL=4
-    -D LOG_ENABLE_TIMESTAMP=true
+    -D LOG_SERIAL_BOOT_LEVEL=${user_config.log_serial_boot_level}
+    -D LOG_SERIAL_RUNTIME_LEVEL=${user_config.log_serial_runtime_level}
+    -D LOG_BOOT_DURATION_MS=${user_config.log_boot_duration_ms}
+    -D LOG_SYSLOG_LEVEL=${user_config.log_syslog_level}
+    -D LOG_SYSLOG_SERVER=\"${user_config.syslog_server}\"
     
-    ; WiFi configuration
-    -D WIFI_AP_NAME=\"ESP32-Config\"
-    -D WIFI_AP_PASSWORD=\"\"
-    -D WIFI_CONFIG_PORTAL_TIMEOUT=180
+    ; Network (from config.ini)
+    -D WIFI_CONFIG_PORTAL_TIMEOUT=${user_config.wifi_config_portal_timeout}
+    -D NTP_SERVER1=\"${user_config.ntp_server1}\"
+    -D NTP_SERVER2=\"${user_config.ntp_server2}\"
+    -D TIMEZONE=\"${user_config.timezone}\"
     
-    ; NTP / Time configuration
-    -D NTP_SERVER1=\"pool.ntp.org\"
-    -D NTP_SERVER2=\"time.nist.gov\"
-    -D TIMEZONE=\"CET-1CEST,M3.5.0,M10.5.0/3\"
-    -D NTP_SYNC_INTERVAL=3600000
+    ; Services (from config.ini)
+    -D INFLUXDB_URL=\"${user_config.influxdb_url}\"
+    -D INFLUXDB_VERSION=${user_config.influxdb_version}
+    -D INFLUXDB_DATABASE=\"${user_config.influxdb_database}\"
+    -D MQTT_SERVER=\"${user_config.mqtt_server}\"
     
-    ; Web server configuration
-    -D WEBSERVER_PORT=80
-    -D WEBSERVER_USERNAME=\"admin\"
-    -D WEBSERVER_PASSWORD=\"admin\"
-    
-    ; OTA configuration
-    -D OTA_HOSTNAME=\"esp32-device\"
-    -D OTA_PASSWORD=\"otapassword\"
-    -D OTA_PORT=3232
+    ; Hardware (from config.ini)
+    -D LED_PIN=${user_config.led_pin}
+    -D LED_ACTIVE_LOW=${user_config.led_active_low}
+    -D MODBUS_SERIAL_RX=${user_config.modbus_serial_rx}
+    -D MODBUS_SERIAL_TX=${user_config.modbus_serial_tx}
+    -D MODBUS_BAUD_RATE=${user_config.modbus_baud_rate}
+    -D MODBUS_DE_PIN=${user_config.modbus_de_pin}
 
-; ============================================
-; Serial upload environment
-; ============================================
+; Serial upload
 [env:serial]
 upload_protocol = esptool
 upload_port = /dev/ttyUSB0
-; Alternatively auto-detect:
-; upload_port = /dev/ttyUSB*
 
-; ============================================
-; OTA upload environment
-; ============================================
+; OTA upload (hostname set dynamically)
 [env:ota]
 upload_protocol = espota
-upload_port = esp32-device.local
-; Or use IP address:
-; upload_port = 192.168.1.100
+upload_port = esp32-firmware-a1b2c3.local  ; Replace with actual hostname
 upload_flags = 
-    --port=${common.ota_port}
-    --auth=${common.ota_password}
+    --auth=${user_config.default_password}
+```
 
-[common]
-ota_port = 3232
-ota_password = otapassword
+### config.ini.template (User Configuration Template)
+
+```ini
+; config.ini.template - Copy to config.ini and customize
+[user_config]
+; ============================================
+; Firmware Identity
+; ============================================
+firmware_name = ESP32-Firmware
+firmware_version = 1.0.0
+; 0 = use MAC-based device ID, >0 = manual instance number
+device_instance = 0
+; Empty = auto-generate from device ID
+default_password = 
+
+; ============================================
+; Logging
+; ============================================
+log_serial_boot_level = 4
+log_serial_runtime_level = 3
+log_boot_duration_ms = 300000
+log_syslog_level = 3
+syslog_server = 
+
+; ============================================
+; Network
+; ============================================
+wifi_config_portal_timeout = 180
+ntp_server1 = de.pool.ntp.org
+ntp_server2 = europe.pool.ntp.org
+timezone = CET-1CEST,M3.5.0,M10.5.0/3
+
+; ============================================
+; InfluxDB
+; ============================================
+influxdb_url = http://192.168.1.100:8086
+influxdb_version = 1
+; Empty = use firmware_name as database
+influxdb_database = 
+influxdb_username = 
+influxdb_password = 
+
+; ============================================
+; MQTT (base topic auto-generated per device)
+; ============================================
+mqtt_server = 
+mqtt_username = 
+mqtt_password = 
+
+; ============================================
+; Hardware
+; ============================================
+led_pin = 2
+led_active_low = true
+modbus_serial_rx = 16
+modbus_serial_tx = 17
+modbus_baud_rate = 9600
+modbus_de_pin = -1
 ```
 
 ## Main Application Entry Point
@@ -786,97 +1271,124 @@ ota_password = otapassword
 ```cpp
 // main.cpp
 #include <Arduino.h>
+#include <WiFi.h>
+#include "DeviceInfo.h"
 #include "LoggingFeature.h"
 #include "WiFiManagerFeature.h"
 #include "TimeSyncFeature.h"
 #include "WebServerFeature.h"
 #include "OTAFeature.h"
+#include "MQTTFeature.h"
+#include "LEDFeature.h"
 
-// Feature instances
-LoggingFeature logging(LOG_BAUD_RATE, LOG_LEVEL, LOG_ENABLE_TIMESTAMP);
-WiFiManagerFeature wifiManager(WIFI_AP_NAME, WIFI_AP_PASSWORD, WIFI_CONFIG_PORTAL_TIMEOUT);
-TimeSyncFeature timeSync(NTP_SERVER1, NTP_SERVER2, TIMEZONE, NTP_SYNC_INTERVAL);
-WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, WEBSERVER_PASSWORD);
-OTAFeature ota(OTA_HOSTNAME, OTA_PASSWORD, OTA_PORT);
+// Global device identity strings
+String deviceId;
+String hostname;
+String apName;
+String mqttClientId;
+String mqttBaseTopic;
+String defaultPassword;
 
-// Array of all features for easy iteration
-Feature* features[] = {
-    &logging,      // Must be first for early logging
-    &wifiManager,  // Must be before network-dependent features
-    &timeSync,
-    &webServer,
-    &ota
-};
+// Feature instances (with placeholder values - set dynamically in setup)
+LoggingFeature logging(LOG_BAUD_RATE, LOG_SERIAL_BOOT_LEVEL, LOG_SERIAL_RUNTIME_LEVEL,
+                       LOG_BOOT_DURATION_MS, LOG_SYSLOG_LEVEL, LOG_SYSLOG_SERVER,
+                       514, "", true);
+WiFiManagerFeature wifiManager("", "", WIFI_CONFIG_PORTAL_TIMEOUT);
+TimeSyncFeature timeSync(NTP_SERVER1, NTP_SERVER2, TIMEZONE, 3600000);
+WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, "");
+OTAFeature ota("", "", OTA_PORT);
+MQTTFeature mqtt(MQTT_SERVER, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, "", "", 5000);
+LEDFeature led(LED_PIN, LED_ACTIVE_LOW);
+
+// Array of all features
+Feature* features[] = { &logging, &led, &wifiManager, &timeSync, &webServer, &ota, &mqtt };
 const size_t featureCount = sizeof(features) / sizeof(features[0]);
 
 void setup() {
-    // Initialize all features
-    for (size_t i = 0; i < featureCount; i++) {
-        LOG_I("Setting up feature: %s", features[i]->getName());
+    // LED on during setup
+    led.setup();
+    logging.setup();
+    
+    // Enable WiFi to get MAC address
+    WiFi.mode(WIFI_STA);
+    delay(100);
+    
+    // Generate device identity
+    deviceId = DeviceInfo::getDeviceId();
+    hostname = DeviceInfo::getHostname();
+    apName = deviceId + "-Setup";
+    mqttClientId = hostname;
+    mqttBaseTopic = String(FIRMWARE_NAME) + "/" + hostname;
+    defaultPassword = DeviceInfo::getDefaultPassword();
+    
+    LOG_I("=== %s v%s ===", FIRMWARE_NAME, FIRMWARE_VERSION);
+    LOG_I("Device ID: %s", deviceId.c_str());
+    LOG_I("Hostname: %s", hostname.c_str());
+    LOG_I("Password: %s", defaultPassword.c_str());
+    LOG_I("MQTT Topic: %s", mqttBaseTopic.c_str());
+    
+    // Configure features with dynamic values
+    wifiManager.setAPName(apName.c_str());
+    wifiManager.setAPPassword(defaultPassword.c_str());
+    ota.setHostname(hostname.c_str());
+    ota.setPassword(defaultPassword.c_str());
+    logging.setHostname(hostname.c_str());
+    mqtt.setClientId(mqttClientId.c_str());
+    mqtt.setBaseTopic(mqttBaseTopic.c_str());
+    webServer.setPassword(defaultPassword.c_str());
+    
+    // Initialize remaining features
+    for (size_t i = 2; i < featureCount; i++) {
+        LOG_I("Setting up: %s", features[i]->getName());
         features[i]->setup();
     }
-    LOG_I("All features initialized");
+    
+    led.endSetup();  // LED off when setup complete
+    LOG_I("Setup complete");
 }
 
 void loop() {
-    // Run all feature loop handlers
     for (size_t i = 0; i < featureCount; i++) {
         features[i]->loop();
     }
 }
 ```
 
-## Build Flag Defaults Summary
+## Configuration Summary
 
-| Feature | Flag | Default Value |
-|---------|------|---------------|
-| Logging | `LOG_BAUD_RATE` | `115200` |
-| Logging | `LOG_LEVEL` | `4` (DEBUG) |
-| Logging | `LOG_ENABLE_TIMESTAMP` | `true` |
-| WiFi | `WIFI_AP_NAME` | `"ESP32-Config"` |
-| WiFi | `WIFI_AP_PASSWORD` | `""` (open) |
-| WiFi | `WIFI_CONFIG_PORTAL_TIMEOUT` | `180` seconds |
-| NTP | `NTP_SERVER1` | `"pool.ntp.org"` |
-| NTP | `NTP_SERVER2` | `"time.nist.gov"` |
-| NTP | `TIMEZONE` | `"CET-1CEST,M3.5.0,M10.5.0/3"` |
-| NTP | `NTP_SYNC_INTERVAL` | `3600000` ms (1 hour) |
-| WebServer | `WEBSERVER_PORT` | `80` |
-| WebServer | `WEBSERVER_USERNAME` | `"admin"` |
-| WebServer | `WEBSERVER_PASSWORD` | `"admin"` |
-| OTA | `OTA_HOSTNAME` | `"esp32-device"` |
-| OTA | `OTA_PASSWORD` | `"otapassword"` |
-| OTA | `OTA_PORT` | `3232` |
-| InfluxDB | `INFLUXDB_URL` | `""` (disabled) |
-| InfluxDB | `INFLUXDB_VERSION` | `1` (1.x or 2) |
-| InfluxDB | `INFLUXDB_DATABASE` | `""` (V1 only) |
-| InfluxDB | `INFLUXDB_USERNAME` | `""` (V1 only) |
-| InfluxDB | `INFLUXDB_PASSWORD` | `""` (V1 only) |
-| InfluxDB | `INFLUXDB_RP` | `""` (V1 retention policy) |
-| InfluxDB | `INFLUXDB_ORG` | `""` (V2 only) |
-| InfluxDB | `INFLUXDB_BUCKET` | `""` (V2 only) |
-| InfluxDB | `INFLUXDB_TOKEN` | `""` (V2 only) |
-| InfluxDB | `INFLUXDB_BATCH_INTERVAL` | `10000` ms |
-| InfluxDB | `INFLUXDB_BATCH_SIZE` | `50` |
-| MQTT | `MQTT_SERVER` | `""` (disabled) |
-| MQTT | `MQTT_PORT` | `1883` |
-| MQTT | `MQTT_USERNAME` | `""` |
-| MQTT | `MQTT_PASSWORD` | `""` |
-| MQTT | `MQTT_BASE_TOPIC` | `"esp32"` |
-| MQTT | `MQTT_RECONNECT_INTERVAL` | `5000` ms |
-| Modbus | `MODBUS_SERIAL_RX` | `16` |
-| Modbus | `MODBUS_SERIAL_TX` | `17` |
-| Modbus | `MODBUS_BAUD_RATE` | `9600` |
-| Modbus | `MODBUS_SERIAL_CONFIG` | `SERIAL_8N1` |
-| Modbus | `MODBUS_DE_PIN` | `-1` (none) |
-| Modbus | `MODBUS_RESPONSE_TIMEOUT` | `1000` ms |
-| Modbus | `MODBUS_QUEUE_SIZE` | `10` |
-| Modbus | `MODBUS_DEVICE_TYPES_PATH` | `"/modbus/devices"` |
-| Modbus | `MODBUS_DEVICE_MAP_PATH` | `"/modbus/devices.json"` |
+### Dynamic Configuration (from DeviceInfo)
+
+| Property | Value | Source |
+|----------|-------|--------|
+| Device ID | `ESP32-Firmware-A1B2C3` | FIRMWARE_NAME + MAC suffix |
+| Hostname | `esp32-firmware-a1b2c3` | Device ID lowercase |
+| AP Name | `ESP32-Firmware-A1B2C3-Setup` | Device ID + "-Setup" |
+| Password | `ESP32-Firmware-A1B2C3` | Auto-generated or custom |
+| MQTT Client ID | `esp32-firmware-a1b2c3` | Hostname |
+| MQTT Base Topic | `ESP32-Firmware/esp32-firmware-a1b2c3` | Firmware/hostname |
+
+### Static Configuration (from config.ini)
+
+| Category | Setting | Default |
+|----------|---------|---------|
+| Identity | `firmware_name` | `ESP32-Firmware` |
+| Identity | `firmware_version` | `1.0.0` |
+| Identity | `device_instance` | `0` (use MAC) |
+| Logging | `log_serial_boot_level` | `4` (DEBUG) |
+| Logging | `log_serial_runtime_level` | `3` (INFO) |
+| Logging | `log_boot_duration_ms` | `300000` (5 min) |
+| Network | `ntp_server1` | `de.pool.ntp.org` |
+| Network | `ntp_server2` | `europe.pool.ntp.org` |
+| Network | `timezone` | Central European |
+| InfluxDB | `influxdb_database` | FIRMWARE_NAME if empty |
+| Hardware | `led_pin` | `2` (built-in) |
+| Hardware | `led_active_low` | `true` |
 
 ## Dependencies
 
 | Library | Version | Purpose |
 |---------|---------|----------|
+| pioarduino/platform-espressif32 | stable | ESP32 platform |
 | `tzapu/WiFiManager` | ^2.0.17 | WiFi configuration portal |
 | `me-no-dev/ESPAsyncWebServer` | ^1.2.4 | Async HTTP server |
 | `me-no-dev/AsyncTCP` | ^1.1.1 | Async TCP for ESP32 |
@@ -885,11 +1397,15 @@ void loop() {
 
 ## Notes
 
-1. **Feature Initialization Order:** LoggingFeature must be initialized first, followed by WiFiManagerFeature before any network-dependent features.
+1. **Configuration Split:** Build-essential settings in platformio.ini, user settings in config.ini (gitignored)
 
-2. **String Literals in Build Flags:** Use escaped quotes `\"value\"` for string values in build flags.
+2. **Auto-Configuration:** Run pre_build.py or first build to create config.ini from template
 
-3. **Boolean Build Flags:** Use `true`/`false` which will be interpreted as `1`/`0` by the preprocessor.
+3. **Feature Initialization Order:** LoggingFeature first, LEDFeature second, WiFiManagerFeature before network features
+
+4. **Device Identity:** Generated from MAC address after WiFi.mode(WIFI_STA) is called
+
+5. **millis() Overflow:** LEDFeature uses subtraction-based timing to handle 49.7-day overflow correctly
 
 4. **OTA Environment:** Ensure the device is connected to the network and reachable before using OTA upload.
 
