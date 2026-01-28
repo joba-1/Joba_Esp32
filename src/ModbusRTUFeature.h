@@ -1,5 +1,5 @@
-#ifndef MODBUS_RTU_H
-#define MODBUS_RTU_H
+#ifndef MODBUS_RTU_FEATURE_H
+#define MODBUS_RTU_FEATURE_H
 
 #include <Arduino.h>
 #include <HardwareSerial.h>
@@ -265,4 +265,4 @@ private:
     Stats _stats;
 };
 
-#endif // MODBUS_RTU_H
+#endif // MODBUS_RTU_FEATURE_H

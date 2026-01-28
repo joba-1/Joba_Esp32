@@ -2,7 +2,7 @@
 #define MODBUS_WEB_H
 
 #include "ModbusDevice.h"
-#include "ModbusRTU.h"
+#include "ModbusRTUFeature.h"
 #include "WebServerFeature.h"
 #include <ArduinoJson.h>
 

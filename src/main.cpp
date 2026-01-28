@@ -12,7 +12,7 @@
 #include "DataCollection.h"
 #include "DataCollectionWeb.h"
 #include "DataCollectionMQTT.h"
-#include "ModbusRTU.h"
+#include "ModbusRTUFeature.h"
 #include "ModbusDevice.h"
 #include "ModbusWeb.h"
 #include "ModbusIntegration.h"

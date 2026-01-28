@@ -1,4 +1,4 @@
-#include "ModbusRTU.h"
+#include "ModbusRTUFeature.h"
 
 ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
                                    uint32_t baudRate,

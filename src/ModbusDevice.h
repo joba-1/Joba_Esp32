@@ -5,7 +5,7 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include <map>
-#include "ModbusRTU.h"
+#include "ModbusRTUFeature.h"
 #include "StorageFeature.h"
 #include "DataCollection.h"
 #include "LoggingFeature.h"
