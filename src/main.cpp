@@ -7,6 +7,7 @@
 #include "StorageFeature.h"
 #include "InfluxDBFeature.h"
 #include "MQTTFeature.h"
+#include "LEDFeature.h"
 #include "DataCollection.h"
 #include "DataCollectionWeb.h"
 #include "DataCollectionMQTT.h"
@@ -113,6 +114,9 @@ ModbusRTUFeature modbus(
     MODBUS_QUEUE_SIZE
 );
 
+// LED indicator feature
+LEDFeature led(LED_PIN, LED_ACTIVE_LOW, LED_PULSE_DURATION);
+
 // Home Assistant sensor configuration for our data collection
 const HASensorConfig sensorHAConfig[] = {
     { "temperature", "Temperature", HADeviceClass::TEMPERATURE, "°C", nullptr },
@@ -126,6 +130,7 @@ ModbusDeviceManager* modbusDevices = nullptr;
 // Array of all features for easy iteration
 Feature* features[] = {
     &logging,      // Must be first for early logging
+    &led,          // LED setup early to indicate boot
     &wifiManager,  // Must be before network-dependent features
     &timeSync,
     &storage,      // Filesystem before features that need it
@@ -167,6 +172,9 @@ void collectSensorData() {
     
     // Publish to MQTT for Home Assistant
     DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
+    
+    // Pulse LED to indicate data collection
+    led.pulse();
     
     LOG_D("Collected: temp=%.1f, humidity=%.1f, rssi=%d", 
           reading.temperature, reading.humidity, reading.rssi);
@@ -225,6 +233,9 @@ void setup() {
             ModbusIntegration::publishRegisterValue(&mqtt, unitId, deviceName,
                                                      registerName, value, MQTT_BASE_TOPIC "/modbus");
             
+            // Pulse LED to indicate Modbus data received
+            led.pulse();
+            
             LOG_V("Modbus value: %s/%s = %.4f %s", deviceName, registerName, value, unit);
         });
     }
@@ -234,6 +245,9 @@ void setup() {
     
     LOG_I("All features initialized");
     LOG_I("Free heap: %d bytes", ESP.getFreeHeap());
+    
+    // Setup complete - turn off LED (will pulse on activity)
+    led.setupComplete();
 }
 
 void loop() {
