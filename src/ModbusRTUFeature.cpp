@@ -25,6 +25,7 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _currentRequest(nullptr)
     , _frameCallback(nullptr)
     , _stats{}
+    , _intervalStats{}
     , _inActiveTime(false)
     , _activeTimeIsOwn(false)
     , _activeStartTimeUs(0)
@@ -46,6 +47,9 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     } else {
         _silenceTimeUs = _charTimeUs * 35 / 10;  // 3.5 char times
     }
+    
+    // Initialize interval stats start time
+    _intervalStats.intervalStartMs = millis();
     
     _rxBuffer.reserve(256);
 }
@@ -131,6 +135,7 @@ void ModbusRTUFeature::loop() {
               _lastRequest.unitId, _lastRequest.functionCode);
         _stats.timeouts++;
         _stats.ownRequestsFailed++;
+        _intervalStats.ownFailed++;
         
         if (_currentRequest && _currentRequest->callback) {
             ModbusFrame emptyFrame;
@@ -149,7 +154,7 @@ void ModbusRTUFeature::loop() {
     }
     
     // Periodic warning check
-    if (nowMs - _lastWarningCheckMs >= WARNING_CHECK_INTERVAL_MS) {
+    if (nowMs - _lastWarningCheckMs >= MODBUS_STATS_INTERVAL_MS) {
         checkAndLogWarnings();
         _lastWarningCheckMs = nowMs;
     }
@@ -178,8 +183,10 @@ void ModbusRTUFeature::processReceivedData() {
             // Track success/failure for our requests
             if (frame.isValid && !frame.isException) {
                 _stats.ownRequestsSuccess++;
+                _intervalStats.ownSuccess++;
             } else {
                 _stats.ownRequestsFailed++;
+                _intervalStats.ownFailed++;
                 if (frame.isException) {
                     LOG_W("Modbus exception 0x%02X from unit %d", 
                           frame.exceptionCode, frame.unitId);
@@ -223,8 +230,10 @@ void ModbusRTUFeature::processReceivedData() {
                 // Looks like a response (to someone else's request)
                 if (frame.isException) {
                     _stats.otherExceptionsSeen++;
+                    _intervalStats.otherFailed++;
                 } else {
                     _stats.otherResponsesSeen++;
+                    _intervalStats.otherSuccess++;
                 }
             }
             
@@ -570,8 +579,10 @@ void ModbusRTUFeature::endActiveTime() {
         unsigned long duration = micros() - _activeStartTimeUs;
         if (_activeTimeIsOwn) {
             _stats.ownActiveTimeUs += duration;
+            _intervalStats.ownActiveTimeUs += duration;
         } else {
             _stats.otherActiveTimeUs += duration;
+            _intervalStats.otherActiveTimeUs += duration;
         }
         _inActiveTime = false;
     }
@@ -596,40 +607,75 @@ void ModbusRTUFeature::resetStats() {
     _stats.lastStatsReset = millis();
 }
 
+void ModbusRTUFeature::resetIntervalStats() {
+    memset(&_intervalStats, 0, sizeof(_intervalStats));
+    _intervalStats.intervalStartMs = millis();
+}
+
+float ModbusRTUFeature::getOtherFailureRate() const {
+    uint32_t total = _intervalStats.otherSuccess + _intervalStats.otherFailed;
+    if (total == 0) return 0.0f;
+    return (float)_intervalStats.otherFailed / (float)total;
+}
+
 void ModbusRTUFeature::checkAndLogWarnings() {
-    // Only check if we have some data
-    uint32_t ownTotal = _stats.ownRequestsSuccess + _stats.ownRequestsFailed;
+    // Calculate interval time in microseconds
+    unsigned long intervalMs = millis() - _intervalStats.intervalStartMs;
+    uint64_t intervalUs = (uint64_t)intervalMs * 1000ULL;
     
-    // Check own request failure rate (>5%)
-    if (ownTotal >= 20) {  // Need at least 20 requests for meaningful percentage
-        float failureRate = getOwnFailureRate();
-        if (failureRate > 0.05f) {
-            LOG_W("Modbus own request failure rate: %.1f%% (%u/%u failed, %u discarded)",
+    // Track interval stats
+    uint32_t ownTotal = _intervalStats.ownSuccess + _intervalStats.ownFailed;
+    uint32_t otherTotal = _intervalStats.otherSuccess + _intervalStats.otherFailed;
+    
+    // Check own request failure rate (configurable threshold, default 5%)
+    if (ownTotal >= 10) {  // Need at least 10 requests for meaningful percentage
+        float failureRate = (float)_intervalStats.ownFailed / (float)ownTotal;
+        float thresholdPercent = (float)MODBUS_OWN_FAIL_WARN_PERCENT;
+        if (failureRate * 100.0f > thresholdPercent) {
+            LOG_W("Modbus own request failure rate: %.1f%% (%u/%u failed in last %lus)",
                   failureRate * 100.0f, 
-                  _stats.ownRequestsFailed, ownTotal,
-                  _stats.ownRequestsDiscarded);
+                  _intervalStats.ownFailed, ownTotal,
+                  intervalMs / 1000);
         }
     }
     
-    // Check bus idle time (<5%)
-    if (_stats.totalTimeUs > 60000000) {  // At least 60 seconds of data
-        float idlePercent = getBusIdlePercent();
-        if (idlePercent < 5.0f) {
-            float ownPercent = (float)_stats.ownActiveTimeUs * 100.0f / (float)_stats.totalTimeUs;
-            float otherPercent = (float)_stats.otherActiveTimeUs * 100.0f / (float)_stats.totalTimeUs;
-            LOG_W("Modbus bus utilization high: idle=%.1f%%, own=%.1f%%, other=%.1f%%",
-                  idlePercent, ownPercent, otherPercent);
+    // Check other device failure rate (configurable threshold, default 5%)
+    if (otherTotal >= 10) {  // Need at least 10 responses for meaningful percentage
+        float failureRate = getOtherFailureRate();
+        float thresholdPercent = (float)MODBUS_OTHER_FAIL_WARN_PERCENT;
+        if (failureRate * 100.0f > thresholdPercent) {
+            LOG_W("Modbus other device failure rate: %.1f%% (%u/%u failed in last %lus)",
+                  failureRate * 100.0f,
+                  _intervalStats.otherFailed, otherTotal,
+                  intervalMs / 1000);
         }
     }
     
-    // Log summary at INFO level periodically
+    // Check bus utilization (configurable threshold, default 95% busy = 5% idle)
+    if (intervalUs > 10000000) {  // At least 10 seconds of data
+        uint64_t activeTimeUs = _intervalStats.ownActiveTimeUs + _intervalStats.otherActiveTimeUs;
+        float busyPercent = (float)activeTimeUs * 100.0f / (float)intervalUs;
+        float thresholdPercent = (float)MODBUS_BUS_BUSY_WARN_PERCENT;
+        if (busyPercent > thresholdPercent) {
+            float ownPercent = (float)_intervalStats.ownActiveTimeUs * 100.0f / (float)intervalUs;
+            float otherPercent = (float)_intervalStats.otherActiveTimeUs * 100.0f / (float)intervalUs;
+            LOG_W("Modbus bus utilization high: busy=%.1f%% (own=%.1f%%, other=%.1f%%) in last %lus",
+                  busyPercent, ownPercent, otherPercent, intervalMs / 1000);
+        }
+    }
+    
+    // Log summary at INFO level (using cumulative stats)
     unsigned long uptimeSec = (millis() - _stats.lastStatsReset) / 1000;
-    if (uptimeSec > 0 && ownTotal > 0) {
+    uint32_t totalOwn = _stats.ownRequestsSuccess + _stats.ownRequestsFailed;
+    if (uptimeSec > 0 && totalOwn > 0) {
         LOG_I("Modbus stats (%lus): own=%u/%u ok, other=%u req, CRC=%u, idle=%.1f%%",
               uptimeSec, 
-              _stats.ownRequestsSuccess, ownTotal,
+              _stats.ownRequestsSuccess, totalOwn,
               _stats.otherRequestsSeen,
               _stats.crcErrors,
               getBusIdlePercent());
     }
+    
+    // Reset interval stats for next period
+    resetIntervalStats();
 }

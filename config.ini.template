@@ -67,6 +67,12 @@ modbus_queue_size = 10
 modbus_device_types_path = "/modbus/devices"
 modbus_device_map_path = "/modbus/devices.json"
 
+; Modbus statistics and warnings
+modbus_stats_interval_ms = 60000        ; Statistics check/log interval (60 seconds)
+modbus_own_fail_warn_percent = 5        ; Warn if own request failure rate exceeds this
+modbus_other_fail_warn_percent = 5      ; Warn if other device failure rate exceeds this
+modbus_bus_busy_warn_percent = 95       ; Warn if bus utilization exceeds this (idle < 5%)
+
 ; LED indicator configuration
 led_pin = 2                             ; Built-in LED on most ESP32 boards
 led_active_low = true

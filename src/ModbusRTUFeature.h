@@ -209,25 +209,25 @@ public:
     // ========================================
     
     struct Stats {
-        // Request/Response counts - Our requests
+        // Request/Response counts - Our requests (cumulative since boot/reset)
         uint32_t ownRequestsSent;
         uint32_t ownRequestsSuccess;
         uint32_t ownRequestsFailed;      // Timeout or exception
         uint32_t ownRequestsDiscarded;   // Queue full
         
-        // Request/Response counts - Other devices (monitored)
+        // Request/Response counts - Other devices (monitored, cumulative)
         uint32_t otherRequestsSeen;
         uint32_t otherResponsesSeen;
         uint32_t otherExceptionsSeen;
         
-        // Legacy/general counts
+        // Legacy/general counts (cumulative)
         uint32_t framesReceived;
         uint32_t framesSent;
         uint32_t crcErrors;
         uint32_t timeouts;
         uint32_t queueOverflows;
         
-        // Timing statistics (microseconds)
+        // Timing statistics (microseconds, cumulative)
         uint64_t ownActiveTimeUs;        // Time spent on our communication
         uint64_t otherActiveTimeUs;      // Time with other traffic
         uint64_t totalTimeUs;            // Total tracked time
@@ -235,22 +235,45 @@ public:
         // For calculating active time
         unsigned long lastStatsReset;
     };
+    
+    // Interval-based stats for percentage calculations
+    struct IntervalStats {
+        uint32_t ownSuccess;
+        uint32_t ownFailed;
+        uint32_t otherSuccess;          // otherResponsesSeen
+        uint32_t otherFailed;           // otherExceptionsSeen
+        uint64_t ownActiveTimeUs;
+        uint64_t otherActiveTimeUs;
+        unsigned long intervalStartMs;  // Start time of current interval
+    };
+    
     const Stats& getStats() const { return _stats; }
+    const IntervalStats& getIntervalStats() const { return _intervalStats; }
     
     /**
-     * @brief Get failure rate for own requests (0.0 - 1.0)
+     * @brief Get failure rate for own requests in current interval (0.0 - 1.0)
      */
     float getOwnFailureRate() const;
     
     /**
-     * @brief Get bus idle percentage (0.0 - 100.0)
+     * @brief Get failure rate for other devices in current interval (0.0 - 1.0)
+     */
+    float getOtherFailureRate() const;
+    
+    /**
+     * @brief Get bus idle percentage in current interval (0.0 - 100.0)
      */
     float getBusIdlePercent() const;
     
     /**
-     * @brief Reset statistics
+     * @brief Reset statistics (cumulative)
      */
     void resetStats();
+    
+    /**
+     * @brief Reset interval statistics (called after each warning check)
+     */
+    void resetIntervalStats();
 
 private:
     void processReceivedData();
@@ -301,13 +324,27 @@ private:
     
     FrameCallback _frameCallback;
     Stats _stats;
+    IntervalStats _intervalStats;
     
     // Timing tracking
     bool _inActiveTime;
     bool _activeTimeIsOwn;
     unsigned long _activeStartTimeUs;
     unsigned long _lastWarningCheckMs;
-    static constexpr uint32_t WARNING_CHECK_INTERVAL_MS = 60000;  // Check every minute
+    
+    // Configurable warning thresholds (set via build flags with defaults)
+#ifndef MODBUS_STATS_INTERVAL_MS
+#define MODBUS_STATS_INTERVAL_MS 60000
+#endif
+#ifndef MODBUS_OWN_FAIL_WARN_PERCENT
+#define MODBUS_OWN_FAIL_WARN_PERCENT 5
+#endif
+#ifndef MODBUS_OTHER_FAIL_WARN_PERCENT
+#define MODBUS_OTHER_FAIL_WARN_PERCENT 5
+#endif
+#ifndef MODBUS_BUS_BUSY_WARN_PERCENT
+#define MODBUS_BUS_BUSY_WARN_PERCENT 95
+#endif
 };
 
 #endif // MODBUS_RTU_FEATURE_H
