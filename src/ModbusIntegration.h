@@ -34,7 +34,7 @@ public:
     static void publishDiscovery(MQTTFeature* mqtt,
                                   const ModbusDeviceManager& devices,
                                   const char* baseTopic,
-                                  const char* manufacturer = "Custom",
+                                  const char* manufacturer = "joba-1",
                                   const char* model = "ESP32 Modbus Gateway",
                                   const char* swVersion = "1.0.0") {
         if (!mqtt || !mqtt->isConnected()) return;

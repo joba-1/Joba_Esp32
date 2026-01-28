@@ -135,8 +135,8 @@ void LoggingFeature::logToSyslog(uint8_t level, const char* message) {
         strcpy(timestamp, "-");
     }
     
-    snprintf(syslogMsg, sizeof(syslogMsg), "<%d>%s %s esp32: %s",
-             pri, timestamp, _hostname, message);
+    snprintf(syslogMsg, sizeof(syslogMsg), "<%d>%s %s %s: %s",
+             pri, timestamp, _hostname, FIRMWARE_NAME, message);
     
     // Send via UDP
     _udp.beginPacket(_syslogServer, _syslogPort);

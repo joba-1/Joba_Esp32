@@ -21,6 +21,10 @@ public:
     void setup() override;
     void loop() override;
     const char* getName() const override { return "OTA"; }
+    
+    // Setter for dynamic configuration
+    void setHostname(const char* hostname) { _hostname = hostname; }
+    void setPassword(const char* password) { _password = password; }
     bool isReady() const override { return _ready; }
     
 private:

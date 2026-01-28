@@ -1,4 +1,5 @@
 #include "WebServerFeature.h"
+#include "DeviceInfo.h"
 #include "LoggingFeature.h"
 #include <WiFi.h>
 
@@ -40,10 +41,11 @@ void WebServerFeature::setupDefaultRoutes() {
             return request->requestAuthentication();
         }
         
-        String html = "<!DOCTYPE html><html><head><title>ESP32</title>";
+        String title = String(DeviceInfo::getFirmwareName()) + " " + DeviceInfo::getDeviceId();
+        String html = "<!DOCTYPE html><html><head><title>" + title + "</title>";
         html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
         html += "<style>body{font-family:Arial,sans-serif;margin:20px;}</style></head>";
-        html += "<body><h1>ESP32 Firmware</h1>";
+        html += "<body><h1>" + title + "</h1>";
         html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         html += "<p>Uptime: " + String(millis() / 1000) + " seconds</p>";
         html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";

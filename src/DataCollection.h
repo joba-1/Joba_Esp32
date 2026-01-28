@@ -6,6 +6,14 @@
 #include <time.h>
 #include "StorageFeature.h"
 
+#ifndef FIRMWARE_NAME
+#define FIRMWARE_NAME "ESP32-Firmware"
+#endif
+
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "1.0.0"
+#endif
+
 // Field types for schema definition
 enum class FieldType { 
     INT8, INT16, INT32, UINT8, UINT16, UINT32, 
@@ -291,6 +299,11 @@ public:
      * @brief Get collection name
      */
     const char* getName() const { return _name; }
+    
+    /**
+     * @brief Set device ID for InfluxDB tags
+     */
+    void setDeviceId(const String& deviceId) { _deviceId = deviceId; }
 
 private:
     T _buffer[RamCapacity];
@@ -310,6 +323,7 @@ private:
     uint32_t _persistDelayMs;
     uint32_t _lastModified;
     bool _dirty;
+    String _deviceId;  // Device ID for InfluxDB tags
     
     void entryToJson(const T& entry, JsonObject& obj) const {
         const uint8_t* ptr = (const uint8_t*)&entry;
@@ -364,15 +378,21 @@ private:
         const uint8_t* ptr = (const uint8_t*)&entry;
         String line = _influxMeasurement;
         
-        // Collect tags
-        bool firstTag = true;
+        // Add global device tags
+        line += ",device_id=";
+        line += _deviceId.length() > 0 ? escapeTag(_deviceId.c_str()) : "unknown";
+        line += ",firmware=";
+        line += FIRMWARE_NAME;
+        line += ",version=";
+        line += FIRMWARE_VERSION;
+        
+        // Collect tags from data structure
         for (size_t i = 0; i < _fieldCount; i++) {
             const FieldDescriptor& f = _schema[i];
             if (f.influxType != InfluxType::TAG) continue;
             
             const uint8_t* fieldPtr = ptr + f.offset;
-            line += firstTag ? "," : ",";
-            firstTag = false;
+            line += ",";
             line += f.name;
             line += "=";
             line += escapeTag((const char*)fieldPtr);

@@ -26,6 +26,10 @@ public:
     bool isConnected() const;
     String getIPAddress() const;
     
+    // Setters for dynamic configuration
+    void setAPName(const char* apName) { _apName = apName; }
+    void setAPPassword(const char* apPassword) { _apPassword = apPassword; }
+    
 private:
     enum class State {
         IDLE,

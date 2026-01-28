@@ -38,6 +38,10 @@ public:
     const char* getBaseTopic() const { return _baseTopic; }
     const char* getClientId() const { return _clientId; }
     
+    // Setter for dynamic configuration
+    void setClientId(const char* clientId) { _clientId = clientId; }
+    void setBaseTopic(const char* baseTopic) { _baseTopic = baseTopic; }
+    
     // Singleton access
     static MQTTFeature* getInstance() { return _instance; }
 

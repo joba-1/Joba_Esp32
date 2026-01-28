@@ -41,6 +41,14 @@ public:
      * @brief Check if authentication is required and valid
      */
     bool authenticate(AsyncWebServerRequest* request);
+    
+    /**
+     * @brief Set password for basic auth
+     */
+    void setPassword(const char* password) { 
+        _password = password;
+        _authEnabled = (strlen(_username) > 0 && strlen(_password) > 0);
+    }
 
 private:
     void setupDefaultRoutes();

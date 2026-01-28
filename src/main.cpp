@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "DeviceInfo.h"
 #include "LoggingFeature.h"
 #include "WiFiManagerFeature.h"
 #include "TimeSyncFeature.h"
@@ -51,6 +52,14 @@ DataCollection<SensorData, 100> sensorData(
 // Feature Instances
 // ============================================
 
+// Dynamic device identity (computed at runtime)
+String deviceId;
+String hostname;
+String apName;
+String mqttClientId;
+String mqttBaseTopic;
+String defaultPassword;
+
 // Feature instances - parameters come from platformio.ini build_flags
 LoggingFeature logging(
     LOG_BAUD_RATE,
@@ -60,14 +69,14 @@ LoggingFeature logging(
     LOG_SYSLOG_LEVEL,
     LOG_SYSLOG_SERVER,
     LOG_SYSLOG_PORT,
-    OTA_HOSTNAME,  // Reuse OTA hostname for syslog
+    "",  // Hostname set dynamically in setup()
     LOG_ENABLE_TIMESTAMP
 );
-WiFiManagerFeature wifiManager(WIFI_AP_NAME, WIFI_AP_PASSWORD, WIFI_CONFIG_PORTAL_TIMEOUT);
+WiFiManagerFeature wifiManager("", "", WIFI_CONFIG_PORTAL_TIMEOUT);  // AP name and password set in setup()
 TimeSyncFeature timeSync(NTP_SERVER1, NTP_SERVER2, TIMEZONE, NTP_SYNC_INTERVAL);
 StorageFeature storage(true);  // Format on fail
-WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, WEBSERVER_PASSWORD);
-OTAFeature ota(OTA_HOSTNAME, OTA_PASSWORD, OTA_PORT);
+WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, "");  // Password set in setup()
+OTAFeature ota("", "", OTA_PORT);  // Hostname and password set in setup()
 
 // InfluxDB: supports V1.x (user/password) and V2.x (org/bucket/token)
 #if INFLUXDB_VERSION == 2
@@ -97,8 +106,8 @@ MQTTFeature mqtt(
     MQTT_PORT,
     MQTT_USERNAME,
     MQTT_PASSWORD,
-    OTA_HOSTNAME,       // Use OTA hostname as client ID
-    MQTT_BASE_TOPIC,
+    "",  // Client ID set in setup()
+    "",  // Base topic set in setup()
     MQTT_RECONNECT_INTERVAL
 );
 
@@ -156,8 +165,8 @@ void collectSensorData() {
     SensorData reading;
     memset(&reading, 0, sizeof(reading));
     
-    // Set location tag
-    strncpy(reading.location, OTA_HOSTNAME, sizeof(reading.location) - 1);
+    // Set location tag using device ID
+    strncpy(reading.location, deviceId.c_str(), sizeof(reading.location) - 1);
     
     // Collect sensor values (replace with actual sensor readings)
     reading.temperature = 22.5 + (random(-20, 20) / 10.0f);  // Simulated
@@ -181,11 +190,44 @@ void collectSensorData() {
 }
 
 void setup() {
+    // Initialize WiFi in station mode (needed for MAC address)
+    WiFi.mode(WIFI_STA);
+    
+    // Generate device identity
+    deviceId = DeviceInfo::getDeviceId();
+    hostname = DeviceInfo::getHostname();
+    apName = deviceId + "-Config";
+    mqttClientId = hostname;
+    mqttBaseTopic = String(DeviceInfo::getFirmwareName()) + "/" + hostname;
+    mqttBaseTopic.toLowerCase();
+    defaultPassword = DeviceInfo::getDefaultPassword(DEFAULT_PASSWORD);
+    
+    // Configure features with dynamic values before setup
+    wifiManager.setAPName(apName.c_str());
+    wifiManager.setAPPassword(defaultPassword.c_str());
+    webServer.setPassword(defaultPassword.c_str());
+    ota.setHostname(hostname.c_str());
+    ota.setPassword(defaultPassword.c_str());
+    logging.setHostname(hostname.c_str());
+    mqtt.setClientId(mqttClientId.c_str());
+    mqtt.setBaseTopic(mqttBaseTopic.c_str());
+    
+    // Log firmware info
+    LOG_I("======================================");
+    LOG_I("%s v%s", DeviceInfo::getFirmwareName(), DeviceInfo::getFirmwareVersion());
+    LOG_I("Device ID: %s", deviceId.c_str());
+    LOG_I("Hostname: %s", hostname.c_str());
+    LOG_I("Default Password: %s", defaultPassword.c_str());
+    LOG_I("======================================");
+    
     // Initialize all features
     for (size_t i = 0; i < featureCount; i++) {
         features[i]->setup();
         LOG_I("Feature '%s' setup complete", features[i]->getName());
     }
+    
+    // Set device ID on data collections for InfluxDB tags
+    sensorData.setDeviceId(deviceId);
     
     // Enable persistence for sensor data (5 second delay before write)
     sensorData.enablePersistence(&storage, "/data/sensors.json", 5000);
@@ -230,8 +272,9 @@ void setup() {
                                                      registerName, value, unit, "modbus");
             
             // Publish individual value to MQTT
+            String modbusTopic = mqttBaseTopic + "/modbus";
             ModbusIntegration::publishRegisterValue(&mqtt, unitId, deviceName,
-                                                     registerName, value, MQTT_BASE_TOPIC "/modbus");
+                                                     registerName, value, modbusTopic.c_str());
             
             // Pulse LED to indicate Modbus data received
             led.pulse();
@@ -258,16 +301,17 @@ void loop() {
     
     // Publish Home Assistant autodiscovery once MQTT is connected
     if (mqtt.isConnected() && !haDiscoveryPublished) {
+        String deviceName = String(DeviceInfo::getFirmwareName()) + " " + deviceId;
         DataCollectionMQTT::publishDiscovery(
             &mqtt,
             "sensors",
             sensorHAConfig,
             sizeof(sensorHAConfig) / sizeof(sensorHAConfig[0]),
-            OTA_HOSTNAME,          // Device name in HA
-            OTA_HOSTNAME,          // Device unique ID
-            "Custom",              // Manufacturer
-            "ESP32 Sensor Node",   // Model
-            "1.0.0"                // Software version
+            deviceName.c_str(),                   // Device name in HA
+            deviceId.c_str(),                     // Device unique ID
+            "joba-1",                             // Manufacturer
+            DeviceInfo::getFirmwareName(),        // Model
+            DeviceInfo::getFirmwareVersion()      // Software version
         );
         haDiscoveryPublished = true;
         LOG_I("Home Assistant autodiscovery published");
@@ -275,13 +319,14 @@ void loop() {
     
     // Publish Modbus Home Assistant autodiscovery once MQTT is connected
     if (mqtt.isConnected() && !modbusHADiscoveryPublished && modbusDevices) {
+        String modbusTopic = mqttBaseTopic + "/modbus";
         ModbusIntegration::publishDiscovery(
             &mqtt,
             *modbusDevices,
-            MQTT_BASE_TOPIC "/modbus",
-            "Custom",              // Manufacturer
-            "ESP32 Modbus Gateway", // Model
-            "1.0.0"                // Software version
+            modbusTopic.c_str(),
+            "joba-1",              // Manufacturer
+            DeviceInfo::getFirmwareName(), // Model
+            DeviceInfo::getFirmwareVersion() // Software version
         );
         modbusHADiscoveryPublished = true;
         LOG_I("Modbus Home Assistant autodiscovery published");
@@ -291,8 +336,9 @@ void loop() {
     if (mqtt.isConnected() && modbusDevices &&
         millis() - lastModbusStatePublish >= MODBUS_STATE_PUBLISH_INTERVAL) {
         lastModbusStatePublish = millis();
+        String modbusTopic = mqttBaseTopic + "/modbus";
         ModbusIntegration::publishAllDeviceStates(&mqtt, *modbusDevices,
-                                                   MQTT_BASE_TOPIC "/modbus");
+                                                   modbusTopic.c_str());
     }
     
     // Periodic data collection

@@ -82,6 +82,9 @@ public:
     
     bool isSyslogEnabled() const { return _syslogEnabled; }
     bool isBootPhase() const { return _inBootPhase; }
+    
+    // Setter for dynamic configuration
+    void setHostname(const char* hostname) { _hostname = hostname; }
 
 private:
     void log(uint8_t level, const char* levelStr, const char* format, va_list args);
