@@ -184,3 +184,79 @@ On a higher level: read register definitions for modbus device types from the sp
 ### Build Status
 - Flash: 71.0% (1,395,082 bytes)
 - RAM: 17.9% (58,524 bytes)
+
+### 2nd Manual Prompt 1 
+amend commit, add manual edits to the message
+
+### 2nd Manual Prompt 2
+add led feature that lights led during setup and when receiving modbus or other sensor data
+
+### 2nd Manual Prompt 3 
+evaluate what can happen, e.g. with turning off led pulse, but also on other occations where an elapsed time is used, when millis() overflows. Then it can be smaller than a start value or even zero
+
+### 2nd Manual Prompt 4 
+there seems to be another subtle bug when pulse end time is set to millis() which can be zero.
+
+### 2nd Manual Prompt 5
+check for other occurences of that pattern before building 
+
+### 2nd Manual Prompt 6
+set pulse start time 1ms into the future if millis() returns 0 on boot or on overflow is problematic for elapsed checks in the same millisecond  
+
+### 2nd Manual Prompt 7
+I dont need the analysis report committed
+
+### 2nd Manual Prompt 8
+ok
+
+### 2nd Manual Prompt 9
+I want a firmware name defined outside the code. there are several occations where this could be used: (part of) AP name, syslog app name, part of mqtt topics, default passwords, web page titles and so on. sometimes combining with a manually set firmware instance number, an id derived from MAC address or a version number are handy to distinguish between different esp32 running the same firmware. Please suggest places where this can be used in the workspace
+
+### 2nd Manual Prompt 10
+yes, please implement. keep in mind mqtt client ids have to be unique. influx measurement tags should always include device id and version. Generally prefer the dynamic approaches. Backwards compatibility is currently not needed, but should be easy for future changes.
+
+### 2nd Manual Prompt 11
+before committing: there seem to be unused an unwanted defines in platformio.ini (and maybe also in code?). Please remove them
+
+### 2nd Manual Prompt 12
+dont commit yet. You are right, MQTT_BASE_TOPIC is still used. But it shouldnt. Instead use the dynamic topic unique for each device (firmwarename/device-id/)
+
+### 2nd Manual Prompt 13
+change manufacturer for ha discovery from "Custom" to my github username ("joba-1"). Check if manufacturer is used elsewhere.
+
+### 2nd Manual Prompt 14
+I still see defines of WIFI_AP_PASSWORD, WEBSERVER_PASSWORD, OTA_PASSWORD. These should all be the same, by default firmware name and device id, but overrideable in platformio.ini
+
+### 2nd Manual Prompt 15
+the platformio.ini currently mixes configuration that is required for a successful project build and configuration that is dependant on the usecase, environment or external services. 
+Migrate the second type of configurations into a template file.
+This template file should be copied to a user configuration file, if that doesn't exist yet. This user config file is used by the platformio.ini and not included in git
+
+### 2nd Manual Prompt 16
+default influx database should have name of firmware. Check if that is the case if config defines it as empty string. Mention this mechanism in config.ini.template
+
+### 2nd Manual Prompt 17
+log levels and boot duration should go to config template. boot duration should be increased to 5 minutes and ntp servers should be pools from eu and de regions
+
+### 2nd Manual Prompt 18
+one more test: remove config.ini and do clean and build again
+
+### 2nd Manual Prompt 19
+update spec and readme with latest changes, where applicable. The readme should give a short overview of what the firmware can and will do, how to create and deploy it and how to configure the available features. The spec should contain all infos required if that project would need to be recreated from scratch with very similar structure and functionality
+
+### 2nd Manual Prompt 20
+commit doc update
+
+### 2nd Manual Prompt 21
+rename files that define or declare classes derived from Feature to end in Feature (like most already do)
+
+### 2nd Manual Prompt 22
+please verify that there is no actual modbus request sent by us in the current code
+
+### 2nd Manual Prompt 23
+make sure that if our modbus requests are discarded, an error message is logged.
+Take note of counts of own requests and requests of other devices, split in successful and not successful responses. Log warning if more than 5% fail.
+Also take note of idle time and time with active communication on the bus (requests transferred, waiting for answers or timeouts, responses transferred, minimum idle before next request) split in communication initiated by us and that initiated by others. Log warning if idle is less than 5%
+
+### 2nd Manual Prompt 24
+also add warnings for high request failure rate of others, too. Make the percentage limits and the duration of the observed time for them an option in config.ini. Not sure if the percentages are currently done since boot or over an interval. It should be interval. Total values since boot (or stats reset) are interesting but percentage not so much.
