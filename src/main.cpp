@@ -79,11 +79,12 @@ WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, "");  // Password
 OTAFeature ota("", "", OTA_PORT);  // Hostname and password set in setup()
 
 // InfluxDB: supports V1.x (user/password) and V2.x (org/bucket/token)
+// Note: Database name defaults to FIRMWARE_NAME if empty
 #if INFLUXDB_VERSION == 2
 InfluxDBFeature influxDB(
     INFLUXDB_URL,
     INFLUXDB_ORG,
-    INFLUXDB_BUCKET,
+    strlen(INFLUXDB_BUCKET) > 0 ? INFLUXDB_BUCKET : FIRMWARE_NAME,
     INFLUXDB_TOKEN,
     INFLUXDB_BATCH_INTERVAL,
     INFLUXDB_BATCH_SIZE
@@ -92,7 +93,7 @@ InfluxDBFeature influxDB(
 // Default to V1.x
 InfluxDBFeature influxDB = InfluxDBFeature::createV1(
     INFLUXDB_URL,
-    INFLUXDB_DATABASE,
+    strlen(INFLUXDB_DATABASE) > 0 ? INFLUXDB_DATABASE : FIRMWARE_NAME,
     INFLUXDB_USERNAME,
     INFLUXDB_PASSWORD,
     INFLUXDB_RP,

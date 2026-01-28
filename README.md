@@ -72,7 +72,30 @@ All features are implemented as modular, non-blocking classes derived from a com
    cd esp32-firmware
    ```
 
-2. **Build the firmware**:
+2. **Configure your environment**:
+   
+   Create your configuration file from the template:
+   ```bash
+   python3 pre_build.py
+   ```
+   
+   This creates `config.ini` from `config.ini.template` if it doesn't exist. Edit `config.ini` to customize:
+   - Firmware name and version
+   - Device instance number (or use MAC-based automatic ID)
+   - Default password (or use auto-generated)
+   - Log levels and boot duration
+   - Network settings (WiFi, NTP servers, timezone)
+   - External services (InfluxDB, MQTT, Syslog)
+   - Hardware configuration (Modbus pins, LED pin)
+   
+   ```bash
+   # Customize your configuration
+   nano config.ini
+   ```
+   
+   **Note:** `config.ini` is gitignored. Use `config.ini.template` as reference.
+
+3. **Build the firmware**:
    ```bash
    pio run
    ```
@@ -90,10 +113,10 @@ All features are implemented as modular, non-blocking classes derived from a com
    ls /dev/ttyACM*
    ```
 
-3. **Update the port** in `platformio.ini` if needed:
+3. **Update the port** in `config.ini`:
    ```ini
-   [env:serial]
-   upload_port = /dev/ttyUSB0
+   [user_config]
+   upload_port_serial = /dev/ttyUSB0
    ```
 
 4. **Flash the firmware**:

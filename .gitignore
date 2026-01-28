@@ -7,3 +7,6 @@
 *.swp
 *~
 .DS_Store
+
+# User-specific configuration (use config.ini.template as starting point)
+config.ini
