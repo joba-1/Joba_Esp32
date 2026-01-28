@@ -24,7 +24,8 @@ public:
         , _activeLow(activeLow)
         , _pulseDurationMs(pulseDurationMs)
         , _setupComplete(false)
-        , _pulseEndTime(0)
+        , _isPulsing(false)
+        , _pulseStartTime(0)
     {
     }
     
@@ -42,10 +43,10 @@ public:
             return;
         }
         
-        // Handle pulse timeout
-        if (_pulseEndTime > 0 && millis() >= _pulseEndTime) {
+        // Handle pulse timeout (using subtraction to handle millis() overflow)
+        if (_isPulsing && (millis() - _pulseStartTime >= _pulseDurationMs)) {
             off();
-            _pulseEndTime = 0;
+            _isPulsing = false;
         }
     }
     
@@ -67,7 +68,8 @@ public:
     void pulse() {
         if (_pin < 0) return;
         on();
-        _pulseEndTime = millis() + _pulseDurationMs;
+        _pulseStartTime = millis();
+        _isPulsing = true;
     }
     
     /**
@@ -99,7 +101,8 @@ private:
     bool _activeLow;
     uint32_t _pulseDurationMs;
     bool _setupComplete;
-    unsigned long _pulseEndTime;
+    bool _isPulsing;                // Whether currently in pulse mode
+    unsigned long _pulseStartTime;  // When pulse started
 };
 
 #endif // LED_FEATURE_H
