@@ -24,7 +24,11 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _requestSentTime(0)
     , _currentRequest(nullptr)
     , _frameCallback(nullptr)
-    , _stats{0, 0, 0, 0, 0}
+    , _stats{}
+    , _inActiveTime(false)
+    , _activeTimeIsOwn(false)
+    , _activeStartTimeUs(0)
+    , _lastWarningCheckMs(0)
 {
     // Calculate timing based on baud rate
     // Character time = (start + data + parity + stop) bits / baud
@@ -64,6 +68,8 @@ void ModbusRTUFeature::setup() {
     
     _lastActivityTime = millis();
     _lastByteTime = micros();
+    _lastWarningCheckMs = millis();
+    _stats.lastStatsReset = millis();
     
     LOG_I("ModbusRTU initialized: %lu baud, silence=%lu us", _baudRate, _silenceTimeUs);
     if (_dePin >= 0) {
@@ -79,6 +85,12 @@ void ModbusRTUFeature::loop() {
     unsigned long nowUs = micros();
     unsigned long nowMs = millis();
     
+    // Track total time for statistics
+    _stats.totalTimeUs += (nowUs - _activeStartTimeUs);
+    if (!_inActiveTime) {
+        _activeStartTimeUs = nowUs;
+    }
+    
     // Read available data
     while (_serial.available()) {
         uint8_t byte = _serial.read();
@@ -93,6 +105,11 @@ void ModbusRTUFeature::loop() {
         _lastByteTime = nowUs;
         _lastActivityTime = nowMs;
         _busSilent = false;
+        
+        // Start tracking active time if not already
+        if (!_inActiveTime && !_waitingForResponse) {
+            startActiveTime(false);  // Assume other device traffic
+        }
     }
     
     // Check for frame complete (3.5 char silence)
@@ -100,15 +117,20 @@ void ModbusRTUFeature::loop() {
         processReceivedData();
     }
     
-    // Update bus silence state
+    // Update bus silence state and end active time tracking
     if (!_busSilent && (nowMs - _lastActivityTime) > (_silenceTimeUs / 1000 + 1)) {
         _busSilent = true;
+        if (_inActiveTime && !_waitingForResponse) {
+            endActiveTime();
+        }
     }
     
     // Check for response timeout
     if (_waitingForResponse && (nowMs - _requestSentTime) > _responseTimeoutMs) {
-        LOG_W("Modbus response timeout");
+        LOG_W("Modbus response timeout for unit %d FC 0x%02X", 
+              _lastRequest.unitId, _lastRequest.functionCode);
         _stats.timeouts++;
+        _stats.ownRequestsFailed++;
         
         if (_currentRequest && _currentRequest->callback) {
             ModbusFrame emptyFrame;
@@ -118,11 +140,18 @@ void ModbusRTUFeature::loop() {
         
         _waitingForResponse = false;
         _currentRequest = nullptr;
+        endActiveTime();
     }
     
     // Process request queue when bus is silent and not waiting
     if (_busSilent && !_waitingForResponse) {
         processQueue();
+    }
+    
+    // Periodic warning check
+    if (nowMs - _lastWarningCheckMs >= WARNING_CHECK_INTERVAL_MS) {
+        checkAndLogWarnings();
+        _lastWarningCheckMs = nowMs;
     }
 }
 
@@ -138,11 +167,24 @@ void ModbusRTUFeature::processReceivedData() {
         
         // Determine if this is a request or response
         bool isRequest = false;
+        bool isOurResponse = false;
         
         if (_waitingForResponse && frame.unitId == _lastRequest.unitId) {
-            // This is likely a response to our request
+            // This is a response to our request
             isRequest = false;
+            isOurResponse = true;
             _waitingForResponse = false;
+            
+            // Track success/failure for our requests
+            if (frame.isValid && !frame.isException) {
+                _stats.ownRequestsSuccess++;
+            } else {
+                _stats.ownRequestsFailed++;
+                if (frame.isException) {
+                    LOG_W("Modbus exception 0x%02X from unit %d", 
+                          frame.exceptionCode, frame.unitId);
+                }
+            }
             
             // Update register map with response data
             updateRegisterMap(_lastRequest, frame);
@@ -153,6 +195,9 @@ void ModbusRTUFeature::processReceivedData() {
             }
             _currentRequest = nullptr;
             
+            // End our active time period
+            endActiveTime();
+            
         } else {
             // This is either a request from another master or response we're monitoring
             // Heuristic: requests typically have FC 0x01-0x06 with specific data lengths
@@ -160,12 +205,27 @@ void ModbusRTUFeature::processReceivedData() {
             if (fc >= 0x01 && fc <= 0x04 && frame.data.size() == 4) {
                 isRequest = true;
                 _lastRequest = frame;
+                _stats.otherRequestsSeen++;
+                startActiveTime(false);  // Start tracking other device's communication
             } else if (fc == 0x05 && frame.data.size() == 4) {
                 isRequest = true;
+                _stats.otherRequestsSeen++;
+                startActiveTime(false);
             } else if (fc == 0x06 && frame.data.size() == 4) {
                 isRequest = true;
+                _stats.otherRequestsSeen++;
+                startActiveTime(false);
             } else if (fc == 0x10 && frame.data.size() >= 5) {
                 isRequest = true;
+                _stats.otherRequestsSeen++;
+                startActiveTime(false);
+            } else {
+                // Looks like a response (to someone else's request)
+                if (frame.isException) {
+                    _stats.otherExceptionsSeen++;
+                } else {
+                    _stats.otherResponsesSeen++;
+                }
             }
             
             // Update register map if this looks like a response
@@ -278,9 +338,13 @@ void ModbusRTUFeature::processQueue() {
     ModbusPendingRequest& req = _requestQueue.front();
     
     if (sendRequest(req)) {
+        _stats.ownRequestsSent++;
         _currentRequest = &req;
         _waitingForResponse = true;
         _requestSentTime = millis();
+        
+        // Start tracking our active communication time
+        startActiveTime(true);
         
         // Build the last request frame for response matching
         _lastRequest.unitId = req.unitId;
@@ -402,7 +466,9 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
                                           std::function<void(bool, const ModbusFrame&)> callback) {
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
-        LOG_W("Modbus request queue full");
+        _stats.ownRequestsDiscarded++;
+        LOG_E("Modbus request DISCARDED: queue full (%u/%u) - unit %d FC 0x%02X reg %d qty %d",
+              _requestQueue.size(), _maxQueueSize, unitId, functionCode, startRegister, quantity);
         return false;
     }
     
@@ -423,6 +489,9 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
                                                  std::function<void(bool, const ModbusFrame&)> callback) {
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_E("Modbus write request DISCARDED: queue full (%u/%u) - unit %d reg %d value %d",
+              _requestQueue.size(), _maxQueueSize, unitId, address, value);
         return false;
     }
     
@@ -445,6 +514,9 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
                                                     std::function<void(bool, const ModbusFrame&)> callback) {
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_E("Modbus write-multi request DISCARDED: queue full (%u/%u) - unit %d reg %d count %u",
+              _requestQueue.size(), _maxQueueSize, unitId, startAddress, values.size());
         return false;
     }
     
@@ -483,4 +555,81 @@ uint16_t ModbusRTUFeature::calculateCRC(const uint8_t* data, size_t length) {
     }
     
     return crc;
+}
+
+void ModbusRTUFeature::startActiveTime(bool isOwn) {
+    if (!_inActiveTime) {
+        _inActiveTime = true;
+        _activeTimeIsOwn = isOwn;
+        _activeStartTimeUs = micros();
+    }
+}
+
+void ModbusRTUFeature::endActiveTime() {
+    if (_inActiveTime) {
+        unsigned long duration = micros() - _activeStartTimeUs;
+        if (_activeTimeIsOwn) {
+            _stats.ownActiveTimeUs += duration;
+        } else {
+            _stats.otherActiveTimeUs += duration;
+        }
+        _inActiveTime = false;
+    }
+}
+
+float ModbusRTUFeature::getOwnFailureRate() const {
+    uint32_t total = _stats.ownRequestsSuccess + _stats.ownRequestsFailed;
+    if (total == 0) return 0.0f;
+    return (float)_stats.ownRequestsFailed / (float)total;
+}
+
+float ModbusRTUFeature::getBusIdlePercent() const {
+    if (_stats.totalTimeUs == 0) return 100.0f;
+    uint64_t activeTimeUs = _stats.ownActiveTimeUs + _stats.otherActiveTimeUs;
+    uint64_t idleTimeUs = (_stats.totalTimeUs > activeTimeUs) ? 
+                          (_stats.totalTimeUs - activeTimeUs) : 0;
+    return (float)idleTimeUs * 100.0f / (float)_stats.totalTimeUs;
+}
+
+void ModbusRTUFeature::resetStats() {
+    memset(&_stats, 0, sizeof(_stats));
+    _stats.lastStatsReset = millis();
+}
+
+void ModbusRTUFeature::checkAndLogWarnings() {
+    // Only check if we have some data
+    uint32_t ownTotal = _stats.ownRequestsSuccess + _stats.ownRequestsFailed;
+    
+    // Check own request failure rate (>5%)
+    if (ownTotal >= 20) {  // Need at least 20 requests for meaningful percentage
+        float failureRate = getOwnFailureRate();
+        if (failureRate > 0.05f) {
+            LOG_W("Modbus own request failure rate: %.1f%% (%u/%u failed, %u discarded)",
+                  failureRate * 100.0f, 
+                  _stats.ownRequestsFailed, ownTotal,
+                  _stats.ownRequestsDiscarded);
+        }
+    }
+    
+    // Check bus idle time (<5%)
+    if (_stats.totalTimeUs > 60000000) {  // At least 60 seconds of data
+        float idlePercent = getBusIdlePercent();
+        if (idlePercent < 5.0f) {
+            float ownPercent = (float)_stats.ownActiveTimeUs * 100.0f / (float)_stats.totalTimeUs;
+            float otherPercent = (float)_stats.otherActiveTimeUs * 100.0f / (float)_stats.totalTimeUs;
+            LOG_W("Modbus bus utilization high: idle=%.1f%%, own=%.1f%%, other=%.1f%%",
+                  idlePercent, ownPercent, otherPercent);
+        }
+    }
+    
+    // Log summary at INFO level periodically
+    unsigned long uptimeSec = (millis() - _stats.lastStatsReset) / 1000;
+    if (uptimeSec > 0 && ownTotal > 0) {
+        LOG_I("Modbus stats (%lus): own=%u/%u ok, other=%u req, CRC=%u, idle=%.1f%%",
+              uptimeSec, 
+              _stats.ownRequestsSuccess, ownTotal,
+              _stats.otherRequestsSeen,
+              _stats.crcErrors,
+              getBusIdlePercent());
+    }
 }

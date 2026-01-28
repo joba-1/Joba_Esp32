@@ -209,13 +209,48 @@ public:
     // ========================================
     
     struct Stats {
+        // Request/Response counts - Our requests
+        uint32_t ownRequestsSent;
+        uint32_t ownRequestsSuccess;
+        uint32_t ownRequestsFailed;      // Timeout or exception
+        uint32_t ownRequestsDiscarded;   // Queue full
+        
+        // Request/Response counts - Other devices (monitored)
+        uint32_t otherRequestsSeen;
+        uint32_t otherResponsesSeen;
+        uint32_t otherExceptionsSeen;
+        
+        // Legacy/general counts
         uint32_t framesReceived;
         uint32_t framesSent;
         uint32_t crcErrors;
         uint32_t timeouts;
         uint32_t queueOverflows;
+        
+        // Timing statistics (microseconds)
+        uint64_t ownActiveTimeUs;        // Time spent on our communication
+        uint64_t otherActiveTimeUs;      // Time with other traffic
+        uint64_t totalTimeUs;            // Total tracked time
+        
+        // For calculating active time
+        unsigned long lastStatsReset;
     };
     const Stats& getStats() const { return _stats; }
+    
+    /**
+     * @brief Get failure rate for own requests (0.0 - 1.0)
+     */
+    float getOwnFailureRate() const;
+    
+    /**
+     * @brief Get bus idle percentage (0.0 - 100.0)
+     */
+    float getBusIdlePercent() const;
+    
+    /**
+     * @brief Reset statistics
+     */
+    void resetStats();
 
 private:
     void processReceivedData();
@@ -226,6 +261,9 @@ private:
     void sendFrame(const std::vector<uint8_t>& frame);
     uint16_t calculateCRC(const uint8_t* data, size_t length);
     void setDE(bool transmit);
+    void checkAndLogWarnings();
+    void startActiveTime(bool isOwn);
+    void endActiveTime();
     
     static uint16_t makeMapKey(uint8_t unitId, uint8_t functionCode) {
         return (unitId << 8) | functionCode;
@@ -263,6 +301,13 @@ private:
     
     FrameCallback _frameCallback;
     Stats _stats;
+    
+    // Timing tracking
+    bool _inActiveTime;
+    bool _activeTimeIsOwn;
+    unsigned long _activeStartTimeUs;
+    unsigned long _lastWarningCheckMs;
+    static constexpr uint32_t WARNING_CHECK_INTERVAL_MS = 60000;  // Check every minute
 };
 
 #endif // MODBUS_RTU_FEATURE_H
