@@ -137,31 +137,12 @@ void ModbusRTUFeature::loop() {
         _stats.ownRequestsFailed++;
         _intervalStats.ownFailed++;
         
-        // Extract callback FIRST before clearing _currentRequest
-        // (the pointer might be to a queue item that could be reallocated)
-        std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
-        if (_currentRequest && _currentRequest->callback) {
-            callbackCopy = _currentRequest->callback;
-        }
+        // DO NOT invoke callback on timeout - callbacks can block and trigger watchdog
+        // The timeout is already logged, which provides visibility
         
-        // Clear state immediately
         _waitingForResponse = false;
         _currentRequest = nullptr;
         endActiveTime();
-        
-        // NOW invoke the callback safely (outside the critical section)
-        if (callbackCopy) {
-            ModbusFrame emptyFrame;
-            emptyFrame.isValid = false;
-            emptyFrame.unitId = _lastRequest.unitId;
-            emptyFrame.functionCode = _lastRequest.functionCode;
-            emptyFrame.isException = false;
-            try {
-                callbackCopy(false, emptyFrame);
-            } catch (...) {
-                LOG_E("Exception in Modbus timeout callback");
-            }
-        }
     }
     
     // Process request queue when bus is silent and not waiting
