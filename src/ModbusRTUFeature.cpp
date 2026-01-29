@@ -137,11 +137,22 @@ void ModbusRTUFeature::loop() {
         _stats.ownRequestsFailed++;
         _intervalStats.ownFailed++;
         
-        // Safely invoke callback if present
-        if (_currentRequest && _currentRequest->callback) {
-            ModbusFrame emptyFrame;
-            emptyFrame.isValid = false;
-            _currentRequest->callback(false, emptyFrame);
+        // Safely invoke callback if present - use a local copy to avoid race condition
+        ModbusPendingRequest* localReq = _currentRequest;
+        if (localReq) {
+            if (localReq->callback) {
+                ModbusFrame emptyFrame;
+                emptyFrame.isValid = false;
+                emptyFrame.unitId = _lastRequest.unitId;
+                emptyFrame.functionCode = _lastRequest.functionCode;
+                emptyFrame.isException = false;
+                // Call the callback with a local copy (safer)
+                try {
+                    localReq->callback(false, emptyFrame);
+                } catch (...) {
+                    LOG_E("Exception in Modbus timeout callback");
+                }
+            }
         }
         
         _waitingForResponse = false;
@@ -197,9 +208,14 @@ void ModbusRTUFeature::processReceivedData() {
             // Update register map with response data
             updateRegisterMap(_lastRequest, frame);
             
-            // Call request callback
-            if (_currentRequest && _currentRequest->callback) {
-                _currentRequest->callback(frame.isValid && !frame.isException, frame);
+            // Call request callback with protection against race conditions
+            ModbusPendingRequest* localReq = _currentRequest;
+            if (localReq && localReq->callback) {
+                try {
+                    localReq->callback(frame.isValid && !frame.isException, frame);
+                } catch (...) {
+                    LOG_E("Exception in Modbus response callback");
+                }
             }
             _currentRequest = nullptr;
             
