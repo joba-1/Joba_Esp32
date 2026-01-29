@@ -39,48 +39,75 @@ bool StorageFeature::writeFile(const char* path, const String& content) {
         LOG_E("Storage not mounted");
         return false;
     }
-    
+
+    // Ensure parent directories exist
+    String p = String(path);
+    int lastSlash = p.lastIndexOf('/');
+    if (lastSlash > 0) {
+        String parent = p.substring(0, lastSlash);
+        if (!LittleFS.exists(parent.c_str())) {
+            // Try to create parent directories recursively
+            if (!mkdir(parent.c_str())) {
+                LOG_E("Failed to create parent directory: %s", parent.c_str());
+                return false;
+            }
+        }
+    }
+
     File file = LittleFS.open(path, "w");
     if (!file) {
         LOG_E("Failed to open file for writing: %s", path);
         return false;
     }
-    
+
     size_t written = file.print(content);
     file.close();
-    
+
     if (written != content.length()) {
         LOG_E("Write incomplete: %s (%u/%u bytes)", path, written, content.length());
         return false;
     }
-    
+
     LOG_D("Wrote %u bytes to %s", written, path);
     return true;
-}
+} 
 
 bool StorageFeature::appendFile(const char* path, const String& content) {
     if (!_mounted) {
         LOG_E("Storage not mounted");
         return false;
     }
-    
+
+    // Ensure parent directories exist
+    String p = String(path);
+    int lastSlash = p.lastIndexOf('/');
+    if (lastSlash > 0) {
+        String parent = p.substring(0, lastSlash);
+        if (!LittleFS.exists(parent.c_str())) {
+            if (!mkdir(parent.c_str())) {
+                LOG_E("Failed to create parent directory: %s", parent.c_str());
+                return false;
+            }
+        }
+    }
+
     File file = LittleFS.open(path, "a");
     if (!file) {
         LOG_E("Failed to open file for appending: %s", path);
         return false;
     }
-    
+
     size_t written = file.print(content);
     file.close();
-    
+
     if (written != content.length()) {
         LOG_E("Append incomplete: %s (%u/%u bytes)", path, written, content.length());
         return false;
     }
-    
+
     LOG_D("Appended %u bytes to %s", written, path);
     return true;
-}
+} 
 
 String StorageFeature::readFile(const char* path) {
     if (!_mounted) {
@@ -130,18 +157,54 @@ bool StorageFeature::mkdir(const char* path) {
         LOG_E("Storage not mounted");
         return false;
     }
-    
-    if (LittleFS.exists(path)) {
-        return true;  // Already exists
+
+    String p = String(path);
+    if (p.endsWith("/")) p.remove(p.length() - 1);
+    if (p.length() == 0) return true;
+
+    // If already exists, nothing to do
+    if (LittleFS.exists(p.c_str())) return true;
+
+    // Create path recursively: from root to full path
+    String accum = "";
+    int start = 0;
+    // Ensure leading '/' is preserved
+    if (p.charAt(0) == '/') {
+        accum = "/";
+        start = 1;
     }
-    
-    if (LittleFS.mkdir(path)) {
-        LOG_D("Created directory: %s", path);
-        return true;
+
+    while (start <= (int)p.length()) {
+        int next = p.indexOf('/', start);
+        String segment;
+        if (next == -1) {
+            segment = p.substring(start);
+            start = p.length() + 1; // will exit loop
+        } else {
+            segment = p.substring(start, next);
+            start = next + 1;
+        }
+        if (segment.length() == 0) continue;
+        if (accum.endsWith("/") && accum.length() > 1) {
+            accum += segment;
+        } else if (accum == "/") {
+            accum += segment;
+        } else if (accum.length() == 0) {
+            accum = segment;
+        } else {
+            accum += "/" + segment;
+        }
+
+        if (!LittleFS.exists(accum.c_str())) {
+            if (!LittleFS.mkdir(accum.c_str())) {
+                LOG_E("Failed to create directory: %s", accum.c_str());
+                return false;
+            }
+            LOG_D("Created directory: %s", accum.c_str());
+        }
     }
-    
-    LOG_E("Failed to create directory: %s", path);
-    return false;
+
+    return true;
 }
 
 size_t StorageFeature::totalBytes() const {
