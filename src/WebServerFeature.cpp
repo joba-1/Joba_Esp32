@@ -238,20 +238,26 @@ void WebServerFeature::setupDefaultRoutes() {
                 const resp = await fetch(LIST_API + '?path=' + encodeURIComponent(path));
                 console.log('Response status:', resp.status);
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const data = await resp.json();
-                console.log('Data received:', data);
+                const rawText = await resp.text();
+                console.log('Raw response:', rawText);
+                const data = JSON.parse(rawText);
+                console.log('Parsed data:', data, 'is array:', Array.isArray(data));
                 document.getElementById('currentPath').textContent = path;
                 document.getElementById('statusMsg').textContent = '';
                 currentPath = path;
                 const tbody = document.getElementById('filesBody');
-                if (!data || data.length === 0) {
+                
+                // Handle both array and object responses
+                const items = Array.isArray(data) ? data : (data.entries || data.items || []);
+                
+                if (!items || items.length === 0) {
                     tbody.innerHTML = '';
                     document.getElementById('noData').style.display = 'block';
                     document.getElementById('statusMsg').textContent = 'Empty directory';
                     return;
                 }
                 document.getElementById('noData').style.display = 'none';
-                tbody.innerHTML = data.map(item => {
+                tbody.innerHTML = items.map(item => {
                     const name = item.name;
                     const isDir = item.isDir;
                     const size = item.size;
@@ -260,7 +266,7 @@ void WebServerFeature::setupDefaultRoutes() {
                     const action = isDir ? `<button class="btn" onclick="loadPath('${rel}')">Open</button>` : `<a class="btn" href="${FILE_API}?path=${encodeURIComponent(rel)}">Download</a>`;
                     return `<tr><td>${displayName}</td><td>${isDir ? '-' : humanSize(size)}</td><td>${isDir ? 'dir' : 'file'}</td><td>${action}</td></tr>`;
                 }).join('');
-                document.getElementById('statusMsg').textContent = 'Loaded ' + data.length + ' entries';
+                document.getElementById('statusMsg').textContent = 'Loaded ' + items.length + ' entries';
             } catch (e) {
                 console.error('Load error', e);
                 document.getElementById('statusMsg').textContent = 'Error: ' + e.message;
