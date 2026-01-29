@@ -63,6 +63,14 @@ public:
     static String getMacSuffix() {
         uint8_t mac[6];
         WiFi.macAddress(mac);
+        // If MAC is all zeros the WiFi stack may not have initialized yet.
+        // Use lower 24 bits of efuse MAC as a deterministic fallback.
+        if (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0) {
+            uint64_t efuse = ESP.getEfuseMac();
+            char buf[7];
+            snprintf(buf, sizeof(buf), "%06llX", (unsigned long long)(efuse & 0xFFFFFFULL));
+            return String(buf);
+        }
         char macStr[9];
         snprintf(macStr, sizeof(macStr), "%02X%02X%02X", 
                  mac[3], mac[4], mac[5]);
