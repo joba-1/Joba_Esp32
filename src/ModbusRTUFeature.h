@@ -322,6 +322,8 @@ private:
     std::vector<ModbusPendingRequest> _requestQueue;
     ModbusPendingRequest _currentRequest;  // Copy, not pointer - prevents invalid references
     bool _hasPendingRequest;
+    uint32_t _consecutiveTimeouts;  // Track timeouts to pause queueing during bus issues
+    unsigned long _lastSuccessTime;  // Time of last successful request
     
     FrameCallback _frameCallback;
     Stats _stats;

@@ -24,6 +24,8 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _waitingForResponse(false)
     , _requestSentTime(0)
     , _hasPendingRequest(false)
+    , _consecutiveTimeouts(0)
+    , _lastSuccessTime(0)
     , _frameCallback(nullptr)
     , _stats{}
     , _intervalStats{}
@@ -138,6 +140,12 @@ void ModbusRTUFeature::loop() {
         _stats.ownRequestsFailed++;
         _intervalStats.ownFailed++;
         
+        // Track consecutive timeouts to trigger backoff
+        _consecutiveTimeouts++;
+        if (_consecutiveTimeouts == 3) {
+            LOG_W("Modbus: 3 consecutive timeouts detected, pausing queue to prevent memory exhaustion");
+        }
+        
         // DO NOT invoke callback on timeout - callbacks can block and trigger watchdog
         // The timeout is already logged, which provides visibility
         
@@ -185,6 +193,10 @@ void ModbusRTUFeature::processReceivedData() {
             isRequest = false;
             isOurResponse = true;
             _waitingForResponse = false;
+            
+            // Reset consecutive timeout counter on any successful response (even with exception)
+            _consecutiveTimeouts = 0;
+            _lastSuccessTime = millis();
             
             // Track success/failure for our requests
             if (frame.isValid && !frame.isException) {
@@ -496,6 +508,16 @@ bool ModbusRTUFeature::readCachedRegister(uint8_t unitId, uint8_t functionCode,
 bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
                                           uint16_t startRegister, uint16_t quantity,
                                           std::function<void(bool, const ModbusFrame&)> callback) {
+    // If we're experiencing repeated timeouts, stop queueing to prevent memory exhaustion
+    // Allow one retry after timeout before giving up
+    if (_consecutiveTimeouts > 2) {
+        _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_W("Modbus request DISCARDED: too many consecutive timeouts (%u) - unit %d",
+              _consecutiveTimeouts, unitId);
+        return false;
+    }
+    
     // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
@@ -506,12 +528,11 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
     }
     
     // Check memory pressure - if heap is critically low, don't queue
-    // Each request has callback (std::function ~48 bytes) + writeData vector (~24 bytes) + struct
     uint32_t freeHeap = esp_get_free_heap_size();
-    if (freeHeap < 30000) {  // Less than 30 KB free - too risky
+    if (freeHeap < 25000) {  // Less than 25 KB free - too risky
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_E("Modbus request DISCARDED: low heap (%u bytes) - unit %d FC 0x%02X",
+        LOG_E("Modbus request DISCARDED: critical heap (%u bytes) - unit %d FC 0x%02X",
               freeHeap, unitId, functionCode);
         return false;
     }
@@ -531,6 +552,15 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
 
 bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address, uint16_t value,
                                                  std::function<void(bool, const ModbusFrame&)> callback) {
+    // If we're experiencing repeated timeouts, stop queueing
+    if (_consecutiveTimeouts > 2) {
+        _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_W("Modbus write request DISCARDED: too many consecutive timeouts (%u)",
+              _consecutiveTimeouts);
+        return false;
+    }
+    
     // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
@@ -542,10 +572,10 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
     
     // Check memory pressure
     uint32_t freeHeap = esp_get_free_heap_size();
-    if (freeHeap < 30000) {
+    if (freeHeap < 25000) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_E("Modbus write request DISCARDED: low heap (%u bytes) - unit %d reg %d",
+        LOG_E("Modbus write request DISCARDED: critical heap (%u bytes) - unit %d reg %d",
               freeHeap, unitId, address);
         return false;
     }
@@ -567,6 +597,15 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
 bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t startAddress,
                                                     const std::vector<uint16_t>& values,
                                                     std::function<void(bool, const ModbusFrame&)> callback) {
+    // If we're experiencing repeated timeouts, stop queueing
+    if (_consecutiveTimeouts > 2) {
+        _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_W("Modbus write-multi request DISCARDED: too many consecutive timeouts (%u)",
+              _consecutiveTimeouts);
+        return false;
+    }
+    
     // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
@@ -578,10 +617,10 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
     
     // Check memory pressure
     uint32_t freeHeap = esp_get_free_heap_size();
-    if (freeHeap < 30000) {
+    if (freeHeap < 25000) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_E("Modbus write-multi request DISCARDED: low heap (%u bytes) - unit %d",
+        LOG_E("Modbus write-multi request DISCARDED: critical heap (%u bytes) - unit %d",
               freeHeap, unitId);
         return false;
     }
