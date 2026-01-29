@@ -26,6 +26,7 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _hasPendingRequest(false)
     , _consecutiveTimeouts(0)
     , _lastSuccessTime(0)
+    , _lastTimeoutWarningMs(0)
     , _frameCallback(nullptr)
     , _stats{}
     , _intervalStats{}
@@ -513,8 +514,14 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
     if (_consecutiveTimeouts > 2) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_W("Modbus request DISCARDED: too many consecutive timeouts (%u) - unit %d",
-              _consecutiveTimeouts, unitId);
+        
+        // Throttle warning message - only log once per 60 seconds to avoid spam
+        unsigned long nowMs = millis();
+        if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
+            LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
+                  _consecutiveTimeouts);
+            _lastTimeoutWarningMs = nowMs;
+        }
         return false;
     }
     
@@ -556,8 +563,14 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
     if (_consecutiveTimeouts > 2) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_W("Modbus write request DISCARDED: too many consecutive timeouts (%u)",
-              _consecutiveTimeouts);
+        
+        // Throttle warning message - only log once per 60 seconds
+        unsigned long nowMs = millis();
+        if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
+            LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
+                  _consecutiveTimeouts);
+            _lastTimeoutWarningMs = nowMs;
+        }
         return false;
     }
     
@@ -601,8 +614,14 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
     if (_consecutiveTimeouts > 2) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_W("Modbus write-multi request DISCARDED: too many consecutive timeouts (%u)",
-              _consecutiveTimeouts);
+        
+        // Throttle warning message - only log once per 60 seconds
+        unsigned long nowMs = millis();
+        if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
+            LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
+                  _consecutiveTimeouts);
+            _lastTimeoutWarningMs = nowMs;
+        }
         return false;
     }
     

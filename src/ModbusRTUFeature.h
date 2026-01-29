@@ -324,6 +324,7 @@ private:
     bool _hasPendingRequest;
     uint32_t _consecutiveTimeouts;  // Track timeouts to pause queueing during bus issues
     unsigned long _lastSuccessTime;  // Time of last successful request
+    unsigned long _lastTimeoutWarningMs;  // Throttle timeout warning messages
     
     FrameCallback _frameCallback;
     Stats _stats;
