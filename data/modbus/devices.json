@@ -3,23 +3,13 @@
     "devices": [
         {
             "unitId": 1,
-            "type": "SolplanetASWHybrid",
-            "name": "Hybrid Inverter"
-        },
-        {
-            "unitId": 2,
-            "type": "SolplanetAiHBG2Pro",
-            "name": "Battery System"
+            "type": "SDM72",
+            "name": "Grid Meter"
         },
         {
             "unitId": 3,
             "type": "SolplanetApolloSOL11H",
-            "name": "EV Charger"
-        },
-        {
-            "unitId": 10,
-            "type": "SDM72",
-            "name": "Grid Meter"
+            "name": "Inverter"
         }
     ]
 }
