@@ -138,13 +138,10 @@ void ModbusRTUFeature::loop() {
         _intervalStats.ownFailed++;
         
         // Safely invoke callback if present
-        if (_currentRequest) {
-            if (_currentRequest->callback) {
-                ModbusFrame emptyFrame;
-                emptyFrame.isValid = false;
-                _currentRequest->callback(false, emptyFrame);
-            }
-            delete _currentRequest;  // Clean up the request
+        if (_currentRequest && _currentRequest->callback) {
+            ModbusFrame emptyFrame;
+            emptyFrame.isValid = false;
+            _currentRequest->callback(false, emptyFrame);
         }
         
         _waitingForResponse = false;

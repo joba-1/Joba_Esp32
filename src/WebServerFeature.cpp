@@ -85,20 +85,27 @@ void WebServerFeature::setupDefaultRoutes() {
             return request->send(500, "application/json", "{\"error\":\"storage not mounted\"}");
         }
 
-        // Debug: scan entire filesystem to see what's actually there
+        // Debug: scan entire filesystem to see what's actually there (with timeout)
         JsonDocument debugDoc;
         JsonArray allFiles = debugDoc["allFiles"].to<JsonArray>();
         
         File root = LittleFS.open("/");
         if (root && root.isDirectory()) {
             File file = root.openNextFile();
-            while (file) {
+            unsigned long startTime = millis();
+            const unsigned long TIMEOUT = 100;  // 100ms max
+            unsigned int count = 0;
+            while (file && (millis() - startTime) < TIMEOUT && count < 100) {
                 String fname = String(file.name());
                 JsonObject fobj = allFiles.add<JsonObject>();
                 fobj["name"] = fname;
                 fobj["size"] = file.size();
                 fobj["isDir"] = file.isDirectory();
                 file = root.openNextFile();
+                count++;
+            }
+            if ((millis() - startTime) >= TIMEOUT) {
+                debugDoc["debug_timeout"] = true;
             }
         }
 
