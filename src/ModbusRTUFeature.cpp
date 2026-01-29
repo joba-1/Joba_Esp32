@@ -137,27 +137,31 @@ void ModbusRTUFeature::loop() {
         _stats.ownRequestsFailed++;
         _intervalStats.ownFailed++;
         
-        // Safely invoke callback if present - use a local copy to avoid race condition
-        ModbusPendingRequest* localReq = _currentRequest;
-        if (localReq) {
-            if (localReq->callback) {
-                ModbusFrame emptyFrame;
-                emptyFrame.isValid = false;
-                emptyFrame.unitId = _lastRequest.unitId;
-                emptyFrame.functionCode = _lastRequest.functionCode;
-                emptyFrame.isException = false;
-                // Call the callback with a local copy (safer)
-                try {
-                    localReq->callback(false, emptyFrame);
-                } catch (...) {
-                    LOG_E("Exception in Modbus timeout callback");
-                }
-            }
+        // Extract callback FIRST before clearing _currentRequest
+        // (the pointer might be to a queue item that could be reallocated)
+        std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
+        if (_currentRequest && _currentRequest->callback) {
+            callbackCopy = _currentRequest->callback;
         }
         
+        // Clear state immediately
         _waitingForResponse = false;
         _currentRequest = nullptr;
         endActiveTime();
+        
+        // NOW invoke the callback safely (outside the critical section)
+        if (callbackCopy) {
+            ModbusFrame emptyFrame;
+            emptyFrame.isValid = false;
+            emptyFrame.unitId = _lastRequest.unitId;
+            emptyFrame.functionCode = _lastRequest.functionCode;
+            emptyFrame.isException = false;
+            try {
+                callbackCopy(false, emptyFrame);
+            } catch (...) {
+                LOG_E("Exception in Modbus timeout callback");
+            }
+        }
     }
     
     // Process request queue when bus is silent and not waiting
@@ -208,16 +212,23 @@ void ModbusRTUFeature::processReceivedData() {
             // Update register map with response data
             updateRegisterMap(_lastRequest, frame);
             
-            // Call request callback with protection against race conditions
-            ModbusPendingRequest* localReq = _currentRequest;
-            if (localReq && localReq->callback) {
+            // Extract callback FIRST before clearing _currentRequest
+            std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
+            if (_currentRequest && _currentRequest->callback) {
+                callbackCopy = _currentRequest->callback;
+            }
+            
+            // Clear state immediately
+            _currentRequest = nullptr;
+            
+            // NOW invoke the callback safely (outside the critical section)
+            if (callbackCopy) {
                 try {
-                    localReq->callback(frame.isValid && !frame.isException, frame);
+                    callbackCopy(frame.isValid && !frame.isException, frame);
                 } catch (...) {
                     LOG_E("Exception in Modbus response callback");
                 }
             }
-            _currentRequest = nullptr;
             
             // End our active time period
             endActiveTime();
