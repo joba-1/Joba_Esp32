@@ -325,6 +325,7 @@ private:
     uint32_t _consecutiveTimeouts;  // Track timeouts to pause queueing during bus issues
     unsigned long _lastSuccessTime;  // Time of last successful request
     unsigned long _lastTimeoutWarningMs;  // Throttle timeout warning messages
+    std::map<uint16_t, unsigned long> _lastTimeoutPerUnit;  // Track last timeout per unit (throttle spam)
     
     FrameCallback _frameCallback;
     Stats _stats;

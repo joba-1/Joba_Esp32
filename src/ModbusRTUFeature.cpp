@@ -135,11 +135,20 @@ void ModbusRTUFeature::loop() {
     
     // Check for response timeout
     if (_waitingForResponse && (nowMs - _requestSentTime) > _responseTimeoutMs) {
-        LOG_W("Modbus response timeout for unit %d FC 0x%02X", 
-              _lastRequest.unitId, _lastRequest.functionCode);
         _stats.timeouts++;
         _stats.ownRequestsFailed++;
         _intervalStats.ownFailed++;
+        
+        // Throttle individual timeout messages - log at most once per 5 seconds per unit
+        // This prevents timeout spam while still providing visibility
+        uint16_t unitKey = _lastRequest.unitId;
+        unsigned long lastLog = _lastTimeoutPerUnit[unitKey];
+        if ((nowMs - lastLog) >= 5000) {  // 5 second throttle per unit
+            LOG_W("Modbus response timeout for unit %d FC 0x%02X reg %d qty %d",
+                  _lastRequest.unitId, _lastRequest.functionCode,
+                  _lastRequest.getStartRegister(), _lastRequest.getQuantity());
+            _lastTimeoutPerUnit[unitKey] = nowMs;
+        }
         
         // Track consecutive timeouts to trigger backoff
         _consecutiveTimeouts++;
