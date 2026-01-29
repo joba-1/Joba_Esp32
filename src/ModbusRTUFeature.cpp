@@ -22,7 +22,7 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _ready(false)
     , _waitingForResponse(false)
     , _requestSentTime(0)
-    , _currentRequest(nullptr)
+    , _hasPendingRequest(false)
     , _frameCallback(nullptr)
     , _stats{}
     , _intervalStats{}
@@ -141,8 +141,16 @@ void ModbusRTUFeature::loop() {
         // The timeout is already logged, which provides visibility
         
         _waitingForResponse = false;
-        _currentRequest = nullptr;
+        _hasPendingRequest = false;
         endActiveTime();
+        
+        // Aggressive queue clearing on repeated timeouts to prevent memory exhaustion
+        // If queue has accumulated many items, this indicates slave is unresponsive
+        if (_requestQueue.size() > _maxQueueSize / 2) {
+            LOG_W("Modbus queue building up (%u items), clearing to prevent memory exhaustion",
+                  _requestQueue.size());
+            _requestQueue.clear();
+        }
     }
     
     // Process request queue when bus is silent and not waiting
@@ -193,14 +201,14 @@ void ModbusRTUFeature::processReceivedData() {
             // Update register map with response data
             updateRegisterMap(_lastRequest, frame);
             
-            // Extract callback FIRST before clearing _currentRequest
+            // Extract callback from the current request copy (safe, not from vector)
             std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
-            if (_currentRequest && _currentRequest->callback) {
-                callbackCopy = _currentRequest->callback;
+            if (_hasPendingRequest && _currentRequest.callback) {
+                callbackCopy = _currentRequest.callback;
             }
             
             // Clear state immediately
-            _currentRequest = nullptr;
+            _hasPendingRequest = false;
             
             // NOW invoke the callback safely (outside the critical section)
             if (callbackCopy) {
@@ -353,11 +361,16 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
 void ModbusRTUFeature::processQueue() {
     if (_requestQueue.empty()) return;
     
-    ModbusPendingRequest& req = _requestQueue.front();
+    // Copy the front request (not reference/pointer - prevents vector reallocation issues)
+    ModbusPendingRequest req = _requestQueue.front();
     
     if (sendRequest(req)) {
         _stats.ownRequestsSent++;
-        _currentRequest = &req;
+        
+        // Store a COPY of the request, not a pointer into the vector
+        // This prevents invalid references if vector reallocates
+        _currentRequest = req;
+        _hasPendingRequest = true;
         _waitingForResponse = true;
         _requestSentTime = millis();
         

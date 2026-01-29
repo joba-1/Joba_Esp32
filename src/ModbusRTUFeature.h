@@ -320,7 +320,8 @@ private:
     
     // Request queue
     std::vector<ModbusPendingRequest> _requestQueue;
-    ModbusPendingRequest* _currentRequest;
+    ModbusPendingRequest _currentRequest;  // Copy, not pointer - prevents invalid references
+    bool _hasPendingRequest;
     
     FrameCallback _frameCallback;
     Stats _stats;
