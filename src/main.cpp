@@ -245,7 +245,7 @@ void setup() {
     // Register web endpoints for sensor data collection
     // Creates: /api/sensors (JSON all), /api/sensors/latest (JSON latest), /view/sensors (HTML table)
     DataCollectionWeb::registerCollection(
-        webServer.getServer(),
+        webServer,
         sensorData,
         "sensors",
         5000  // Refresh every 5 seconds

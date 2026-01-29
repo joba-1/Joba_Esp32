@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include "DataCollection.h"
+#include "WebServerFeature.h"
 
 /**
  * @brief Helper to register web endpoints for a DataCollection
@@ -24,6 +25,7 @@ public:
      * @param getSchemaCallback Callback that returns field names as JSON array
      * @param refreshIntervalMs Auto-refresh interval for HTML view (default 5000ms)
      */
+    // Register endpoints using a raw AsyncWebServer instance (no auth check)
     static void registerEndpoints(
         AsyncWebServer* server,
         const char* basePath,
@@ -61,6 +63,49 @@ public:
             request->send(200, "text/html", html);
         });
     }
+
+    // Register endpoints using WebServerFeature (enforces auth if enabled)
+    static void registerEndpoints(
+        WebServerFeature& serverFeature,
+        const char* basePath,
+        std::function<String()> getJsonCallback,
+        std::function<String()> getLatestJsonCallback,
+        std::function<String()> getSchemaCallback,
+        uint32_t refreshIntervalMs = 5000
+    ) {
+        AsyncWebServer* server = serverFeature.getServer();
+        String apiPath = String("/api/") + basePath;
+        String apiLatestPath = apiPath + "/latest";
+        String viewPath = String("/view/") + basePath;
+        
+        // Store paths in heap for lambda capture
+        char* apiPathStr = strdup(apiPath.c_str());
+        char* viewPathStr = strdup(viewPath.c_str());
+        
+        // API endpoint - all data
+        server->on(apiPathStr, HTTP_GET, [getJsonCallback, &serverFeature](AsyncWebServerRequest* request) {
+            if (!serverFeature.authenticate(request)) return request->requestAuthentication();
+            request->send(200, "application/json", getJsonCallback());
+        });
+        
+        // API endpoint - latest entry
+        server->on(strdup(apiLatestPath.c_str()), HTTP_GET, [getLatestJsonCallback, &serverFeature](AsyncWebServerRequest* request) {
+            if (!serverFeature.authenticate(request)) return request->requestAuthentication();
+            String json = getLatestJsonCallback();
+            if (json.length() == 0 || json == "{}") {
+                request->send(404, "application/json", "{\"error\":\"No data available\"}");
+            } else {
+                request->send(200, "application/json", json);
+            }
+        });
+        
+        // HTML view endpoint
+        server->on(viewPathStr, HTTP_GET, [basePath, apiPathStr, getSchemaCallback, refreshIntervalMs, &serverFeature](AsyncWebServerRequest* request) {
+            if (!serverFeature.authenticate(request)) return request->requestAuthentication();
+            String html = generateHtmlView(basePath, apiPathStr, getSchemaCallback(), refreshIntervalMs);
+            request->send(200, "text/html", html);
+        });
+    }
     
     /**
      * @brief Convenience method to register endpoints for a DataCollection instance
@@ -79,6 +124,32 @@ public:
         
         registerEndpoints(
             server,
+            basePath,
+            [&collection]() { return collection.toJson(); },
+            [&collection]() { 
+                if (collection.isEmpty()) return String("{}");
+                return collection.toJson(collection.count() - 1);
+            },
+            getSchema,
+            refreshIntervalMs
+        );
+    }
+
+    // Overload that accepts WebServerFeature to enforce auth when enabled
+    template<typename T, size_t N>
+    static void registerCollection(
+        WebServerFeature& serverFeature,
+        DataCollection<T, N>& collection,
+        const char* basePath,
+        uint32_t refreshIntervalMs = 5000
+    ) {
+        // Create schema JSON from collection
+        auto getSchema = [&collection]() -> String {
+            return getFieldNames(collection);
+        };
+        
+        registerEndpoints(
+            serverFeature,
             basePath,
             [&collection]() { return collection.toJson(); },
             [&collection]() { 

@@ -6,7 +6,7 @@
 ; Device identity
 ; Override these to customize your device
 device_instance = 0                     ; 0 = use MAC-based ID, >0 = manual instance number
-default_password = ""                   ; Empty = auto-generate from firmware name + MAC
+default_password = ""                   ; Empty = auto-generate as firmware_name-MAC
 
 ; Logging configuration
 ; Log levels: 0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=VERBOSE
@@ -28,6 +28,9 @@ timezone = "CET-1CEST,M3.5.0,M10.5.0/3"  ; Your local timezone
 ntp_sync_interval = 3600000             ; Milliseconds (1 hour)
 
 ; Web server configuration
+; To disable auth set the username to an empty string
+; To enable basic auth for all pages set a username (e.g., "admin").
+; The webserver password defaults to the `default_password` setting. 
 webserver_port = 80
 webserver_username = "admin"
 

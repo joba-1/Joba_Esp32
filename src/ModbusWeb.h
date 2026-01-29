@@ -29,7 +29,9 @@ public:
         
         // List all configured devices
         webServer->on("/api/modbus/devices", HTTP_GET,
-            [&devices](AsyncWebServerRequest* request) {
+            [&devices, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 JsonDocument doc;
                 JsonArray arr = doc.to<JsonArray>();
                 
@@ -48,7 +50,9 @@ public:
         
         // Get device values
         webServer->on("/api/modbus/device", HTTP_GET,
-            [&devices](AsyncWebServerRequest* request) {
+            [&devices, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 if (!request->hasParam("unit")) {
                     request->send(400, "application/json", "{\"error\":\"Missing unit parameter\"}");
                     return;
@@ -61,7 +65,9 @@ public:
         
         // Read a specific register
         webServer->on("/api/modbus/read", HTTP_GET,
-            [&devices](AsyncWebServerRequest* request) {
+            [&devices, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 if (!request->hasParam("unit") || !request->hasParam("register")) {
                     request->send(400, "application/json",
                                   "{\"error\":\"Missing unit or register parameter\"}");
@@ -92,7 +98,9 @@ public:
         
         // Write to a register
         webServer->on("/api/modbus/write", HTTP_POST,
-            [&devices](AsyncWebServerRequest* request) {
+            [&devices, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 if (!request->hasParam("unit", true) ||
                     !request->hasParam("register", true) ||
                     !request->hasParam("value", true)) {
@@ -120,7 +128,9 @@ public:
         
         // Raw read request
         webServer->on("/api/modbus/raw/read", HTTP_GET,
-            [&modbus](AsyncWebServerRequest* request) {
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 if (!request->hasParam("unit") ||
                     !request->hasParam("address") ||
                     !request->hasParam("count")) {
@@ -151,7 +161,9 @@ public:
         
         // Get bus status
         webServer->on("/api/modbus/status", HTTP_GET,
-            [&modbus](AsyncWebServerRequest* request) {
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 JsonDocument doc;
                 doc["busSilent"] = modbus.isBusSilent();
                 doc["silenceMs"] = modbus.getTimeSinceLastActivity();
@@ -167,7 +179,9 @@ public:
         
         // Get register maps from bus monitoring
         webServer->on("/api/modbus/maps", HTTP_GET,
-            [&modbus](AsyncWebServerRequest* request) {
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 JsonDocument doc;
                 JsonArray maps = doc.to<JsonArray>();
                 
@@ -196,7 +210,9 @@ public:
         
         // Device types list
         webServer->on("/api/modbus/types", HTTP_GET,
-            [&devices](AsyncWebServerRequest* request) {
+            [&devices, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 JsonDocument doc;
                 JsonArray arr = doc.to<JsonArray>();
                 
@@ -211,7 +227,9 @@ public:
         
         // HTML dashboard
         webServer->on("/view/modbus", HTTP_GET,
-            [&devices, &modbus](AsyncWebServerRequest* request) {
+            [&devices, &modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
                 String html = F("<!DOCTYPE html><html><head>"
                     "<title>Modbus Dashboard</title>"
                     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
