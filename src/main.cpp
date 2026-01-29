@@ -161,6 +161,10 @@ bool haDiscoveryPublished = false;
 bool modbusHADiscoveryPublished = false;
 unsigned long lastModbusStatePublish = 0;
 const unsigned long MODBUS_STATE_PUBLISH_INTERVAL = 30000;  // Publish state every 30s
+unsigned long lastHeapCheck = 0;
+const unsigned long HEAP_CHECK_INTERVAL = 30000;  // Check heap every 30 seconds
+uint32_t minFreeHeap = UINT32_MAX;
+uint32_t maxFreeHeap = 0;
 
 void collectSensorData() {
     SensorData reading;
@@ -254,11 +258,15 @@ void setup() {
     // Initialize Modbus device manager with device definitions from filesystem
     modbusDevices = new ModbusDeviceManager(modbus, storage);
     if (storage.isReady()) {
+        LOG_I("Free heap before Modbus init: %d bytes", ESP.getFreeHeap());
+        
         // Load device type definitions from /modbus/devices/*.json
         modbusDevices->loadAllDeviceTypes(MODBUS_DEVICE_TYPES_PATH);
+        LOG_I("Free heap after loading device types: %d bytes", ESP.getFreeHeap());
         
         // Load unit ID to device type mapping
         modbusDevices->loadDeviceMappings(MODBUS_DEVICE_MAP_PATH);
+        LOG_I("Free heap after loading device mappings: %d bytes", ESP.getFreeHeap());
         
         LOG_I("Modbus devices loaded: %d device types, %d mapped units",
               modbusDevices->getDeviceTypeNames().size(),
@@ -298,6 +306,23 @@ void loop() {
     // Run all feature loop handlers
     for (size_t i = 0; i < featureCount; i++) {
         features[i]->loop();
+    }
+    
+    // Periodic heap monitoring
+    unsigned long now = millis();
+    if (now - lastHeapCheck >= HEAP_CHECK_INTERVAL) {
+        lastHeapCheck = now;
+        uint32_t freeHeap = ESP.getFreeHeap();
+        if (freeHeap < minFreeHeap) minFreeHeap = freeHeap;
+        if (freeHeap > maxFreeHeap) maxFreeHeap = freeHeap;
+        
+        LOG_I("Heap: free=%u KB, min=%u KB, max=%u KB", 
+              freeHeap / 1024, minFreeHeap / 1024, maxFreeHeap / 1024);
+        
+        // Warn if heap is critically low
+        if (freeHeap < 50000) {
+            LOG_W("CRITICAL: Free heap is very low: %u bytes", freeHeap);
+        }
     }
     
     // Publish Home Assistant autodiscovery once MQTT is connected
