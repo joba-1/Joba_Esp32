@@ -223,24 +223,116 @@ size_t StorageFeature::freeBytes() const {
 
 String StorageFeature::listDir(const char* path) {
     if (!_mounted) return "[]";
-    
-    File root = LittleFS.open(path);
-    if (!root || !root.isDirectory()) {
-        return "[]";
+
+    String p = String(path);
+    if (p.length() == 0) p = "/";
+    // Remove trailing slash for consistency
+    while (p.length() > 1 && p.endsWith("/")) p.remove(p.length() - 1);
+
+    LOG_D("listDir requested for path: %s", p.c_str());
+
+    // Try direct directory listing first
+    if (LittleFS.exists(p.c_str())) {
+        File root = LittleFS.open(p.c_str());
+        if (root && root.isDirectory()) {
+            JsonDocument doc;
+            JsonArray arr = doc.to<JsonArray>();
+
+            File file = root.openNextFile();
+            unsigned int count = 0;
+            while (file) {
+                JsonObject obj = arr.add<JsonObject>();
+                String fname = String(file.name());
+                if (!fname.startsWith("/")) fname = String("/") + fname;
+                obj["name"] = fname;
+                obj["size"] = file.size();
+                obj["isDir"] = file.isDirectory();
+                file = root.openNextFile();
+                count++;
+            }
+
+            if (count > 0) {
+                LOG_D("listDir: found %u direct entries in %s", count, p.c_str());
+                String result;
+                serializeJson(doc, result);
+                return result;
+            }
+        }
     }
+
+    // Fallback: scan filesystem for files matching the requested prefix
+    // Simpler approach: avoid std::vector, use direct JSON streaming
+    LOG_D("listDir: filesystem scan for %s", p.c_str());
     
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
-    
+
+    File root = LittleFS.open("/");
+    if (!root || !root.isDirectory()) {
+        LOG_W("listDir: root directory unavailable");
+        return "[]";
+    }
+
+    String prefix = (p == "/") ? "/" : p + "/";
+    unsigned int count = 0;
+    unsigned int dedupWindow = 0;  // Use a simple rolling window for deduplication
+    String lastEntry = "";
+
     File file = root.openNextFile();
     while (file) {
-        JsonObject obj = arr.add<JsonObject>();
-        obj["name"] = String(file.name());
-        obj["size"] = file.size();
-        obj["isDir"] = file.isDirectory();
+        String fname = String(file.name());
+        if (!fname.startsWith("/")) fname = String("/") + fname;
+
+        if (p == "/") {
+            // Root: extract top-level entries
+            int next = fname.indexOf('/', 1);
+            String entry;
+            if (next == -1) {
+                entry = fname;
+            } else {
+                entry = fname.substring(0, next);
+            }
+            
+            if (entry != lastEntry) {
+                JsonObject obj = arr.add<JsonObject>();
+                obj["name"] = entry;
+                obj["isDir"] = (next != -1);
+                obj["size"] = file.isDirectory() ? 0 : file.size();
+                lastEntry = entry;
+                count++;
+                dedupWindow = 0;
+            }
+        } else {
+            // Non-root: find immediate children
+            if (fname.startsWith(prefix)) {
+                String tail = fname.substring(prefix.length());
+                int next = tail.indexOf('/');
+                String entry = prefix + (next == -1 ? tail : tail.substring(0, next));
+                
+                if (entry != lastEntry) {
+                    JsonObject obj = arr.add<JsonObject>();
+                    obj["name"] = entry;
+                    obj["isDir"] = (next != -1);
+                    obj["size"] = (next == -1) ? file.size() : 0;
+                    lastEntry = entry;
+                    count++;
+                    dedupWindow = 0;
+                }
+            }
+        }
+        
+        // Safety check: abort if we see too many duplicates (prevents infinite loop)
+        dedupWindow++;
+        if (dedupWindow > 1000) {
+            LOG_W("listDir: dedup window exceeded, aborting scan");
+            break;
+        }
+
         file = root.openNextFile();
     }
-    
+
+    LOG_D("listDir (scan): found %u entries for %s", count, p.c_str());
+
     String result;
     serializeJson(doc, result);
     return result;

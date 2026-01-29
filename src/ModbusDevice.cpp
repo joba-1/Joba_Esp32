@@ -112,25 +112,59 @@ bool ModbusDeviceManager::loadDeviceMappings(const char* path) {
 }
 
 bool ModbusDeviceManager::loadAllDeviceTypes(const char* directory) {
+    LOG_D("loadAllDeviceTypes: scanning %s", directory);
+    
+    // Try direct directory open first
     File dir = LittleFS.open(directory);
-    if (!dir || !dir.isDirectory()) {
-        LOG_E("Failed to open device directory: %s", directory);
+    if (dir && dir.isDirectory()) {
+        LOG_D("Directory %s exists as explicit LittleFS directory", directory);
+        int count = 0;
+        File file = dir.openNextFile();
+        while (file) {
+            if (!file.isDirectory() && String(file.name()).endsWith(".json")) {
+                String path = String(directory) + "/" + file.name();
+                if (loadDeviceType(path.c_str())) {
+                    count++;
+                }
+            }
+            file = dir.openNextFile();
+        }
+        
+        LOG_I("Loaded %d device types from %s", count, directory);
+        return count > 0;
+    }
+    
+    // Fallback: scan root filesystem for files matching the directory prefix
+    // This handles cases where intermediate directories exist only implicitly via file paths
+    LOG_D("Directory %s not found as explicit directory, scanning filesystem", directory);
+    
+    File root = LittleFS.open("/");
+    if (!root || !root.isDirectory()) {
+        LOG_E("Failed to scan root filesystem");
         return false;
     }
     
+    String prefix = String(directory);
+    if (!prefix.endsWith("/")) prefix += "/";
+    
     int count = 0;
-    File file = dir.openNextFile();
+    File file = root.openNextFile();
     while (file) {
-        if (!file.isDirectory() && String(file.name()).endsWith(".json")) {
-            String path = String(directory) + "/" + file.name();
-            if (loadDeviceType(path.c_str())) {
-                count++;
+        String fname = String(file.name());
+        if (!file.isDirectory() && fname.startsWith(prefix) && fname.endsWith(".json")) {
+            // Check this is a direct child (no additional slashes)
+            String tail = fname.substring(prefix.length());
+            if (tail.indexOf('/') == -1) {
+                LOG_D("Found device file: %s", fname.c_str());
+                if (loadDeviceType(fname.c_str())) {
+                    count++;
+                }
             }
         }
-        file = dir.openNextFile();
+        file = root.openNextFile();
     }
     
-    LOG_I("Loaded %d device types from %s", count, directory);
+    LOG_I("Loaded %d device types from %s (via filesystem scan)", count, directory);
     return count > 0;
 }
 

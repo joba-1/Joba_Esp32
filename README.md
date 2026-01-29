@@ -260,6 +260,10 @@ Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in ser
 - `/api/<collection>` - JSON data for a data collection
 - `/api/<collection>/latest` - Latest JSON entry
 - `/view/<collection>` - HTML table view with auto-refresh
+- `/api/storage` - Storage diagnostics (requires auth when enabled)
+- `/api/storage/list?path=/foo` - List directory contents for `path` (requires auth when enabled)
+- `/api/storage/file?path=/foo/bar.txt` - Download a file (requires auth when enabled)
+- `/view/storage` - HTML file browser (requires auth when enabled)
 - `/health` - Health check (no auth)
 
 ### Data Collection Web Views
