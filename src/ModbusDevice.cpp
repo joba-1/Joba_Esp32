@@ -11,8 +11,6 @@ ModbusDeviceManager::ModbusDeviceManager(ModbusRTUFeature& modbus, StorageFeatur
 }
 
 bool ModbusDeviceManager::loadDeviceType(const char* path) {
-    uint32_t heapBefore = ESP.getFreeHeap();
-    
     File file = LittleFS.open(path, "r");
     if (!file) {
         LOG_E("Failed to open device type: %s", path);
@@ -50,9 +48,8 @@ bool ModbusDeviceManager::loadDeviceType(const char* path) {
     String key = deviceType.name;
     _deviceTypes[key] = deviceType;
     
-    uint32_t heapAfter = ESP.getFreeHeap();
-    LOG_I("Loaded device type '%s' with %d registers (heap: %u -> %u, delta: %d bytes)",
-          deviceType.name, deviceType.registers.size(), heapBefore, heapAfter, (int)(heapBefore - heapAfter));
+    LOG_I("Loaded device type '%s' with %d registers", 
+          deviceType.name, deviceType.registers.size());
     
     return true;
 }
