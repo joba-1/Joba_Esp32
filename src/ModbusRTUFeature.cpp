@@ -1,4 +1,5 @@
 #include "ModbusRTUFeature.h"
+#include <esp_heap_caps.h>
 
 ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
                                    uint32_t baudRate,
@@ -495,11 +496,23 @@ bool ModbusRTUFeature::readCachedRegister(uint8_t unitId, uint8_t functionCode,
 bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
                                           uint16_t startRegister, uint16_t quantity,
                                           std::function<void(bool, const ModbusFrame&)> callback) {
+    // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
         LOG_E("Modbus request DISCARDED: queue full (%u/%u) - unit %d FC 0x%02X reg %d qty %d",
               _requestQueue.size(), _maxQueueSize, unitId, functionCode, startRegister, quantity);
+        return false;
+    }
+    
+    // Check memory pressure - if heap is critically low, don't queue
+    // Each request has callback (std::function ~48 bytes) + writeData vector (~24 bytes) + struct
+    uint32_t freeHeap = esp_get_free_heap_size();
+    if (freeHeap < 30000) {  // Less than 30 KB free - too risky
+        _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_E("Modbus request DISCARDED: low heap (%u bytes) - unit %d FC 0x%02X",
+              freeHeap, unitId, functionCode);
         return false;
     }
     
@@ -518,11 +531,22 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
 
 bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address, uint16_t value,
                                                  std::function<void(bool, const ModbusFrame&)> callback) {
+    // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
         LOG_E("Modbus write request DISCARDED: queue full (%u/%u) - unit %d reg %d value %d",
               _requestQueue.size(), _maxQueueSize, unitId, address, value);
+        return false;
+    }
+    
+    // Check memory pressure
+    uint32_t freeHeap = esp_get_free_heap_size();
+    if (freeHeap < 30000) {
+        _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_E("Modbus write request DISCARDED: low heap (%u bytes) - unit %d reg %d",
+              freeHeap, unitId, address);
         return false;
     }
     
@@ -543,11 +567,22 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
 bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t startAddress,
                                                     const std::vector<uint16_t>& values,
                                                     std::function<void(bool, const ModbusFrame&)> callback) {
+    // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
         LOG_E("Modbus write-multi request DISCARDED: queue full (%u/%u) - unit %d reg %d count %u",
               _requestQueue.size(), _maxQueueSize, unitId, startAddress, values.size());
+        return false;
+    }
+    
+    // Check memory pressure
+    uint32_t freeHeap = esp_get_free_heap_size();
+    if (freeHeap < 30000) {
+        _stats.queueOverflows++;
+        _stats.ownRequestsDiscarded++;
+        LOG_E("Modbus write-multi request DISCARDED: low heap (%u bytes) - unit %d",
+              freeHeap, unitId);
         return false;
     }
     
