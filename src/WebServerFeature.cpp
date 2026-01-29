@@ -75,59 +75,9 @@ void WebServerFeature::setupDefaultRoutes() {
         request->send(200, "application/json", json);
     });
 
-    // Storage diagnostics endpoint (requires auth)
-    _server->on("/api/storage", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        if (_authEnabled && !authenticate(request)) {
-            return request->requestAuthentication();
-        }
-
-        if (!storage.isReady()) {
-            return request->send(500, "application/json", "{\"error\":\"storage not mounted\"}");
-        }
-
-        // Debug: scan entire filesystem to see what's actually there (with timeout)
-        JsonDocument debugDoc;
-        JsonArray allFiles = debugDoc["allFiles"].to<JsonArray>();
-        
-        File root = LittleFS.open("/");
-        if (root && root.isDirectory()) {
-            File file = root.openNextFile();
-            unsigned long startTime = millis();
-            const unsigned long TIMEOUT = 100;  // 100ms max
-            unsigned int count = 0;
-            while (file && (millis() - startTime) < TIMEOUT && count < 100) {
-                String fname = String(file.name());
-                JsonObject fobj = allFiles.add<JsonObject>();
-                fobj["name"] = fname;
-                fobj["size"] = file.size();
-                fobj["isDir"] = file.isDirectory();
-                file = root.openNextFile();
-                count++;
-            }
-            if ((millis() - startTime) >= TIMEOUT) {
-                debugDoc["debug_timeout"] = true;
-            }
-        }
-
-        String json = "{";
-        json += "\"mounted\":true,";
-        json += "\"total\":" + String(storage.totalBytes()) + ",";
-        json += "\"used\":" + String(storage.usedBytes()) + ",";
-        json += "\"free\":" + String(storage.freeBytes()) + ",";
-        json += "\"root\":" + storage.listDir("/") + ",";
-        json += "\"modbus\":" + storage.listDir("/modbus") + ",";
-        json += "\"data\":" + storage.listDir("/data");
-        
-        // Add debug info
-        String debugStr;
-        serializeJson(debugDoc, debugStr);
-        json += ",\"debug\":" + debugStr;
-        
-        json += "}";
-
-        request->send(200, "application/json", json);
-    });
-
+    // IMPORTANT: Register specific storage endpoints BEFORE the general /api/storage endpoint
+    // This ensures /api/storage/list and /api/storage/file are matched before /api/storage
+    
     // Storage list endpoint, accepts query param 'path' (requires auth)
     _server->on("/api/storage/list", HTTP_GET, [this](AsyncWebServerRequest* request) {
         if (_authEnabled && !authenticate(request)) {
@@ -173,6 +123,29 @@ void WebServerFeature::setupDefaultRoutes() {
         String fname = (slash >= 0) ? path.substring(slash + 1) : path;
         response->addHeader("Content-Disposition", String("attachment; filename=\"") + fname + "\"");
         request->send(response);
+    });
+
+    // Storage diagnostics endpoint (requires auth) - REGISTERED LAST so specific routes match first
+    _server->on("/api/storage", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (_authEnabled && !authenticate(request)) {
+            return request->requestAuthentication();
+        }
+
+        if (!storage.isReady()) {
+            return request->send(500, "application/json", "{\"error\":\"storage not mounted\"}");
+        }
+
+        String json = "{";
+        json += "\"mounted\":true,";
+        json += "\"total\":" + String(storage.totalBytes()) + ",";
+        json += "\"used\":" + String(storage.usedBytes()) + ",";
+        json += "\"free\":" + String(storage.freeBytes()) + ",";
+        json += "\"root\":" + storage.listDir("/") + ",";
+        json += "\"modbus\":" + storage.listDir("/modbus") + ",";
+        json += "\"data\":" + storage.listDir("/data");
+        json += "}";
+
+        request->send(200, "application/json", json);
     });
 
     // Storage HTML view (requires auth if enabled)
@@ -234,55 +207,44 @@ void WebServerFeature::setupDefaultRoutes() {
 
         async function loadPath(path) {
             try {
-                console.log('Loading path:', path);
                 const resp = await fetch(LIST_API + '?path=' + encodeURIComponent(path));
-                console.log('Response status:', resp.status);
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const rawText = await resp.text();
-                console.log('Raw response:', rawText);
-                const data = JSON.parse(rawText);
-                console.log('Parsed data:', data, 'is array:', Array.isArray(data));
+                const data = await resp.json();
                 document.getElementById('currentPath').textContent = path;
                 document.getElementById('statusMsg').textContent = '';
                 currentPath = path;
                 const tbody = document.getElementById('filesBody');
                 
-                // Handle both array and object responses
-                const items = Array.isArray(data) ? data : (data.entries || data.items || []);
-                
-                if (!items || items.length === 0) {
+                if (!data || data.length === 0) {
                     tbody.innerHTML = '';
                     document.getElementById('noData').style.display = 'block';
                     document.getElementById('statusMsg').textContent = 'Empty directory';
                     return;
                 }
                 document.getElementById('noData').style.display = 'none';
-                tbody.innerHTML = items.map(item => {
+                tbody.innerHTML = data.map(item => {
                     const name = item.name;
                     const isDir = item.isDir;
                     const size = item.size;
                     const displayName = name.replace(/^\//, '');
-                    const rel = name;
-                    const action = isDir ? `<button class="btn" onclick="loadPath('${rel}')">Open</button>` : `<a class="btn" href="${FILE_API}?path=${encodeURIComponent(rel)}">Download</a>`;
+                    const action = isDir ? `<button class="btn" onclick="loadPath('${name}')">Open</button>` : `<a class="btn" href="${FILE_API}?path=${encodeURIComponent(name)}">Download</a>`;
                     return `<tr><td>${displayName}</td><td>${isDir ? '-' : humanSize(size)}</td><td>${isDir ? 'dir' : 'file'}</td><td>${action}</td></tr>`;
                 }).join('');
-                document.getElementById('statusMsg').textContent = 'Loaded ' + items.length + ' entries';
+                document.getElementById('statusMsg').textContent = 'Loaded ' + data.length + ' entries';
             } catch (e) {
-                console.error('Load error', e);
                 document.getElementById('statusMsg').textContent = 'Error: ' + e.message;
             }
         }
 
         function goUp() {
             if (currentPath === '/') return;
-            let p = currentPath.replace(/\/+$/,'');
+            let p = currentPath.replace(/\/+$/, '');
             if (p === '') p = '/';
             const idx = p.lastIndexOf('/');
             const parent = idx <= 0 ? '/' : p.substring(0, idx);
             loadPath(parent);
         }
 
-        // Initial load
         loadPath('/');
     </script>
 </body>

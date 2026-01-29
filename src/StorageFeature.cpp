@@ -244,8 +244,15 @@ String StorageFeature::listDir(const char* path) {
             while (file && (millis() - startTime) < 100) {  // 100ms timeout
                 JsonObject obj = arr.add<JsonObject>();
                 String fname = String(file.name());
-                if (!fname.startsWith("/")) fname = String("/") + fname;
-                obj["name"] = fname;
+                // Construct full path: requested path + filename
+                String fullPath;
+                if (p == "/") {
+                    fullPath = "/" + fname;
+                } else {
+                    fullPath = p + "/" + fname;
+                }
+                if (!fullPath.startsWith("/")) fullPath = String("/") + fullPath;
+                obj["name"] = fullPath;
                 obj["size"] = file.size();
                 obj["isDir"] = file.isDirectory();
                 file = root.openNextFile();
