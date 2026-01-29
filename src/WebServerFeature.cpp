@@ -1,7 +1,11 @@
 #include "WebServerFeature.h"
 #include "DeviceInfo.h"
 #include "LoggingFeature.h"
+#include "StorageFeature.h"
 #include <WiFi.h>
+
+// Access global storage instance defined in main.cpp
+extern StorageFeature storage;
 
 WebServerFeature::WebServerFeature(uint16_t port, const char* username, const char* password)
     : _port(port)
@@ -69,6 +73,48 @@ void WebServerFeature::setupDefaultRoutes() {
         json += "}";
         
         request->send(200, "application/json", json);
+    });
+
+    // Storage diagnostics endpoint (requires auth)
+    _server->on("/api/storage", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (_authEnabled && !authenticate(request)) {
+            return request->requestAuthentication();
+        }
+
+        if (!storage.isReady()) {
+            return request->send(500, "application/json", "{\"error\":\"storage not mounted\"}");
+        }
+
+        String json = "{";
+        json += "\"mounted\":true,";
+        json += "\"total\":" + String(storage.totalBytes()) + ",";
+        json += "\"used\":" + String(storage.usedBytes()) + ",";
+        json += "\"free\":" + String(storage.freeBytes()) + ",";
+        json += "\"root\":" + storage.listDir("/") + ",";
+        json += "\"modbus\":" + storage.listDir("/modbus") + ",";
+        json += "\"data\":" + storage.listDir("/data");
+        json += "}";
+
+        request->send(200, "application/json", json);
+    });
+
+    // Storage list endpoint, accepts query param 'path' (requires auth)
+    _server->on("/api/storage/list", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (_authEnabled && !authenticate(request)) {
+            return request->requestAuthentication();
+        }
+
+        String path = "/";
+        if (request->hasParam("path")) {
+            path = request->getParam("path")->value();
+        }
+
+        if (!storage.isReady()) {
+            return request->send(500, "application/json", "{\"error\":\"storage not mounted\"}");
+        }
+
+        String list = storage.listDir(path.c_str());
+        request->send(200, "application/json", list);
     });
     
     // Health check endpoint (no auth required)
