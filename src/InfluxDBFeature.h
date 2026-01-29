@@ -72,6 +72,12 @@ public:
      * @brief Get number of pending lines
      */
     size_t pendingCount() const { return _buffer.size(); }
+
+private:
+    // Throttle repeated error logging to avoid spamming the serial console
+    // when the InfluxDB server is unreachable or the database/bucket is missing.
+    unsigned long _lastErrorLog = 0;
+    uint32_t _errorLogIntervalMs = 60UL * 1000UL; // 60 seconds
     
     /**
      * @brief Get total bytes pending

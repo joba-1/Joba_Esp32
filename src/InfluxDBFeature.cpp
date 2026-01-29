@@ -161,7 +161,7 @@ bool InfluxDBFeature::upload() {
         lineCount++;
     }
     
-    LOG_D("InfluxDB uploading %u lines (%u bytes)", lineCount, payload.length());
+    LOG_V("InfluxDB uploading %u lines (%u bytes)", lineCount, payload.length());
     
     if (sendData(payload)) {
         _stats.successCount++;
@@ -175,7 +175,12 @@ bool InfluxDBFeature::upload() {
     } else {
         _stats.failCount++;
         _connected = false;
-        LOG_W("InfluxDB upload failed, keeping %u lines in buffer", _buffer.size());
+        if (millis() - _lastErrorLog >= _errorLogIntervalMs) {
+            LOG_W("InfluxDB upload failed, keeping %u lines in buffer", _buffer.size());
+            _lastErrorLog = millis();
+        } else {
+            LOG_V("InfluxDB upload failed (throttled), buffer=%u", _buffer.size());
+        }
         return false;
     }
 }
@@ -227,12 +232,22 @@ bool InfluxDBFeature::sendData(const String& data) {
     } else if (httpCode > 0) {
         // Got response but not success
         String response = http.getString();
-        LOG_E("InfluxDB error %d: %s", httpCode, response.c_str());
+        if (millis() - _lastErrorLog >= _errorLogIntervalMs) {
+            LOG_E("InfluxDB error %d: %s", httpCode, response.c_str());
+            _lastErrorLog = millis();
+        } else {
+            LOG_V("InfluxDB error %d (throttled)", httpCode);
+        }
         http.end();
         return false;
     } else {
         // Connection error
-        LOG_E("InfluxDB connection error: %s", http.errorToString(httpCode).c_str());
+        if (millis() - _lastErrorLog >= _errorLogIntervalMs) {
+            LOG_E("InfluxDB connection error: %s", http.errorToString(httpCode).c_str());
+            _lastErrorLog = millis();
+        } else {
+            LOG_V("InfluxDB connection error (throttled)");
+        }
         http.end();
         return false;
     }
