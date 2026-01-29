@@ -240,7 +240,8 @@ String StorageFeature::listDir(const char* path) {
 
             File file = root.openNextFile();
             unsigned int count = 0;
-            while (file) {
+            unsigned long startTime = millis();
+            while (file && (millis() - startTime) < 100) {  // 100ms timeout
                 JsonObject obj = arr.add<JsonObject>();
                 String fname = String(file.name());
                 if (!fname.startsWith("/")) fname = String("/") + fname;
@@ -261,7 +262,6 @@ String StorageFeature::listDir(const char* path) {
     }
 
     // Fallback: scan filesystem for files matching the requested prefix
-    // Simpler approach: avoid std::vector, use direct JSON streaming
     LOG_D("listDir: filesystem scan for %s", p.c_str());
     
     JsonDocument doc;
@@ -275,11 +275,12 @@ String StorageFeature::listDir(const char* path) {
 
     String prefix = (p == "/") ? "/" : p + "/";
     unsigned int count = 0;
-    unsigned int dedupWindow = 0;  // Use a simple rolling window for deduplication
     String lastEntry = "";
+    unsigned long startTime = millis();
+    const unsigned long SCAN_TIMEOUT_MS = 200;  // 200ms max scan time
 
     File file = root.openNextFile();
-    while (file) {
+    while (file && (millis() - startTime) < SCAN_TIMEOUT_MS) {
         String fname = String(file.name());
         if (!fname.startsWith("/")) fname = String("/") + fname;
 
@@ -300,7 +301,6 @@ String StorageFeature::listDir(const char* path) {
                 obj["size"] = file.isDirectory() ? 0 : file.size();
                 lastEntry = entry;
                 count++;
-                dedupWindow = 0;
             }
         } else {
             // Non-root: find immediate children
@@ -316,22 +316,18 @@ String StorageFeature::listDir(const char* path) {
                     obj["size"] = (next == -1) ? file.size() : 0;
                     lastEntry = entry;
                     count++;
-                    dedupWindow = 0;
                 }
             }
-        }
-        
-        // Safety check: abort if we see too many duplicates (prevents infinite loop)
-        dedupWindow++;
-        if (dedupWindow > 1000) {
-            LOG_W("listDir: dedup window exceeded, aborting scan");
-            break;
         }
 
         file = root.openNextFile();
     }
 
-    LOG_D("listDir (scan): found %u entries for %s", count, p.c_str());
+    if ((millis() - startTime) >= SCAN_TIMEOUT_MS) {
+        LOG_W("listDir: scan timeout after %u entries", count);
+    }
+
+    LOG_D("listDir (scan): found %u entries for %s in %lu ms", count, p.c_str(), millis() - startTime);
 
     String result;
     serializeJson(doc, result);
