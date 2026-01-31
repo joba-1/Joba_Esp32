@@ -34,6 +34,14 @@ void OTAFeature::loop() {
             {
                 LOG_I("Initializing OTA...");
                 
+                // Initialize mDNS first (required for ArduinoOTA)
+                if (!MDNS.begin(_hostname)) {
+                    LOG_E("mDNS init failed");
+                    _state = State::WAITING_FOR_WIFI;
+                    break;
+                }
+                LOG_I("mDNS started: %s.local", _hostname);
+                
                 // Set hostname
                 ArduinoOTA.setHostname(_hostname);
                 

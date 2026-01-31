@@ -197,6 +197,14 @@ void setup() {
     // Generate device identity
     deviceId = DeviceInfo::getDeviceId();
     hostname = DeviceInfo::getHostname();
+    
+    WiFi.mode(WIFI_OFF);
+
+    // Set WiFi hostname BEFORE connecting (required for proper mDNS registration)
+    WiFi.setHostname(hostname.c_str());
+    
+    WiFi.mode(WIFI_STA);
+
     apName = deviceId + "-Config";
     mqttClientId = hostname;
     mqttBaseTopic = String(DeviceInfo::getFirmwareName()) + "/" + hostname;

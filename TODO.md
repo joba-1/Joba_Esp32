@@ -7,5 +7,4 @@
     * hex values of request frame should be shown before send
     * response should be shown as well (raw hex and if possible decoded by device definition)
 * receive modbus requests via mqtt
-* fix empty view http://192.168.1.173/view/storage
-* fix hostname 173.1.168.192.in-addr.arpa. 0   IN      PTR     esp32-8186BC.job.
+

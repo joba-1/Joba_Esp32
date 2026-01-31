@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <ArduinoOTA.h>
+#include <ESPmDNS.h>
 #include "Feature.h"
 
 /**
