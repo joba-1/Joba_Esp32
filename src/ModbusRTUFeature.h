@@ -356,10 +356,20 @@ private:
     static const size_t FRAME_HISTORY_SIZE = 20;
     ModbusFrame _frameHistory[FRAME_HISTORY_SIZE];
     size_t _frameHistoryIndex = 0;
+    mutable std::vector<ModbusFrame> _recentFramesCache;
 
 public:
+    /**
+     * @brief Get recent RX frames for debugging (valid and invalid, last FRAME_HISTORY_SIZE)
+     */
     const std::vector<ModbusFrame>& getRecentFrames() const {
-        // Return a view of the circular buffer
+        _recentFramesCache.clear();
+        _recentFramesCache.reserve(FRAME_HISTORY_SIZE);
+        for (size_t i = 0; i < FRAME_HISTORY_SIZE; i++) {
+            size_t idx = (_frameHistoryIndex + i) % FRAME_HISTORY_SIZE;
+            _recentFramesCache.push_back(_frameHistory[idx]);
+        }
+        return _recentFramesCache;
     }
 };
 
