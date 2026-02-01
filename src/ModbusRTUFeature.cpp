@@ -195,22 +195,30 @@ void ModbusRTUFeature::processReceivedData() {
     if (parseFrame(_rxBuffer.data(), _rxBuffer.size(), frame)) {
         _stats.framesReceived++;
 
-        // Log raw frame data
-        LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X, Valid=%d",
-              frame.unitId, frame.functionCode,
-              formatHex(frame.data.data(), frame.data.size()).c_str(),
-              frame.crc, frame.isValid);
-
         if (!frame.isValid) {
-            LOG_W("CRC Error in frame from unit %d", frame.unitId);
+            _stats.crcErrors++;
+            uint16_t expectedCrc = calculateCRC(_rxBuffer.data(), _rxBuffer.size() - 2);
+            LOG_W("CRC Error: Unit=%d FC=0x%02X raw=%s recvCRC=0x%04X calcCRC=0x%04X",
+                  frame.unitId, frame.functionCode,
+                  formatHex(_rxBuffer.data(), _rxBuffer.size()).c_str(),
+                  frame.crc, expectedCrc);
+        } else {
+            LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X",
+                  frame.unitId, frame.functionCode,
+                  formatHex(frame.data.data(), frame.data.size()).c_str(),
+                  frame.crc);
         }
+
+        // Debug: store in frame history (valid and invalid)
+        _frameHistory[_frameHistoryIndex] = frame;
+        _frameHistoryIndex = (_frameHistoryIndex + 1) % FRAME_HISTORY_SIZE;
 
         // Determine if this is a request or response
         bool isRequest = false;
         bool isOurResponse = false;
         
-        if (_waitingForResponse && frame.unitId == _lastRequest.unitId) {
-            // This is a response to our request
+        if (_waitingForResponse && frame.unitId == _lastRequest.unitId && frame.isValid) {
+            // This is a valid response to our request (ignore CRC-failed frames; we'll timeout and retry)
             isRequest = false;
             isOurResponse = true;
             _waitingForResponse = false;
@@ -256,7 +264,8 @@ void ModbusRTUFeature::processReceivedData() {
             // End our active time period
             endActiveTime();
             
-        } else {
+        } else if (frame.isValid) {
+            // Only classify valid frames as other traffic; CRC-failed frames are already counted above
             // This is either a request from another master or response we're monitoring
             // Heuristic: requests typically have FC 0x01-0x06 with specific data lengths
             uint8_t fc = frame.functionCode & 0x7F;
@@ -293,6 +302,7 @@ void ModbusRTUFeature::processReceivedData() {
                 updateRegisterMap(_lastRequest, frame);
             }
         }
+        // else: !frame.isValid (CRC error) - already logged and _stats.crcErrors incremented
         
         // Notify callback
         if (_frameCallback) {
@@ -300,7 +310,8 @@ void ModbusRTUFeature::processReceivedData() {
         }
         
     } else {
-        LOG_E("Failed to parse frame");
+        LOG_E("Failed to parse frame (len=%u) raw=%s", _rxBuffer.size(),
+              formatHex(_rxBuffer.data(), _rxBuffer.size()).c_str());
     }
     _rxBuffer.clear();
 }
@@ -308,19 +319,24 @@ void ModbusRTUFeature::processReceivedData() {
 bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame) {
     if (length < 4) return false;
     
-    // Verify CRC
-    uint16_t receivedCrc = data[length - 2] | (data[length - 1] << 8);
+    frame.unitId = data[0];
+    frame.functionCode = data[1];
+    frame.timestamp = millis();
+    
+    // Verify CRC (Modbus: LSB first)
+    uint16_t receivedCrc = (uint16_t)data[length - 2] | ((uint16_t)data[length - 1] << 8);
     uint16_t calculatedCrc = calculateCRC(data, length - 2);
     
     if (receivedCrc != calculatedCrc) {
         frame.isValid = false;
-        return false;
+        frame.crc = receivedCrc;
+        frame.data.assign(data + 2, data + length - 2);
+        frame.isException = false;
+        frame.exceptionCode = 0;
+        return true;  // Return true so caller can count CRC error and log
     }
     
-    frame.unitId = data[0];
-    frame.functionCode = data[1];
     frame.crc = receivedCrc;
-    frame.timestamp = millis();
     frame.isValid = true;
     
     // Check for exception
@@ -491,6 +507,19 @@ void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
     delayMicroseconds(100);
     
     setDE(false);  // Back to receive mode
+    
+    // Discard any RX echo of our transmission (half-duplex RS485 can read own bytes back).
+    // Otherwise we either treat our echo as the response or concatenate echo+response and get CRC errors.
+    delayMicroseconds(_charTimeUs * 2);  // Allow echo to appear on line
+    int discarded = 0;
+    while (_serial.available()) {
+        (void)_serial.read();
+        discarded++;
+    }
+    if (discarded > 0) {
+        LOG_V("Modbus TX: discarded %d RX echo bytes", discarded);
+    }
+    _rxBuffer.clear();
     
     _stats.framesSent++;
     _lastActivityTime = millis();
