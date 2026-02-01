@@ -185,15 +185,26 @@ void ModbusRTUFeature::loop() {
 }
 
 void ModbusRTUFeature::processReceivedData() {
-    if (_rxBuffer.size() < 4) {  // Minimum frame: ID + FC + CRC(2)
+    if (_rxBuffer.size() < 4) {
+        LOG_D("Incomplete frame received (size=%u)", _rxBuffer.size());
         _rxBuffer.clear();
         return;
     }
-    
+
     ModbusFrame frame;
     if (parseFrame(_rxBuffer.data(), _rxBuffer.size(), frame)) {
         _stats.framesReceived++;
-        
+
+        // Log raw frame data
+        LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X, Valid=%d",
+              frame.unitId, frame.functionCode,
+              formatHex(frame.data.data(), frame.data.size()).c_str(),
+              frame.crc, frame.isValid);
+
+        if (!frame.isValid) {
+            LOG_W("CRC Error in frame from unit %d", frame.unitId);
+        }
+
         // Determine if this is a request or response
         bool isRequest = false;
         bool isOurResponse = false;
@@ -289,10 +300,8 @@ void ModbusRTUFeature::processReceivedData() {
         }
         
     } else {
-        _stats.crcErrors++;
-        LOG_V("Modbus CRC error, len=%u", _rxBuffer.size());
+        LOG_E("Failed to parse frame");
     }
-    
     _rxBuffer.clear();
 }
 
@@ -386,8 +395,11 @@ void ModbusRTUFeature::processQueue() {
     
     // Copy the front request (not reference/pointer - prevents vector reallocation issues)
     ModbusPendingRequest req = _requestQueue.front();
+    LOG_D("Processing request: Unit=%d, FC=0x%02X, Addr=%d, Qty=%d",
+          req.unitId, req.functionCode, req.startRegister, req.quantity);
     
     if (sendRequest(req)) {
+        LOG_D("Request sent successfully");
         _stats.ownRequestsSent++;
         
         // Store a COPY of the request, not a pointer into the vector
@@ -408,6 +420,8 @@ void ModbusRTUFeature::processQueue() {
         _lastRequest.data.push_back(req.startRegister & 0xFF);
         _lastRequest.data.push_back(req.quantity >> 8);
         _lastRequest.data.push_back(req.quantity & 0xFF);
+    } else {
+        LOG_W("Failed to send request - bus not silent");
     }
     
     _requestQueue.erase(_requestQueue.begin());
@@ -802,4 +816,15 @@ void ModbusRTUFeature::checkAndLogWarnings() {
     
     // Reset interval stats for next period
     resetIntervalStats();
+}
+
+String ModbusRTUFeature::formatHex(const uint8_t* data, size_t length) const {
+    String result;
+    for (size_t i = 0; i < length; i++) {
+        if (i > 0) result += ' ';
+        char buf[4];
+        snprintf(buf, sizeof(buf), "%02X", data[i]);
+        result += buf;
+    }
+    return result;
 }

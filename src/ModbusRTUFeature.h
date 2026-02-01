@@ -274,6 +274,8 @@ public:
      * @brief Reset interval statistics (called after each warning check)
      */
     void resetIntervalStats();
+    
+    String formatHex(const uint8_t* data, size_t length) const;
 
 private:
     void processReceivedData();
@@ -350,6 +352,15 @@ private:
 #ifndef MODBUS_BUS_BUSY_WARN_PERCENT
 #define MODBUS_BUS_BUSY_WARN_PERCENT 95
 #endif
+    
+    static const size_t FRAME_HISTORY_SIZE = 20;
+    ModbusFrame _frameHistory[FRAME_HISTORY_SIZE];
+    size_t _frameHistoryIndex = 0;
+
+public:
+    const std::vector<ModbusFrame>& getRecentFrames() const {
+        // Return a view of the circular buffer
+    }
 };
 
 #endif // MODBUS_RTU_FEATURE_H

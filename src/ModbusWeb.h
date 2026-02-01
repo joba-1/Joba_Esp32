@@ -294,6 +294,32 @@ public:
                 
                 request->send(200, "text/html", html);
             });
+        
+        // Modbus monitoring data
+        webServer->on("/api/modbus/monitor", HTTP_GET,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                JsonDocument doc;
+                doc["busSilent"] = modbus.isBusSilent();
+                doc["silenceMs"] = modbus.getTimeSinceLastActivity();
+                doc["minSilenceUs"] = modbus.getMinSilenceTimeUs();
+
+                JsonArray frames = doc["recentFrames"].to<JsonArray>();
+                // need to implement using the frame history buffer in ModbusRTUFeature
+                for (const auto& frame : modbus.getRecentFrames()) {
+                    JsonObject f = frames.add<JsonObject>();
+                    f["timestamp"] = frame.timestamp;
+                    f["unitId"] = frame.unitId;
+                    f["functionCode"] = frame.functionCode;
+                    f["data"] = modbus.formatHex(frame.data.data(), frame.data.size());
+                    f["valid"] = frame.isValid;
+                }
+
+                String output;
+                serializeJson(doc, output);
+                request->send(200, "application/json", output);
+            });
     }
 };
 
