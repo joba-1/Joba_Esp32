@@ -62,6 +62,19 @@ Firmware build information.
 curl -u admin:<password> http://<device-ip>/api/buildinfo
 ```
 
+### POST `/api/reset`
+Schedules a device restart (ESP32 reboot). This is delayed slightly so the HTTP response can be returned.
+
+Form fields / parameters:
+- `delayMs` (optional number): delay before restart (clamped to 50..10000ms). Default: 250ms.
+
+```bash
+curl -u admin:<password> \
+  -X POST 'http://<device-ip>/api/reset' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data 'delayMs=250'
+```
+
 ## Storage
 
 ### GET `/api/storage`
@@ -198,3 +211,18 @@ Returns recent Modbus frames and monitoring data.
 ```bash
 curl -u admin:<password> http://<device-ip>/api/modbus/monitor
 ```
+
+---
+
+# MQTT Commands
+
+If MQTT is enabled and connected, the device subscribes to:
+
+- `<baseTopic>/cmd/reset`
+- `<baseTopic>/cmd/restart`
+
+Accepted payloads (case-insensitive, trimmed): `1`, `true`, `reset`, `restart`, `reboot`.
+
+When accepted, the device schedules a restart (~250ms delay) and publishes an acknowledgement to:
+
+- `<baseTopic>/status/reset` with payload `scheduled` or `already_scheduled`

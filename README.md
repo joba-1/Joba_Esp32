@@ -258,6 +258,7 @@ Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in ser
 - `/` - Status page with firmware info and device identity
 - `/api/status` - JSON status
 - `/api/buildinfo` - Firmware build info
+- `/api/reset` (POST) - Restart the device
 - `/api/<collection>` - JSON data for a data collection
 - `/api/<collection>/latest` - Latest JSON entry
 - `/view/<collection>` - HTML table view with auto-refresh
@@ -279,6 +280,9 @@ Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in ser
 - `/api/modbus/monitor`
 
 For full details (parameters, examples), see [WEB_API.md](WEB_API.md).
+
+**MQTT reset command:**
+- Publish to `{baseTopic}/cmd/reset` (payload: `reset` / `restart` / `1`) to reboot.
 
 ### Data Collection Web Views
 

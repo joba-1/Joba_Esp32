@@ -4,6 +4,7 @@
 #include "StorageFeature.h"
 #include <ArduinoJson.h>
 #include "TimeUtils.h"
+#include "ResetManager.h"
 #include <WiFi.h>
 
 #ifndef FIRMWARE_GIT_SHA
@@ -80,6 +81,11 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "<p><a href='/health'>/health</a> <small>(health check, no auth)</small></p>";
         html += "<p><a href='/api/status'>/api/status</a></p>";
         html += "<p><a href='/api/buildinfo'>/api/buildinfo</a></p>";
+        html += "<form action='/api/reset' method='post' onsubmit=\"return confirm('Restart device now?')\">"
+            "<strong>/api/reset</strong> <small>(POST)</small> "
+            "<label>delayMs <input name='delayMs' type='number' value='250' min='50' max='10000'></label>"
+            "<button type='submit'>Restart</button>"
+            "</form>";
         html += "</div>";
 
         html += "<div class='card'>";
@@ -149,6 +155,32 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "</body></html>";
         
         request->send(200, "text/html", html);
+    });
+
+    // Restart endpoint
+    _server->on("/api/reset", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        if (_authEnabled && !authenticate(request)) {
+            return request->requestAuthentication();
+        }
+
+        uint32_t delayMs = 250;
+        if (request->hasParam("delayMs", true)) {
+            delayMs = (uint32_t)request->getParam("delayMs", true)->value().toInt();
+        } else if (request->hasParam("delayMs")) {
+            delayMs = (uint32_t)request->getParam("delayMs")->value().toInt();
+        }
+
+        JsonDocument doc;
+        const bool scheduled = ResetManager::scheduleRestart(delayMs, "web");
+        doc["scheduled"] = scheduled;
+        doc["delayMs"] = (uint32_t)delayMs;
+        if (!scheduled) {
+            doc["error"] = "Restart already scheduled";
+        }
+
+        String json;
+        serializeJson(doc, json);
+        request->send(scheduled ? 200 : 409, "application/json", json);
     });
     
     // API status endpoint

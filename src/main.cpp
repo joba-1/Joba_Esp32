@@ -16,6 +16,7 @@
 #include "ModbusDevice.h"
 #include "ModbusWeb.h"
 #include "ModbusIntegration.h"
+#include "ResetManager.h"
 
 // ============================================
 // Example Data Collection Definition
@@ -159,6 +160,9 @@ unsigned long lastDataCollection = 0;
 const unsigned long DATA_COLLECTION_INTERVAL = 60000;  // Collect every 60 seconds
 bool haDiscoveryPublished = false;
 bool modbusHADiscoveryPublished = false;
+
+// MQTT command subscriptions are lost on reconnect; track and re-subscribe.
+bool mqttResetCmdSubscribed = false;
 unsigned long lastModbusStatePublish = 0;
 const unsigned long MODBUS_STATE_PUBLISH_INTERVAL = 30000;  // Publish state every 30s
 
@@ -220,6 +224,27 @@ void setup() {
     logging.setHostname(hostname.c_str());
     mqtt.setClientId(mqttClientId.c_str());
     mqtt.setBaseTopic(mqttBaseTopic.c_str());
+
+    // MQTT reset command handler (armed only when MQTT is connected & subscribed)
+    mqtt.onMessage([](const char* topic, const char* payload) {
+        if (!topic || !payload) return;
+
+        const String resetTopic = mqttBaseTopic + "/cmd/reset";
+        const String restartTopic = mqttBaseTopic + "/cmd/restart";
+        const String t(topic);
+        if (t != resetTopic && t != restartTopic) return;
+
+        String p(payload);
+        p.trim();
+        p.toLowerCase();
+        if (p != "1" && p != "true" && p != "reset" && p != "restart" && p != "reboot") {
+            LOG_W("MQTT reset ignored (payload='%s')", payload);
+            return;
+        }
+
+        const bool scheduled = ResetManager::scheduleRestart(250, "mqtt");
+        mqtt.publishToBase("status/reset", scheduled ? "scheduled" : "already_scheduled", false);
+    });
     
     // Log firmware info
     LOG_I("======================================");
@@ -328,6 +353,18 @@ void loop() {
         );
         haDiscoveryPublished = true;
         LOG_I("Home Assistant autodiscovery published");
+    }
+
+    // Subscribe to MQTT reset commands after connect (and after reconnect)
+    if (mqtt.isConnected()) {
+        if (!mqttResetCmdSubscribed) {
+            bool ok1 = mqtt.subscribeToBase("cmd/reset");
+            bool ok2 = mqtt.subscribeToBase("cmd/restart");
+            mqttResetCmdSubscribed = (ok1 && ok2);
+            LOG_I("MQTT reset cmd subscribed: %s", mqttResetCmdSubscribed ? "yes" : "no");
+        }
+    } else {
+        mqttResetCmdSubscribed = false;
     }
     
     // Publish Modbus Home Assistant autodiscovery once MQTT is connected
