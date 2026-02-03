@@ -1,5 +1,6 @@
 #include "ModbusRTUFeature.h"
 #include <esp_heap_caps.h>
+#include <algorithm>
 #include "TimeUtils.h"
 
 ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
@@ -26,6 +27,8 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _requestSentTime(0)
     , _hasPendingRequest(false)
     , _consecutiveTimeouts(0)
+    , _queueingPausedUntilMs(0)
+    , _queueingBackoffMs(2000)
     , _lastSuccessTime(0)
     , _lastTimeoutWarningMs(0)
     , _frameCallback(nullptr)
@@ -92,6 +95,8 @@ void ModbusRTUFeature::setup() {
     
     _lastActivityTime = millis();
     _lastByteTime = micros();
+    _serialWasEmpty = (_serial.available() == 0);
+    _serialEmptySinceUs = micros();
     _lastWarningCheckMs = millis();
     _stats.lastStatsReset = millis();
     
@@ -105,6 +110,8 @@ void ModbusRTUFeature::setup() {
 
 void ModbusRTUFeature::loop() {
     if (!_ready) return;
+
+    _loopCounter++;
     
     unsigned long nowUs = micros();
     unsigned long nowMs = millis();
@@ -116,9 +123,17 @@ void ModbusRTUFeature::loop() {
     }
     
     // Read available data, using per-byte timestamps to detect inter-character gaps.
-    while (_serial.available()) {
+    // IMPORTANT: Do not drain indefinitely. On a busy bus the UART can remain non-empty
+    // continuously, which would starve the rest of the firmware and prevent TX arbitration.
+    // Also: when we have queued requests to send, favor draining RX so we can find
+    // an inter-frame gap and transmit.
+    const bool wantsToTransmitSoon = (!_waitingForResponse && !_requestQueue.empty());
+    const size_t maxRxBytesThisLoop = wantsToTransmitSoon ? 1024 : 256;
+    size_t rxBytesThisLoop = 0;
+    while (_serial.available() && rxBytesThisLoop < maxRxBytesThisLoop) {
         unsigned long byteTimeUs = micros();
         uint8_t byte = _serial.read();
+        rxBytesThisLoop++;
 
         // Check for inter-character timeout (1.5 char times = new frame start)
         if (_rxBuffer.size() > 0 && (byteTimeUs - _lastByteTime) > (_charTimeUs * 15 / 10)) {
@@ -128,8 +143,11 @@ void ModbusRTUFeature::loop() {
 
         _rxBuffer.push_back(byte);
         _lastByteTime = byteTimeUs;
-        _lastActivityTime = nowMs;
+        _lastActivityTime = millis();
         _busSilent = false;
+
+        // We observed RX data; the serial buffer is not empty.
+        _serialWasEmpty = false;
 
         // Start tracking active time if not already
         if (!_inActiveTime && !_waitingForResponse) {
@@ -137,8 +155,22 @@ void ModbusRTUFeature::loop() {
         }
     }
 
+    _dbgRxBytesDrainedInLoop = (uint16_t)rxBytesThisLoop;
+
     // Re-evaluate current time before checking for frame-complete silence
     nowUs = micros();
+
+    // Track when the UART RX buffer is observed empty. This is more reliable for deciding
+    // when it's safe to transmit than using _lastByteTime alone, because bytes can sit
+    // buffered until we get CPU time (then get timestamped "late" at read time).
+    if (_serial.available() == 0) {
+        if (!_serialWasEmpty) {
+            _serialWasEmpty = true;
+            _serialEmptySinceUs = nowUs;
+        }
+    } else {
+        _serialWasEmpty = false;
+    }
 
     // Check for frame complete (3.5 char silence)
     if (_rxBuffer.size() > 0 && (nowUs - _lastByteTime) > _silenceTimeUs) {
@@ -146,7 +178,10 @@ void ModbusRTUFeature::loop() {
     }
     
     // Update bus silence state and end active time tracking
-    if (!_busSilent && (nowMs - _lastActivityTime) > (_silenceTimeUs / 1000 + 1)) {
+    // IMPORTANT: Use microsecond timing for the RTU silence window.
+    // Using millis() rounding can prevent ever reaching the 3.5 char silence threshold
+    // (e.g. 9600 baud => ~3.64ms required, but millis() jumps in 1ms steps).
+    if (!_busSilent && (nowUs - _lastByteTime) > _silenceTimeUs) {
         _busSilent = true;
         if (_inActiveTime && !_waitingForResponse) {
             endActiveTime();
@@ -172,8 +207,17 @@ void ModbusRTUFeature::loop() {
         
         // Track consecutive timeouts to trigger backoff
         _consecutiveTimeouts++;
-        if (_consecutiveTimeouts == 3) {
-            LOG_W("Modbus: 3 consecutive timeouts detected, pausing queue to prevent memory exhaustion");
+        if (_consecutiveTimeouts >= 3) {
+            // Pause queueing temporarily (time-bounded) so the system can recover by sending
+            // an occasional probe request after the backoff window.
+            _queueingPausedUntilMs = nowMs + _queueingBackoffMs;
+            if (_consecutiveTimeouts == 3) {
+                LOG_W("Modbus: 3 consecutive timeouts detected, pausing queue for %ums", _queueingBackoffMs);
+            }
+            // Exponential backoff, capped at 60s.
+            if (_queueingBackoffMs < 60000) {
+                _queueingBackoffMs = std::min<uint32_t>(_queueingBackoffMs * 2, 60000);
+            }
         }
         
         // DO NOT invoke callback on timeout - callbacks can block and trigger watchdog
@@ -192,9 +236,70 @@ void ModbusRTUFeature::loop() {
         }
     }
     
-    // Process request queue when bus is silent and not waiting
-    if (_busSilent && !_waitingForResponse) {
-        processQueue();
+    // Process request queue when not waiting and there is a detectable inter-frame gap.
+    // We attempt two strategies:
+    // 1) Fast-path: If we observed the UART RX buffer empty long enough.
+    // 2) Bounded arbitration: When requests are queued but our main loop is slow, we can
+    //    miss the exact moment the RX buffer becomes empty. In that case, spend a very
+    //    small, bounded time window actively watching for a quiet line and then transmit.
+    if (!_waitingForResponse) {
+        _dbgQueueSizeInLoop = (uint16_t)_requestQueue.size();
+        _dbgWaitingForResponseInLoop = _waitingForResponse;
+        _dbgSerialAvailableInLoop = (uint16_t)_serial.available();
+
+        const uint32_t idleUs = _serialWasEmpty ? (uint32_t)(nowUs - _serialEmptySinceUs) : 0;
+        const uint32_t requiredIdleUs = _silenceTimeUs;  // 3.5 char times (Modbus RTU spec)
+        const bool gapEnoughForTx = _serialWasEmpty && (idleUs > requiredIdleUs);
+
+        _dbgGapUsInLoop = idleUs;
+        _dbgGapEnoughForTxInLoop = gapEnoughForTx;
+        _dbgLastLoopSnapshotMs = millis();
+
+        if (gapEnoughForTx) {
+            processQueue();
+        } else if (!_requestQueue.empty()) {
+            // Try to find a quiet window, bounded to keep the firmware responsive.
+            static constexpr uint32_t TX_ARBITRATION_WINDOW_US = 8000;
+            uint32_t startUs = micros();
+            uint32_t lastRxUs = micros();
+
+            // Prime lastRxUs with the most recent byte timestamp we have.
+            if (!_serialWasEmpty) {
+                lastRxUs = (uint32_t)_lastByteTime;
+            }
+
+            while ((uint32_t)(micros() - startUs) < TX_ARBITRATION_WINDOW_US) {
+                if (_serial.available()) {
+                    // Drain a bit more and keep our timestamps fresh.
+                    uint8_t byte = _serial.read();
+                    unsigned long byteTimeUs = micros();
+                    lastRxUs = (uint32_t)byteTimeUs;
+                    _serialWasEmpty = false;
+
+                    // Frame boundary detection while arbitrating.
+                    if (_rxBuffer.size() > 0 && (byteTimeUs - _lastByteTime) > (_charTimeUs * 15 / 10)) {
+                        processReceivedData();
+                    }
+                    _rxBuffer.push_back(byte);
+                    _lastByteTime = byteTimeUs;
+                    _lastActivityTime = millis();
+                    _busSilent = false;
+                    continue;
+                }
+
+                // No buffered bytes right now. If we've been quiet long enough, transmit.
+                uint32_t nowArbUs = micros();
+                if ((uint32_t)(nowArbUs - lastRxUs) >= requiredIdleUs) {
+                    _serialWasEmpty = true;
+                    _serialEmptySinceUs = nowArbUs;
+                    processQueue();
+                    break;
+                }
+
+                // Short yield to avoid a tight spin.
+                delayMicroseconds(50);
+            }
+        }
     }
     
     // Periodic warning check
@@ -351,6 +456,8 @@ void ModbusRTUFeature::processReceivedData() {
             _waitingForResponse = false;
 
             _consecutiveTimeouts = 0;
+            _queueingPausedUntilMs = 0;
+            _queueingBackoffMs = 2000;
             _lastSuccessTime = millis();
 
             if (!frame.isException) {
@@ -553,6 +660,9 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
 
 void ModbusRTUFeature::processQueue() {
     if (_requestQueue.empty()) return;
+
+    _processQueueCounter++;
+    _lastProcessQueueMs = millis();
     
     // Copy the front request (not reference/pointer - prevents vector reallocation issues)
     ModbusPendingRequest req = _requestQueue.front();
@@ -673,6 +783,17 @@ void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
         LOG_V("Modbus TX: discarded %d RX echo bytes", discarded);
     }
     _rxBuffer.clear();
+
+    // Mark end-of-TX as last bus activity for accurate silence detection.
+    _lastByteTime = micros();
+
+    // Refresh empty-buffer tracking after TX and echo discard.
+    if (_serial.available() == 0) {
+        _serialWasEmpty = true;
+        _serialEmptySinceUs = _lastByteTime;
+    } else {
+        _serialWasEmpty = false;
+    }
     
     _stats.framesSent++;
     _lastActivityTime = millis();
@@ -723,14 +844,14 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
-    // If we're experiencing repeated timeouts, stop queueing to prevent memory exhaustion
-    // Allow one retry after timeout before giving up
-    if (_consecutiveTimeouts > 2) {
+    // If we're experiencing repeated timeouts, pause queueing temporarily to prevent memory exhaustion.
+    // This is time-bounded to avoid a permanent deadlock when the queue becomes empty.
+    const unsigned long nowMs = millis();
+    if (_consecutiveTimeouts > 2 && nowMs < _queueingPausedUntilMs) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
         
         // Throttle warning message - only log once per 60 seconds to avoid spam
-        unsigned long nowMs = millis();
         if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
             LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
                   _consecutiveTimeouts);
@@ -781,13 +902,13 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
-    // If we're experiencing repeated timeouts, stop queueing
-    if (_consecutiveTimeouts > 2) {
+    // If we're experiencing repeated timeouts, pause queueing temporarily.
+    const unsigned long nowMs = millis();
+    if (_consecutiveTimeouts > 2 && nowMs < _queueingPausedUntilMs) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
         
         // Throttle warning message - only log once per 60 seconds
-        unsigned long nowMs = millis();
         if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
             LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
                   _consecutiveTimeouts);
@@ -840,13 +961,13 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
-    // If we're experiencing repeated timeouts, stop queueing
-    if (_consecutiveTimeouts > 2) {
+    // If we're experiencing repeated timeouts, pause queueing temporarily.
+    const unsigned long nowMs = millis();
+    if (_consecutiveTimeouts > 2 && nowMs < _queueingPausedUntilMs) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
         
         // Throttle warning message - only log once per 60 seconds
-        unsigned long nowMs = millis();
         if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
             LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
                   _consecutiveTimeouts);

@@ -135,6 +135,23 @@ public:
     unsigned long getTimeSinceLastActivity() const {
         return millis() - _lastActivityTime;
     }
+
+    // ========================================
+    // Debug (for /api/modbus/status)
+    // ========================================
+    uint32_t getTimeSinceLastByteUs() const { return (uint32_t)(micros() - _lastByteTime); }
+    uint32_t getCharTimeUs() const { return _charTimeUs; }
+    uint32_t getSilenceTimeUs() const { return _silenceTimeUs; }
+    uint32_t getLoopCounter() const { return _loopCounter; }
+    uint32_t getProcessQueueCounter() const { return _processQueueCounter; }
+    unsigned long getLastProcessQueueMs() const { return _lastProcessQueueMs; }
+    uint16_t getDbgQueueSizeInLoop() const { return _dbgQueueSizeInLoop; }
+    bool getDbgWaitingForResponseInLoop() const { return _dbgWaitingForResponseInLoop; }
+    uint16_t getDbgSerialAvailableInLoop() const { return _dbgSerialAvailableInLoop; }
+    uint16_t getDbgRxBytesDrainedInLoop() const { return _dbgRxBytesDrainedInLoop; }
+    uint32_t getDbgGapUsInLoop() const { return _dbgGapUsInLoop; }
+    bool getDbgGapEnoughForTxInLoop() const { return _dbgGapEnoughForTxInLoop; }
+    unsigned long getDbgLastLoopSnapshotMs() const { return _dbgLastLoopSnapshotMs; }
     
     /**
      * @brief Get the minimum silence time required (3.5 char times)
@@ -314,6 +331,10 @@ private:
     unsigned long _lastActivityTime;
     bool _busSilent;
     bool _ready;
+
+    // Serial buffer emptiness tracking (best-effort for TX arbitration when loop is slow)
+    bool _serialWasEmpty{true};
+    unsigned long _serialEmptySinceUs{0};
     
     // Frame tracking for request/response matching
     ModbusFrame _lastRequest;
@@ -329,6 +350,8 @@ private:
     ModbusPendingRequest _currentRequest;  // Copy, not pointer - prevents invalid references
     bool _hasPendingRequest;
     uint32_t _consecutiveTimeouts;  // Track timeouts to pause queueing during bus issues
+    unsigned long _queueingPausedUntilMs;  // When queueing is allowed again after timeout backoff
+    uint32_t _queueingBackoffMs;  // Backoff window length (exponential), capped
     unsigned long _lastSuccessTime;  // Time of last successful request
     unsigned long _lastTimeoutWarningMs;  // Throttle timeout warning messages
     std::map<uint16_t, unsigned long> _lastTimeoutPerUnit;  // Track last timeout per unit (throttle spam)
@@ -342,6 +365,20 @@ private:
     bool _activeTimeIsOwn;
     unsigned long _activeStartTimeUs;
     unsigned long _lastWarningCheckMs;
+
+    // Debug counters/timestamps
+    uint32_t _loopCounter{0};
+    uint32_t _processQueueCounter{0};
+    unsigned long _lastProcessQueueMs{0};
+
+    // Last-loop debug snapshot (best-effort; used for diagnostics only)
+    uint16_t _dbgQueueSizeInLoop{0};
+    bool _dbgWaitingForResponseInLoop{false};
+    uint16_t _dbgSerialAvailableInLoop{0};
+    uint16_t _dbgRxBytesDrainedInLoop{0};
+    uint32_t _dbgGapUsInLoop{0};
+    bool _dbgGapEnoughForTxInLoop{false};
+    unsigned long _dbgLastLoopSnapshotMs{0};
     
     // Configurable warning thresholds (set via build flags with defaults)
 #ifndef MODBUS_STATS_INTERVAL_MS

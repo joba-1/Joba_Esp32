@@ -60,28 +60,92 @@ void WebServerFeature::setupDefaultRoutes() {
         String title = String(DeviceInfo::getFirmwareName()) + " " + DeviceInfo::getDeviceId();
         String html = "<!DOCTYPE html><html><head><title>" + title + "</title>";
         html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-        html += "<style>body{font-family:Arial,sans-serif;margin:20px;}</style></head>";
+        html += "<style>"
+            "body{font-family:Arial,sans-serif;margin:20px;}"
+            "h2{margin-top:22px;}"
+            ".card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:10px 0;}"
+            "code{background:#f6f6f6;padding:1px 4px;border-radius:4px;}"
+            "form{margin:8px 0;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:6px;}"
+            "label{display:inline-block;margin-right:10px;margin-bottom:6px;}"
+            "input,select{padding:4px 6px;}"
+            "button{padding:5px 10px;}"
+            "small{color:#666;}"
+            "</style></head>";
         html += "<body><h1>" + title + "</h1>";
         html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         html += "<p>Uptime: " + String(millis() / 1000) + " seconds</p>";
         html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
-        html += "<p><a href='/health'>Health</a></p><p/>";
-        html += "<p><a href='/api/buildinfo'>API Buildinfo</a></p>";
-        html += "<p><a href='/api/status'>API Status</a></p><p/>";
-        html += "<p><a href='/api/storage'>Storage</a></p>";
-        html += "<p><a href='/api/storage/list'>Storage list</a></p>";
-        html += "<p><a href='/view/storage'>Storage view</a></p><p/>";
-        html += "<p><a href='/api/sensors'>Sensors</a></p>";
-        html += "<p><a href='/api/sensors/latest'>Sensors latest</a></p>";
-        html += "<p><a href='/view/sensors'>Sensors view</a></p><p/>";
-        html += "<p><a href='/api/modbus/devices'>Modbus devices</a></p>";
-        html += "<p><a href='/api/modbus/device?unit=1'>Modbus device 1</a></p>";
-        html += "<p><a href='/api/modbus/device?unit=3'>Modbus device 3</a></p>";
-        html += "<p><a href='/api/modbus/status'>Modbus status</a></p>";
-        html += "<p><a href='/api/modbus/maps'>Modbus maps</a></p>";
-        html += "<p><a href='/api/modbus/types'>Modbus types</a></p>";
-        html += "<p><a href='/api/modbus/monitor'>Modbus monitor</a></p>";
-        html += "<p><a href='/view/modbus'>Modbus view</a></p>";
+        html += "<div class='card'>";
+        html += "<h2>System</h2>";
+        html += "<p><a href='/health'>/health</a> <small>(health check, no auth)</small></p>";
+        html += "<p><a href='/api/status'>/api/status</a></p>";
+        html += "<p><a href='/api/buildinfo'>/api/buildinfo</a></p>";
+        html += "</div>";
+
+        html += "<div class='card'>";
+        html += "<h2>Storage</h2>";
+        html += "<p><a href='/api/storage'>/api/storage</a></p>";
+        html += "<form action='/api/storage/list' method='get'>"
+            "<strong>/api/storage/list</strong> "
+            "<label>path <input name='path' type='text' value='/' size='30'></label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+        html += "<form action='/api/storage/file' method='get'>"
+            "<strong>/api/storage/file</strong> "
+            "<label>path <input name='path' type='text' value='/data/sensors.json' size='30'></label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+        html += "<p><a href='/view/storage'>/view/storage</a> <small>(HTML file browser)</small></p>";
+        html += "</div>";
+
+        html += "<div class='card'>";
+        html += "<h2>Data Collection</h2>";
+        html += "<p><a href='/api/sensors'>/api/sensors</a></p>";
+        html += "<p><a href='/api/sensors/latest'>/api/sensors/latest</a></p>";
+        html += "<p><a href='/view/sensors'>/view/sensors</a> <small>(HTML table)</small></p>";
+        html += "</div>";
+
+        html += "<div class='card'>";
+        html += "<h2>Modbus</h2>";
+        html += "<p><a href='/api/modbus/status'>/api/modbus/status</a></p>";
+        html += "<p><a href='/api/modbus/devices'>/api/modbus/devices</a></p>";
+        html += "<p><a href='/api/modbus/maps'>/api/modbus/maps</a></p>";
+        html += "<p><a href='/api/modbus/types'>/api/modbus/types</a></p>";
+        html += "<p><a href='/api/modbus/monitor'>/api/modbus/monitor</a></p>";
+        html += "<p><a href='/view/modbus'>/view/modbus</a> <small>(HTML dashboard)</small></p>";
+
+        html += "<form action='/api/modbus/device' method='get'>"
+            "<strong>/api/modbus/device</strong> "
+            "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
+            "<label><input name='meta' type='checkbox' value='1'> meta</label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+
+        html += "<form action='/api/modbus/read' method='get'>"
+            "<strong>/api/modbus/read</strong> "
+            "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
+            "<label>register <input name='register' type='text' value='' placeholder='e.g. grid_voltage' size='20'></label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+
+        html += "<form action='/api/modbus/raw/read' method='get'>"
+            "<strong>/api/modbus/raw/read</strong> "
+            "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
+            "<label>address <input name='address' type='number' value='0' min='0' max='65535'></label>"
+            "<label>count <input name='count' type='number' value='2' min='1' max='125'></label>"
+            "<label>fc <select name='fc'><option value='3'>3</option><option value='4'>4</option></select></label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+
+        html += "<form action='/api/modbus/write' method='post'>"
+            "<strong>/api/modbus/write</strong> <small>(POST)</small> "
+            "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
+            "<label>register <input name='register' type='text' value='' placeholder='e.g. inverter_enable' size='20'></label>"
+            "<label>value <input name='value' type='number' value='0' step='0.01'></label>"
+            "<button type='submit'>POST</button>"
+            "</form>";
+
+        html += "</div>";
         html += "</body></html>";
         
         request->send(200, "text/html", html);

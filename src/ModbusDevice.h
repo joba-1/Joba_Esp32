@@ -5,6 +5,8 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include <map>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "ModbusRTUFeature.h"
 #include "StorageFeature.h"
 #include "DataCollection.h"
@@ -92,6 +94,18 @@ struct ModbusDeviceInstance {
     unsigned long lastPollTime;
     uint32_t successCount;
     uint32_t errorCount;
+
+    struct ModbusPollBatch {
+        uint8_t functionCode;
+        uint16_t startAddress;
+        uint16_t quantity;          // number of registers
+        uint32_t pollIntervalMs;
+        uint32_t lastPollMs;        // millis() when last queued successfully
+        uint32_t lastAttemptMs;     // millis() when we last attempted to queue
+    };
+
+    // Precomputed poll plan: contiguous register windows per (functionCode, pollIntervalMs)
+    std::vector<ModbusPollBatch> pollBatches;
 };
 
 /**
@@ -102,6 +116,22 @@ struct ModbusDeviceInstance {
  */
 class ModbusDeviceManager {
 public:
+    class ScopedLock {
+    public:
+        explicit ScopedLock(SemaphoreHandle_t mutex);
+        ~ScopedLock();
+
+        ScopedLock(const ScopedLock&) = delete;
+        ScopedLock& operator=(const ScopedLock&) = delete;
+        ScopedLock(ScopedLock&& other) noexcept;
+        ScopedLock& operator=(ScopedLock&& other) noexcept;
+
+    private:
+        SemaphoreHandle_t _mutex;
+    };
+
+    ScopedLock scopedLock() const;
+
     /**
      * @brief Callback type for value changes
      * @param unitId Device unit ID
@@ -228,6 +258,20 @@ public:
      * @brief Get all current values for a device as JSON
      */
     String getDeviceValuesJson(uint8_t unitId) const;
+
+    /**
+     * @brief Stream all current values for a device as JSON
+     *
+     * Avoids building a potentially large intermediate String.
+     */
+    void writeDeviceValuesJson(uint8_t unitId, Print& out) const;
+
+    /**
+     * @brief Stream a lightweight device summary as JSON
+     *
+     * Intended for debugging/health checks; avoids iterating all values.
+     */
+    void writeDeviceMetaJson(uint8_t unitId, Print& out) const;
     
     /**
      * @brief Process automatic polling (call from loop)
@@ -266,6 +310,13 @@ private:
                                      const ModbusFrame& request,
                                      const ModbusFrame& response);
 
+    void rebuildPollBatches(ModbusDeviceInstance& device);
+    void applyReadResponseToDevice(ModbusDeviceInstance& device,
+                                   uint8_t functionCode,
+                                   uint32_t pollIntervalMs,
+                                   uint16_t startAddress,
+                                   const ModbusFrame& response);
+
     float convertRawToValue(const ModbusRegisterDef& def, const uint16_t* rawData) const;
     std::vector<uint16_t> convertValueToRaw(const ModbusRegisterDef& def, float value) const;
     const ModbusRegisterDef* findRegister(const ModbusDeviceType* type, const char* name) const;
@@ -287,6 +338,8 @@ private:
 
     // Passive bus tracking: last request per unit, used to infer start register for responses.
     std::map<uint8_t, ModbusFrame> _lastSeenRequests;
+
+    mutable SemaphoreHandle_t _mutex;
 };
 
 #endif // MODBUS_DEVICE_H

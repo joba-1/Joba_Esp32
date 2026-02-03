@@ -257,6 +257,7 @@ Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in ser
 **Endpoints:**
 - `/` - Status page with firmware info and device identity
 - `/api/status` - JSON status
+- `/api/buildinfo` - Firmware build info
 - `/api/<collection>` - JSON data for a data collection
 - `/api/<collection>/latest` - Latest JSON entry
 - `/view/<collection>` - HTML table view with auto-refresh
@@ -265,6 +266,19 @@ Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in ser
 - `/api/storage/file?path=/foo/bar.txt` - Download a file (requires auth when enabled)
 - `/view/storage` - HTML file browser (requires auth when enabled)
 - `/health` - Health check (no auth)
+
+**Modbus API endpoints:**
+- `/api/modbus/status`
+- `/api/modbus/devices`
+- `/api/modbus/device?unit=<id>[&meta=1]`
+- `/api/modbus/read?unit=<id>&register=<name>`
+- `/api/modbus/write` (POST: `unit`, `register`, `value`)
+- `/api/modbus/raw/read?unit=<id>&address=<addr>&count=<n>[&fc=3]`
+- `/api/modbus/maps`
+- `/api/modbus/types`
+- `/api/modbus/monitor`
+
+For full details (parameters, examples), see [WEB_API.md](WEB_API.md).
 
 ### Data Collection Web Views
 

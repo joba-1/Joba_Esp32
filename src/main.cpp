@@ -120,8 +120,8 @@ ModbusRTUFeature modbus(
     MODBUS_SERIAL_RX,
     MODBUS_SERIAL_TX,
     MODBUS_DE_PIN,              // RS485 DE pin (-1 if not used)
-    MODBUS_RESPONSE_TIMEOUT,
-    MODBUS_QUEUE_SIZE
+    MODBUS_QUEUE_SIZE,
+    MODBUS_RESPONSE_TIMEOUT
 );
 
 // LED indicator feature

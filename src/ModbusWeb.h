@@ -33,6 +33,9 @@ public:
             [&devices, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
+                auto _guard = devices.scopedLock();
+
+                // Debug endpoint: avoid fixed-capacity docs to prevent silent member drops.
                 JsonDocument doc;
                 JsonArray arr = doc.to<JsonArray>();
                 
@@ -42,6 +45,7 @@ public:
                     dev["type"] = kv.second.deviceTypeName;
                     dev["successCount"] = kv.second.successCount;
                     dev["errorCount"] = kv.second.errorCount;
+                    dev["valuesCount"] = (uint32_t)kv.second.currentValues.size();
                     dev["unknownCount"] = (uint32_t)kv.second.unknownU16.size();
                 }
                 
@@ -61,8 +65,13 @@ public:
                 }
                 
                 uint8_t unitId = request->getParam("unit")->value().toInt();
-                String json = devices.getDeviceValuesJson(unitId);
-                request->send(200, "application/json", json);
+                auto* response = request->beginResponseStream("application/json");
+                if (request->hasParam("meta")) {
+                    devices.writeDeviceMetaJson(unitId, *response);
+                } else {
+                    devices.writeDeviceValuesJson(unitId, *response);
+                }
+                request->send(response);
             });
         
         // Read a specific register
@@ -86,7 +95,7 @@ public:
                 String regName = request->getParam("register")->value();
                 
                 // Queue the read
-                devices.readRegister(unitId, regName.c_str(), nullptr);
+                bool queued = devices.readRegister(unitId, regName.c_str(), nullptr);
                 
                 // Return current cached value (or stale)
                 float value = 0;
@@ -97,7 +106,7 @@ public:
                 doc["register"] = regName;
                 doc["value"] = value;
                 doc["valid"] = valid;
-                doc["queued"] = true;
+                doc["queued"] = queued;
                 
                 String output;
                 serializeJson(doc, output);
@@ -127,13 +136,13 @@ public:
                 String regName = request->getParam("register", true)->value();
                 float value = request->getParam("value", true)->value().toFloat();
                 
-                devices.writeRegister(unitId, regName.c_str(), value, nullptr);
+                bool queued = devices.writeRegister(unitId, regName.c_str(), value, nullptr);
                 
                 JsonDocument doc;
                 doc["unitId"] = unitId;
                 doc["register"] = regName;
                 doc["value"] = value;
-                doc["queued"] = true;
+                doc["queued"] = queued;
                 
                 String output;
                 serializeJson(doc, output);
@@ -164,15 +173,15 @@ public:
                 uint16_t count = request->getParam("count")->value().toInt();
                 uint8_t fc = request->hasParam("fc") ?
                              request->getParam("fc")->value().toInt() : 3;
-                
-                modbus.queueReadRegisters(unitId, fc, address, count, nullptr);
+
+                bool queued = modbus.queueReadRegisters(unitId, fc, address, count, nullptr);
                 
                 JsonDocument doc;
-                doc["queued"] = true;
                 doc["unitId"] = unitId;
                 doc["address"] = address;
                 doc["count"] = count;
                 doc["functionCode"] = fc;
+                doc["queued"] = queued;
                 
                 String output;
                 serializeJson(doc, output);
@@ -184,6 +193,7 @@ public:
             [&modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
+                // Debug endpoint: avoid fixed-capacity docs to prevent silent member drops.
                 JsonDocument doc;
                 doc["listenOnly"] = (bool)MODBUS_LISTEN_ONLY;
                 doc["busSilent"] = modbus.isBusSilent();
@@ -196,6 +206,21 @@ public:
                 doc["ownRequestsSuccess"] = modbus.getStats().ownRequestsSuccess;
                 doc["ownRequestsFailed"] = modbus.getStats().ownRequestsFailed;
                 doc["ownRequestsDiscarded"] = modbus.getStats().ownRequestsDiscarded;
+
+                JsonObject debug = doc["debug"].to<JsonObject>();
+                debug["sinceLastByteUs"] = modbus.getTimeSinceLastByteUs();
+                debug["charTimeUs"] = modbus.getCharTimeUs();
+                debug["silenceTimeUs"] = modbus.getSilenceTimeUs();
+                debug["loopCounter"] = modbus.getLoopCounter();
+                debug["processQueueCounter"] = modbus.getProcessQueueCounter();
+                debug["lastProcessQueueMs"] = (uint32_t)modbus.getLastProcessQueueMs();
+                debug["dbgQueueSizeInLoop"] = modbus.getDbgQueueSizeInLoop();
+                debug["dbgWaitingForResponseInLoop"] = modbus.getDbgWaitingForResponseInLoop();
+                debug["dbgSerialAvailableInLoop"] = modbus.getDbgSerialAvailableInLoop();
+                debug["dbgRxBytesDrainedInLoop"] = modbus.getDbgRxBytesDrainedInLoop();
+                debug["dbgGapUsInLoop"] = modbus.getDbgGapUsInLoop();
+                debug["dbgGapEnoughForTxInLoop"] = modbus.getDbgGapEnoughForTxInLoop();
+                debug["dbgLastLoopSnapshotMs"] = (uint32_t)modbus.getDbgLastLoopSnapshotMs();
 
                 JsonObject updated = doc["updated"].to<JsonObject>();
                 updated["uptimeMs"] = (uint32_t)millis();
