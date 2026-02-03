@@ -7,6 +7,8 @@
 #include "ResetManager.h"
 #include <WiFi.h>
 
+#include <esp_ota_ops.h>
+
 #ifndef FIRMWARE_GIT_SHA
 #define FIRMWARE_GIT_SHA unknown
 #endif
@@ -230,6 +232,32 @@ void WebServerFeature::setupDefaultRoutes() {
         JsonObject fw = doc["firmware"].to<JsonObject>();
         fw["gitSha"] = _STR(FIRMWARE_GIT_SHA);
 
+        fw["sketchMd5"] = ESP.getSketchMD5();
+        fw["sketchSize"] = (uint32_t)ESP.getSketchSize();
+        fw["freeSketchSpace"] = (uint32_t)ESP.getFreeSketchSpace();
+
+        // OTA partition diagnostics (helps debug update/rollback behavior)
+        {
+            const esp_partition_t* running = esp_ota_get_running_partition();
+            const esp_partition_t* boot = esp_ota_get_boot_partition();
+            JsonObject ota = fw["ota"].to<JsonObject>();
+
+            if (running) {
+                JsonObject r = ota["running"].to<JsonObject>();
+                r["label"] = running->label;
+                r["address"] = (uint32_t)running->address;
+                r["size"] = (uint32_t)running->size;
+                r["subtype"] = (uint32_t)running->subtype;
+            }
+            if (boot) {
+                JsonObject b = ota["boot"].to<JsonObject>();
+                b["label"] = boot->label;
+                b["address"] = (uint32_t)boot->address;
+                b["size"] = (uint32_t)boot->size;
+                b["subtype"] = (uint32_t)boot->subtype;
+            }
+        }
+
         if ((uint32_t)FIRMWARE_BUILD_UNIX != 0) {
             JsonObject built = fw["built"].to<JsonObject>();
             built["epoch"] = (uint32_t)FIRMWARE_BUILD_UNIX;
@@ -255,6 +283,18 @@ void WebServerFeature::setupDefaultRoutes() {
             fs["manifestError"] = "build_info.json not found";
         } else {
             fs["manifestError"] = "storage not mounted";
+        }
+
+        // Report a mismatch hint if we have both identifiers available
+        JsonVariantConst fsManifest = fs["manifest"];
+        if (!fsManifest.isNull()) {
+            if (fsManifest.is<JsonObjectConst>() && fsManifest["gitCommit"].is<const char*>()) {
+                const char* fsCommit = fsManifest["gitCommit"].as<const char*>();
+                const char* fwCommit = fw["gitSha"].as<const char*>();
+                if (fsCommit && fwCommit && strlen(fsCommit) > 0 && strlen(fwCommit) > 0) {
+                    doc["firmwareFilesystemMismatch"] = (strcmp(fsCommit, fwCommit) != 0);
+                }
+            }
         }
 
         String output;
