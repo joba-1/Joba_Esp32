@@ -1,6 +1,7 @@
 #include "ModbusDevice.h"
 #include <LittleFS.h>
 #include "TimeUtils.h"
+#include "InfluxLineProtocol.h"
 
 static bool valuesDiffer(float a, float b) {
     // Avoid requiring <cmath>; keep this simple for embedded builds.
@@ -759,16 +760,16 @@ String ModbusDeviceManager::toLineProtocol(uint8_t unitId, const char* measureme
         if (!kv.second.valid) continue;
         
         // Format: measurement,device=name,unit_id=N,register=RegName value=X timestamp
-        String line = measurement;
+        String line = InfluxLineProtocol::escapeMeasurement(measurement);
         line += ",device=";
-        line += device.deviceName;
+        line += InfluxLineProtocol::escapeTag(device.deviceName);
         line += ",unit_id=";
         line += String(unitId);
         line += ",register=";
-        line += kv.first;
+        line += InfluxLineProtocol::escapeTag(kv.first);
         if (strlen(kv.second.unit) > 0) {
             line += ",unit=";
-            line += kv.second.unit;
+            line += InfluxLineProtocol::escapeTag(kv.second.unit);
         }
         line += " value=";
         line += String(kv.second.value, 4);
@@ -793,16 +794,16 @@ std::vector<String> ModbusDeviceManager::allToLineProtocol(const char* measureme
             if (!regKv.second.valid) continue;
             
             // Format: measurement,device=name,unit_id=N,register=RegName value=X timestamp
-            String line = measurement;
+            String line = InfluxLineProtocol::escapeMeasurement(measurement);
             line += ",device=";
-            line += device.deviceName;
+            line += InfluxLineProtocol::escapeTag(device.deviceName);
             line += ",unit_id=";
             line += String(device.unitId);
             line += ",register=";
-            line += regKv.first;
+            line += InfluxLineProtocol::escapeTag(regKv.first);
             if (strlen(regKv.second.unit) > 0) {
                 line += ",unit=";
-                line += regKv.second.unit;
+                line += InfluxLineProtocol::escapeTag(regKv.second.unit);
             }
             line += " value=";
             line += String(regKv.second.value, 4);

@@ -8,6 +8,7 @@
 #include "InfluxDBFeature.h"
 #include "DataCollectionMQTT.h"
 #include "LoggingFeature.h"
+#include "InfluxLineProtocol.h"
 
 /**
  * @brief Helper class to integrate Modbus devices with InfluxDB and MQTT/Home Assistant
@@ -176,16 +177,16 @@ public:
         if (!influx) return;
         
         // Build line protocol
-        String line = measurement;
+        String line = InfluxLineProtocol::escapeMeasurement(measurement);
         line += ",device=";
-        line += deviceName;
+        line += InfluxLineProtocol::escapeTag(deviceName);
         line += ",unit_id=";
         line += String(unitId);
         line += ",register=";
-        line += registerName;
+        line += InfluxLineProtocol::escapeTag(registerName);
         if (unit && strlen(unit) > 0) {
             line += ",unit=";
-            line += unit;
+            line += InfluxLineProtocol::escapeTag(unit);
         }
         line += " value=";
         line += String(value, 4);
