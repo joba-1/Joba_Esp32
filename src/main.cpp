@@ -239,7 +239,7 @@ void setup() {
     sensorData.setDeviceId(deviceId);
     
     // Enable persistence for sensor data (5 second delay before write)
-    sensorData.enablePersistence(&storage, "/data/sensors.json", 5000);
+    // sensorData.enablePersistence(&storage, "/data/sensors.json", 5000);
     
     // Load any previously saved data
     if (storage.isReady()) {

@@ -2,8 +2,20 @@
 #include "DeviceInfo.h"
 #include "LoggingFeature.h"
 #include "StorageFeature.h"
+#include <ArduinoJson.h>
+#include "TimeUtils.h"
 #include <WiFi.h>
 
+#ifndef FIRMWARE_GIT_SHA
+#define FIRMWARE_GIT_SHA unknown
+#endif
+
+#ifndef FIRMWARE_BUILD_UNIX
+#define FIRMWARE_BUILD_UNIX 0
+#endif
+
+#define _STR_HELPER(x) #x
+#define _STR(x) _STR_HELPER(x)
 // Access global storage instance defined in main.cpp
 extern StorageFeature storage;
 
@@ -53,7 +65,23 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         html += "<p>Uptime: " + String(millis() / 1000) + " seconds</p>";
         html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
-        html += "<p><a href='/api/status'>API Status</a></p>";
+        html += "<p><a href='/health'>Health</a></p><p/>";
+        html += "<p><a href='/api/buildinfo'>API Buildinfo</a></p>";
+        html += "<p><a href='/api/status'>API Status</a></p><p/>";
+        html += "<p><a href='/api/storage'>Storage</a></p>";
+        html += "<p><a href='/api/storage/list'>Storage list</a></p>";
+        html += "<p><a href='/view/storage'>Storage view</a></p><p/>";
+        html += "<p><a href='/api/sensors'>Sensors</a></p>";
+        html += "<p><a href='/api/sensors/latest'>Sensors latest</a></p>";
+        html += "<p><a href='/view/sensors'>Sensors view</a></p><p/>";
+        html += "<p><a href='/api/modbus/devices'>Modbus devices</a></p>";
+        html += "<p><a href='/api/modbus/device?unit=1'>Modbus device 1</a></p>";
+        html += "<p><a href='/api/modbus/device?unit=3'>Modbus device 3</a></p>";
+        html += "<p><a href='/api/modbus/status'>Modbus status</a></p>";
+        html += "<p><a href='/api/modbus/maps'>Modbus maps</a></p>";
+        html += "<p><a href='/api/modbus/types'>Modbus types</a></p>";
+        html += "<p><a href='/api/modbus/monitor'>Modbus monitor</a></p>";
+        html += "<p><a href='/view/modbus'>Modbus view</a></p>";
         html += "</body></html>";
         
         request->send(200, "text/html", html);
@@ -64,15 +92,78 @@ void WebServerFeature::setupDefaultRoutes() {
         if (_authEnabled && !authenticate(request)) {
             return request->requestAuthentication();
         }
-        
-        String json = "{";
-        json += "\"uptime\":" + String(millis() / 1000) + ",";
-        json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
-        json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
-        json += "\"rssi\":" + String(WiFi.RSSI());
-        json += "}";
-        
+
+        JsonDocument doc;
+        doc["freeHeap"] = (uint32_t)ESP.getFreeHeap();
+        doc["ip"] = WiFi.localIP().toString();
+        doc["rssi"] = (int32_t)WiFi.RSSI();
+
+        JsonObject updated = doc["updated"].to<JsonObject>();
+        updated["uptimeMs"] = (uint32_t)millis();
+        const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
+        if (nowUnix != 0) {
+            updated["epoch"] = nowUnix;
+            String iso = TimeUtils::isoUtcFromUnixSeconds(nowUnix);
+            if (iso.length() > 0) updated["iso"] = iso;
+        }
+
+        String json;
+        serializeJson(doc, json);
         request->send(200, "application/json", json);
+    });
+
+    // Firmware + filesystem build info (requires auth if enabled)
+    _server->on("/api/buildinfo", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (_authEnabled && !authenticate(request)) {
+            return request->requestAuthentication();
+        }
+
+        JsonDocument doc;
+        doc["deviceId"] = DeviceInfo::getDeviceId();
+        doc["firmwareName"] = DeviceInfo::getFirmwareName();
+
+        JsonObject updated = doc["updated"].to<JsonObject>();
+        updated["uptimeMs"] = (uint32_t)millis();
+        const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
+        if (nowUnix != 0) {
+            updated["epoch"] = nowUnix;
+            String iso = TimeUtils::isoUtcFromUnixSeconds(nowUnix);
+            if (iso.length() > 0) updated["iso"] = iso;
+        }
+
+        JsonObject fw = doc["firmware"].to<JsonObject>();
+        fw["gitSha"] = _STR(FIRMWARE_GIT_SHA);
+
+        if ((uint32_t)FIRMWARE_BUILD_UNIX != 0) {
+            JsonObject built = fw["built"].to<JsonObject>();
+            built["epoch"] = (uint32_t)FIRMWARE_BUILD_UNIX;
+            String iso = TimeUtils::isoUtcFromUnixSeconds((uint32_t)FIRMWARE_BUILD_UNIX);
+            if (iso.length() > 0) built["iso"] = iso;
+        }
+
+        JsonObject fs = doc["filesystem"].to<JsonObject>();
+        fs["mounted"] = storage.isReady();
+        fs["manifestPath"] = "/build_info.json";
+        if (storage.isReady() && storage.exists("/build_info.json")) {
+            String content = storage.readFile("/build_info.json");
+            fs["manifestRawBytes"] = content.length();
+
+            JsonDocument fsDoc;
+            DeserializationError err = deserializeJson(fsDoc, content);
+            if (!err) {
+                fs["manifest"].set(fsDoc.as<JsonVariantConst>());
+            } else {
+                fs["manifestParseError"] = err.c_str();
+            }
+        } else if (storage.isReady()) {
+            fs["manifestError"] = "build_info.json not found";
+        } else {
+            fs["manifestError"] = "storage not mounted";
+        }
+
+        String output;
+        serializeJson(doc, output);
+        request->send(200, "application/json", output);
     });
 
     // IMPORTANT: Register specific storage endpoints BEFORE the general /api/storage endpoint

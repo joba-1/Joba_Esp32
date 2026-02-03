@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "StorageFeature.h"
+#include "TimeUtils.h"
 
 #ifndef FIRMWARE_NAME
 #define FIRMWARE_NAME "ESP32-Firmware"
@@ -338,7 +339,21 @@ private:
                 case FieldType::INT32:  obj[f.name] = *(int32_t*)fieldPtr; break;
                 case FieldType::UINT8:  obj[f.name] = *(uint8_t*)fieldPtr; break;
                 case FieldType::UINT16: obj[f.name] = *(uint16_t*)fieldPtr; break;
-                case FieldType::UINT32: obj[f.name] = *(uint32_t*)fieldPtr; break;
+                case FieldType::UINT32: {
+                    uint32_t v = *(uint32_t*)fieldPtr;
+                    obj[f.name] = v;
+
+                    // If this field is a timestamp, also emit an ISO UTC representation.
+                    // Example: "timestamp" -> "timestampIsoUtc".
+                    if (f.influxType == InfluxType::TIMESTAMP && TimeUtils::looksLikeUnixSeconds(v)) {
+                        String iso = TimeUtils::isoUtcFromUnixSeconds(v);
+                        if (iso.length() > 0) {
+                            String isoKey = String(f.name) + "IsoUtc";
+                            obj[isoKey] = iso;
+                        }
+                    }
+                    break;
+                }
                 case FieldType::FLOAT:  obj[f.name] = *(float*)fieldPtr; break;
                 case FieldType::DOUBLE: obj[f.name] = *(double*)fieldPtr; break;
                 case FieldType::BOOL:   obj[f.name] = *(bool*)fieldPtr; break;
