@@ -5,6 +5,7 @@
 #include "ModbusRTUFeature.h"
 #include "WebServerFeature.h"
 #include <ArduinoJson.h>
+#include "TimeUtils.h"
 
 /**
  * @brief Web interface for Modbus devices
@@ -41,6 +42,7 @@ public:
                     dev["type"] = kv.second.deviceTypeName;
                     dev["successCount"] = kv.second.successCount;
                     dev["errorCount"] = kv.second.errorCount;
+                    dev["unknownCount"] = (uint32_t)kv.second.unknownU16.size();
                 }
                 
                 String output;
@@ -67,6 +69,12 @@ public:
         webServer->on("/api/modbus/read", HTTP_GET,
             [&devices, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
+
+#if MODBUS_LISTEN_ONLY
+                request->send(409, "application/json",
+                              "{\"error\":\"Modbus is in listen-only mode (sending disabled)\"}");
+                return;
+#endif
 
                 if (!request->hasParam("unit") || !request->hasParam("register")) {
                     request->send(400, "application/json",
@@ -101,6 +109,12 @@ public:
             [&devices, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
+#if MODBUS_LISTEN_ONLY
+                request->send(409, "application/json",
+                              "{\"error\":\"Modbus is in listen-only mode (sending disabled)\"}");
+                return;
+#endif
+
                 if (!request->hasParam("unit", true) ||
                     !request->hasParam("register", true) ||
                     !request->hasParam("value", true)) {
@@ -130,6 +144,12 @@ public:
         webServer->on("/api/modbus/raw/read", HTTP_GET,
             [&modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
+
+#if MODBUS_LISTEN_ONLY
+                request->send(409, "application/json",
+                              "{\"error\":\"Modbus is in listen-only mode (sending disabled)\"}");
+                return;
+#endif
 
                 if (!request->hasParam("unit") ||
                     !request->hasParam("address") ||
@@ -165,12 +185,26 @@ public:
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
                 JsonDocument doc;
+                doc["listenOnly"] = (bool)MODBUS_LISTEN_ONLY;
                 doc["busSilent"] = modbus.isBusSilent();
                 doc["silenceMs"] = modbus.getTimeSinceLastActivity();
                 doc["queuedRequests"] = modbus.getPendingRequestCount();
                 doc["rxFrames"] = modbus.getStats().framesReceived;
                 doc["txFrames"] = modbus.getStats().framesSent;
                 doc["crcErrors"] = modbus.getStats().crcErrors;
+                doc["ownRequestsSent"] = modbus.getStats().ownRequestsSent;
+                doc["ownRequestsSuccess"] = modbus.getStats().ownRequestsSuccess;
+                doc["ownRequestsFailed"] = modbus.getStats().ownRequestsFailed;
+                doc["ownRequestsDiscarded"] = modbus.getStats().ownRequestsDiscarded;
+
+                JsonObject updated = doc["updated"].to<JsonObject>();
+                updated["uptimeMs"] = (uint32_t)millis();
+                const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
+                if (nowUnix != 0) {
+                    updated["epoch"] = nowUnix;
+                    String iso = TimeUtils::isoUtcFromUnixSeconds(nowUnix);
+                    if (iso.length() > 0) updated["iso"] = iso;
+                }
                 
                 String output;
                 serializeJson(doc, output);
@@ -182,6 +216,10 @@ public:
             [&modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
+                const bool timeValid = TimeUtils::isTimeValidNow();
+                const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
+                const unsigned long nowMs = millis();
+
                 JsonDocument doc;
                 JsonArray maps = doc.to<JsonArray>();
                 
@@ -189,7 +227,18 @@ public:
                     JsonObject map = maps.add<JsonObject>();
                     map["unitId"] = kv.second.unitId;
                     map["functionCode"] = kv.second.functionCode;
-                    map["lastUpdate"] = kv.second.lastUpdate;
+
+                    // Group update time fields under a common pattern.
+                    JsonObject updated = map["updated"].to<JsonObject>();
+                    updated["uptimeMs"] = (uint32_t)kv.second.lastUpdate;
+
+                    if (kv.second.lastUpdate != 0 && timeValid && nowUnix != 0) {
+                        uint32_t ageMs = (uint32_t)(nowMs - kv.second.lastUpdate);
+                        uint32_t estEpoch = nowUnix - (ageMs / 1000);
+                        updated["epoch"] = estEpoch;
+                        String iso = TimeUtils::isoUtcFromUnixSeconds(estEpoch);
+                        if (iso.length() > 0) updated["iso"] = iso;
+                    }
                     map["requestCount"] = kv.second.requestCount;
                     map["responseCount"] = kv.second.responseCount;
                     map["errorCount"] = kv.second.errorCount;
@@ -305,15 +354,81 @@ public:
                 doc["silenceMs"] = modbus.getTimeSinceLastActivity();
                 doc["minSilenceUs"] = modbus.getMinSilenceTimeUs();
 
+                {
+                    JsonObject updated = doc["updated"].to<JsonObject>();
+                    updated["uptimeMs"] = (uint32_t)millis();
+                    const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
+                    if (nowUnix != 0) {
+                        updated["epoch"] = nowUnix;
+                        String iso = TimeUtils::isoUtcFromUnixSeconds(nowUnix);
+                        if (iso.length() > 0) updated["iso"] = iso;
+                    }
+                }
+
                 JsonArray frames = doc["recentFrames"].to<JsonArray>();
                 // need to implement using the frame history buffer in ModbusRTUFeature
                 for (const auto& frame : modbus.getRecentFrames()) {
                     JsonObject f = frames.add<JsonObject>();
-                    f["timestamp"] = frame.timestamp;
+
+                    JsonObject updated = f["updated"].to<JsonObject>();
+                    updated["uptimeMs"] = (uint32_t)frame.timestamp;
+                    if (frame.unixTimestamp != 0) {
+                        updated["epoch"] = frame.unixTimestamp;
+                        String iso = TimeUtils::isoUtcFromUnixSeconds(frame.unixTimestamp);
+                        if (iso.length() > 0) updated["iso"] = iso;
+                    }
                     f["unitId"] = frame.unitId;
                     f["functionCode"] = frame.functionCode;
-                    f["data"] = modbus.formatHex(frame.data.data(), frame.data.size());
+                    f["isRequest"] = frame.isRequest;
                     f["valid"] = frame.isValid;
+                    f["crc"] = frame.crc;
+                    {
+                        char crcHex[7];
+                        snprintf(crcHex, sizeof(crcHex), "0x%04X", (unsigned)frame.crc);
+                        f["crcHex"] = crcHex;
+                    }
+
+                    uint8_t fc = frame.functionCode & 0x7F;
+                    f["functionCodeBase"] = fc;
+                    f["isException"] = frame.isException;
+                    if (frame.isException) {
+                        f["exceptionCode"] = frame.exceptionCode;
+                    }
+
+                    // Keep the previous raw payload as hex for debugging.
+                    f["dataHex"] = modbus.formatHex(frame.data.data(), frame.data.size());
+
+                    // Split out common Modbus RTU FC3/FC4 fields.
+                    if (fc == ModbusFC::READ_HOLDING_REGISTERS || fc == ModbusFC::READ_INPUT_REGISTERS) {
+                        if (frame.isRequest && frame.data.size() == 4) {
+                            f["startRegister"] = frame.getStartRegister();
+                            f["quantity"] = frame.getQuantity();
+                        } else if (!frame.isRequest && !frame.isException && frame.data.size() >= 1) {
+                            uint32_t byteCount = (uint32_t)frame.getByteCount();
+                            f["byteCount"] = byteCount;
+
+                            const uint8_t* regData = frame.getRegisterData();
+                            if (regData && byteCount >= 2) {
+                                // Hex dump of register payload only (no byteCount field)
+                                f["registerDataHex"] = modbus.formatHex(regData, byteCount);
+
+                                // Also provide a bounded words array for convenience
+                                JsonArray words = f["registerWords"].to<JsonArray>();
+                                size_t wordCount = (size_t)byteCount / 2;
+                                static constexpr size_t MAX_WORDS = 32;
+                                size_t emitCount = wordCount > MAX_WORDS ? MAX_WORDS : wordCount;
+                                for (size_t i = 0; i < emitCount; i++) {
+                                    size_t idx = i * 2;
+                                    uint16_t w = ((uint16_t)regData[idx] << 8) | (uint16_t)regData[idx + 1];
+                                    words.add(w);
+                                }
+                                if (wordCount > MAX_WORDS) {
+                                    f["registerWordsTruncated"] = true;
+                                    f["registerWordCount"] = (uint32_t)wordCount;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 String output;

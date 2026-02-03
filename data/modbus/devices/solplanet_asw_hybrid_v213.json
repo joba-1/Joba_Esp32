@@ -1,0 +1,507 @@
+{
+  "name": "SolplanetASWHybridV213",
+  "description": "Solplanet ASW 05-12k H-T2/T3 Series Hybrid Inverter (AISWEI) — MB001_ASW GEN-Modbus-en_V2.1.3",
+  "notes": "This profile follows AISWEI's MB001 document, version 2.1.3. The Modbus protocol address is computed as: documented 3xxxx/4xxxx number, remove the leading 3x/4x and subtract 1 (e.g. 31001 -> 1000). These 'address' fields are the protocol addresses (0-based) used in the Modbus PDU.",
+  "registers": [
+    {
+      "name": "GridRatedVoltage",
+      "address": 1300,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 60000
+    },
+    {
+      "name": "GridRatedFrequency",
+      "address": 1301,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "Hz",
+      "pollInterval": 60000
+    },
+    {
+      "name": "InverterEnergyToday",
+      "address": 1302,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 15000
+    },
+    {
+      "name": "InverterEnergyTotal",
+      "address": 1304,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 60000
+    },
+    {
+      "name": "InverterHoursTotal",
+      "address": 1306,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "h",
+      "pollInterval": 60000
+    },
+    {
+      "name": "DeviceState",
+      "address": 1308,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "",
+      "pollInterval": 5000
+    },
+    {
+      "name": "ConnectTime",
+      "address": 1309,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "s",
+      "pollInterval": 10000
+    },
+    {
+      "name": "AirTemperature",
+      "address": 1310,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "int16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "°C",
+      "pollInterval": 10000
+    },
+    {
+      "name": "BusVoltage",
+      "address": 1316,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 10000
+    },
+
+    {
+      "name": "PV1Voltage",
+      "address": 1318,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PV1Current",
+      "address": 1319,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PV2Voltage",
+      "address": 1320,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PV2Current",
+      "address": 1321,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PV3Voltage",
+      "address": 1322,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PV3Current",
+      "address": 1323,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+
+    {
+      "name": "GridVoltageL1",
+      "address": 1358,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "GridCurrentL1",
+      "address": 1359,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+    {
+      "name": "GridVoltageL2",
+      "address": 1360,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "GridCurrentL2",
+      "address": 1361,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+    {
+      "name": "GridVoltageL3",
+      "address": 1362,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "GridCurrentL3",
+      "address": 1363,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+    {
+      "name": "GridFrequency",
+      "address": 1367,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "Hz",
+      "pollInterval": 5000
+    },
+    {
+      "name": "ApparentPower",
+      "address": 1368,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "VA",
+      "pollInterval": 5000
+    },
+    {
+      "name": "ActivePower",
+      "address": 1370,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "int32_be",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "W",
+      "pollInterval": 5000
+    },
+    {
+      "name": "ReactivePower",
+      "address": 1372,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "int32_be",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "var",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PowerFactor",
+      "address": 1374,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "int16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "",
+      "pollInterval": 5000
+    },
+
+    {
+      "name": "PVTotalPower",
+      "address": 1600,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "W",
+      "pollInterval": 5000
+    },
+    {
+      "name": "PVEnergyToday",
+      "address": 1602,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 15000
+    },
+    {
+      "name": "PVEnergyTotal",
+      "address": 1604,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 60000
+    },
+
+    {
+      "name": "BatteryCommStatus",
+      "address": 1606,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "",
+      "pollInterval": 10000
+    },
+    {
+      "name": "BatteryStatus",
+      "address": 1607,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "",
+      "pollInterval": 10000
+    },
+    {
+      "name": "BatteryVoltage",
+      "address": 1616,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "V",
+      "pollInterval": 5000
+    },
+    {
+      "name": "BatteryCurrent",
+      "address": 1617,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "int16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 5000
+    },
+    {
+      "name": "BatteryPower",
+      "address": 1618,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "int32_be",
+      "factor": 1.0,
+      "offset": 0,
+      "unit": "W",
+      "pollInterval": 5000
+    },
+    {
+      "name": "BatteryTemperature",
+      "address": 1620,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "int16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "°C",
+      "pollInterval": 10000
+    },
+    {
+      "name": "BatterySOC",
+      "address": 1621,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "%",
+      "pollInterval": 10000
+    },
+    {
+      "name": "BatterySOH",
+      "address": 1622,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.01,
+      "offset": 0,
+      "unit": "%",
+      "pollInterval": 60000
+    },
+    {
+      "name": "BatteryChargeCurrentLimit",
+      "address": 1623,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 60000
+    },
+    {
+      "name": "BatteryDischargeCurrentLimit",
+      "address": 1624,
+      "length": 1,
+      "functionCode": 4,
+      "dataType": "uint16",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "A",
+      "pollInterval": 60000
+    },
+    {
+      "name": "BatteryEnergyChargeToday",
+      "address": 1625,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 15000
+    },
+    {
+      "name": "BatteryEnergyDischargeToday",
+      "address": 1627,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 15000
+    },
+    {
+      "name": "ACConsumptionToday",
+      "address": 1629,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 15000
+    },
+    {
+      "name": "ACGenerationToday",
+      "address": 1631,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 15000
+    },
+
+    {
+      "name": "GridEnergyChargeToday",
+      "address": 1674,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 30000
+    },
+    {
+      "name": "GridEnergyChargeTotal",
+      "address": 1676,
+      "length": 2,
+      "functionCode": 4,
+      "dataType": "uint32_be",
+      "factor": 0.1,
+      "offset": 0,
+      "unit": "kWh",
+      "pollInterval": 60000
+    }
+  ]
+}

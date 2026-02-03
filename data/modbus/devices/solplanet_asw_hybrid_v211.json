@@ -1,7 +1,7 @@
 {
-    "name": "SolplanetASWHybrid",
-    "description": "Solplanet ASW 05-12k H-T2/T3 Series Hybrid Inverter (AISWEI)",
-    "notes": "Modbus TCP/RTU. Default unit ID: 1. Register addresses are 0-based (subtract 1 from documentation if 1-based).",
+    "name": "SolplanetASWHybridV211",
+    "description": "Solplanet ASW 05-12k H-T2/T3 Series Hybrid Inverter (AISWEI) — MB001 (doc v2.1.1)",
+    "notes": "This profile corresponds to AISWEI/Solplanet MB001 documentation version 2.1.1. Addresses here are Modbus protocol addresses (0-based) used in the Modbus PDU.",
     "registers": [
         {
             "name": "InverterStatus",

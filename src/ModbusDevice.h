@@ -53,7 +53,15 @@ struct ModbusDeviceType {
  * @brief Register value with converted data
  */
 struct ModbusRegisterValue {
+    // Seconds timestamp intended for API output:
+    // - Unix epoch seconds when available, otherwise uptime seconds.
     uint32_t timestamp;
+
+    // Monotonic timestamp for scheduling/polling (millis()).
+    uint32_t updatedAtMs;
+
+    // Unix epoch seconds at capture time (0 if time not synced/available).
+    uint32_t unixTimestamp;
     char name[32];
     float value;
     char unit[16];
@@ -80,6 +88,7 @@ struct ModbusDeviceInstance {
     String deviceTypeName;
     const ModbusDeviceType* deviceType;
     std::map<String, ModbusRegisterValue> currentValues;  // name -> value
+    std::map<uint16_t, ModbusRegisterValue> unknownU16;    // address -> value (only when no JSON reg matches)
     unsigned long lastPollTime;
     uint32_t successCount;
     uint32_t errorCount;
@@ -252,6 +261,11 @@ public:
     std::vector<String> allToLineProtocol(const char* measurement = "modbus") const;
 
 private:
+    void handleObservedFrame(const ModbusFrame& frame, bool isRequest);
+    void tryUpdateFromPassiveResponse(ModbusDeviceInstance& device,
+                                     const ModbusFrame& request,
+                                     const ModbusFrame& response);
+
     float convertRawToValue(const ModbusRegisterDef& def, const uint16_t* rawData) const;
     std::vector<uint16_t> convertValueToRaw(const ModbusRegisterDef& def, float value) const;
     const ModbusRegisterDef* findRegister(const ModbusDeviceType* type, const char* name) const;
@@ -270,6 +284,9 @@ private:
     
     // Value change callback
     ValueChangeCallback _valueChangeCallback;
+
+    // Passive bus tracking: last request per unit, used to infer start register for responses.
+    std::map<uint8_t, ModbusFrame> _lastSeenRequests;
 };
 
 #endif // MODBUS_DEVICE_H

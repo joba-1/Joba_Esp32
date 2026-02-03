@@ -69,6 +69,7 @@ modbus_response_timeout = 1000
 modbus_queue_size = 10
 modbus_device_types_path = "/modbus/devices"
 modbus_device_map_path = "/modbus/devices.json"
+modbus_listen_only = 0                  ; 1 = sniffer mode (do not send requests / do not poll)
 
 ; Modbus statistics and warnings
 modbus_stats_interval_ms = 60000        ; Statistics check/log interval (60 seconds)

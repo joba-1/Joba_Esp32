@@ -1,5 +1,13 @@
 #include "ModbusDevice.h"
 #include <LittleFS.h>
+#include "TimeUtils.h"
+
+static bool valuesDiffer(float a, float b) {
+    // Avoid requiring <cmath>; keep this simple for embedded builds.
+    float diff = a - b;
+    if (diff < 0) diff = -diff;
+    return diff > 0.0001f;
+}
 
 ModbusDeviceManager::ModbusDeviceManager(ModbusRTUFeature& modbus, StorageFeature& storage)
     : _modbus(modbus)
@@ -8,6 +16,131 @@ ModbusDeviceManager::ModbusDeviceManager(ModbusRTUFeature& modbus, StorageFeatur
     , _currentPollIndex(0)
     , _valueChangeCallback(nullptr)
 {
+    // Observe all frames on the bus to account for passive responses
+    _modbus.onFrame([this](const ModbusFrame& frame, bool isRequest) {
+        handleObservedFrame(frame, isRequest);
+    });
+}
+
+void ModbusDeviceManager::handleObservedFrame(const ModbusFrame& frame, bool isRequest) {
+    // Track last seen request per unit (used to infer address range for a later response)
+    if (isRequest && frame.isValid) {
+        _lastSeenRequests[frame.unitId] = frame;
+        return;
+    }
+
+    // Responses: update counters and (best-effort) cached values
+    auto it = _devices.find(frame.unitId);
+    if (it == _devices.end()) return;
+
+    if (!frame.isValid) {
+        // CRC-invalid frames can't be trusted (unitId/functionCode may be garbage),
+        // and are already tracked globally in ModbusRTU stats.
+        return;
+    }
+
+    if (!frame.isException) {
+        it->second.successCount++;
+
+        // Best-effort: update cached register values if we can infer the request range
+        auto reqIt = _lastSeenRequests.find(frame.unitId);
+        if (reqIt != _lastSeenRequests.end()) {
+            const ModbusFrame& request = reqIt->second;
+            // Only consider reasonably recent request/response pairs
+            if ((frame.timestamp - request.timestamp) < 2000) {
+                tryUpdateFromPassiveResponse(it->second, request, frame);
+            }
+        }
+    } else {
+        // Exception response is a real device-level error
+        it->second.errorCount++;
+    }
+}
+
+void ModbusDeviceManager::tryUpdateFromPassiveResponse(ModbusDeviceInstance& device,
+                                                       const ModbusFrame& request,
+                                                       const ModbusFrame& response) {
+    if (!device.deviceType) return;
+    if (!request.isValid || !response.isValid) return;
+    if (response.isException) return;
+
+    // Only handle read responses where we can map bytes -> registers.
+    uint8_t fc = response.functionCode & 0x7F;
+    if (fc != ModbusFC::READ_HOLDING_REGISTERS && fc != ModbusFC::READ_INPUT_REGISTERS) return;
+    if ((request.functionCode & 0x7F) != fc) return;
+
+    const uint8_t* regData = response.getRegisterData();
+    size_t byteCount = response.getByteCount();
+    if (!regData || byteCount < 2) return;
+
+    uint16_t startReg = request.getStartRegister();
+    size_t respRegCount = byteCount / 2;
+    if (respRegCount == 0) return;
+
+    bool matchedAny = false;
+
+    // Update any defined registers that fall fully within this response range
+    for (const auto& reg : device.deviceType->registers) {
+        if (reg.functionCode != fc) continue;
+        if (reg.dataType == ModbusDataType::STRING) continue;  // Not supported here
+        if (reg.address < startReg) continue;
+
+        uint32_t offset = (uint32_t)(reg.address - startReg);
+        if (offset + reg.length > respRegCount) continue;
+
+        std::vector<uint16_t> rawData;
+        rawData.reserve(reg.length);
+        for (size_t i = 0; i < reg.length; i++) {
+            size_t byteIndex = (offset + i) * 2;
+            uint16_t word = ((uint16_t)regData[byteIndex] << 8) | (uint16_t)regData[byteIndex + 1];
+            rawData.push_back(word);
+        }
+
+        float value = convertRawToValue(reg, rawData.data());
+
+        auto& cached = device.currentValues[reg.name];
+        bool shouldNotify = (!cached.valid) || valuesDiffer(cached.value, value);
+
+        cached.updatedAtMs = millis();
+        cached.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+        cached.timestamp = (cached.unixTimestamp != 0) ? cached.unixTimestamp : (cached.updatedAtMs / 1000);
+        cached.value = value;
+        cached.valid = true;
+
+        matchedAny = true;
+
+        if (shouldNotify) {
+            notifyValueChange(device.unitId, reg.name, value, reg.unit);
+        }
+    }
+
+    // If nothing in the JSON definition matched this request/response pair,
+    // interpret it as unknown uint16 registers and report those.
+    if (!matchedAny) {
+        static constexpr size_t MAX_UNKNOWN_U16_PER_DEVICE = 512;
+
+        for (size_t i = 0; i < respRegCount; i++) {
+            uint16_t address = (uint16_t)(startReg + i);
+
+            // Respect cap to avoid unbounded memory growth if a master scans huge ranges.
+            auto existing = device.unknownU16.find(address);
+            if (existing == device.unknownU16.end() && device.unknownU16.size() >= MAX_UNKNOWN_U16_PER_DEVICE) {
+                break;
+            }
+
+            size_t byteIndex = i * 2;
+            uint16_t word = ((uint16_t)regData[byteIndex] << 8) | (uint16_t)regData[byteIndex + 1];
+
+            ModbusRegisterValue& v = device.unknownU16[address];
+            v.updatedAtMs = millis();
+            v.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+            v.timestamp = (v.unixTimestamp != 0) ? v.unixTimestamp : (v.updatedAtMs / 1000);
+            snprintf(v.name, sizeof(v.name), "U16_%u", (unsigned)address);
+            v.value = (float)word;
+            v.unit[0] = '\0';
+            v.valid = true;
+        }
+    }
 }
 
 bool ModbusDeviceManager::loadDeviceType(const char* path) {
@@ -95,6 +228,8 @@ bool ModbusDeviceManager::loadDeviceMappings(const char* path) {
         for (const auto& reg : instance.deviceType->registers) {
             ModbusRegisterValue val;
             val.timestamp = 0;
+            val.updatedAtMs = 0;
+            val.unixTimestamp = 0;
             strlcpy(val.name, reg.name, sizeof(val.name));
             val.value = 0;
             strlcpy(val.unit, reg.unit, sizeof(val.unit));
@@ -228,10 +363,11 @@ bool ModbusDeviceManager::readRegister(uint8_t unitId, const char* registerName,
                     
                     // Update cached value
                     auto& cached = device->currentValues[reg->name];
-                    cached.timestamp = millis() / 1000;
+                    cached.updatedAtMs = millis();
+                    cached.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+                    cached.timestamp = (cached.unixTimestamp != 0) ? cached.unixTimestamp : (cached.updatedAtMs / 1000);
                     cached.value = value;
                     cached.valid = true;
-                    device->successCount++;
                     
                     // Notify value change callback
                     notifyValueChange(device->unitId, reg->name, value, reg->unit);
@@ -330,6 +466,8 @@ bool ModbusDeviceManager::getValue(uint8_t unitId, const char* registerName, flo
 }
 
 String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
+    // This endpoint can get large (values + unknownU16). ArduinoJson v7 JsonDocument
+    // grows dynamically; keep output bounded via MAX_UNKNOWN_U16_JSON.
     JsonDocument doc;
     
     auto it = _devices.find(unitId);
@@ -345,6 +483,18 @@ String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
     doc["deviceType"] = device.deviceTypeName;
     doc["successCount"] = device.successCount;
     doc["errorCount"] = device.errorCount;
+
+    const bool timeValid = TimeUtils::isTimeValidNow();
+    const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
+    {
+        JsonObject updated = doc["updated"].to<JsonObject>();
+        updated["uptimeMs"] = (uint32_t)millis();
+        if (nowUnix != 0) {
+            updated["epoch"] = nowUnix;
+            String iso = TimeUtils::isoUtcFromUnixSeconds(nowUnix);
+            if (iso.length() > 0) updated["iso"] = iso;
+        }
+    }
     
     JsonArray values = doc["values"].to<JsonArray>();
     for (const auto& kv : device.currentValues) {
@@ -353,8 +503,57 @@ String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
         val["value"] = kv.second.value;
         val["unit"] = kv.second.unit;
         val["valid"] = kv.second.valid;
-        val["timestamp"] = kv.second.timestamp;
+
+        JsonObject updated = val["updated"].to<JsonObject>();
+        updated["uptimeMs"] = kv.second.updatedAtMs;
+        if (kv.second.unixTimestamp != 0) {
+            updated["epoch"] = kv.second.unixTimestamp;
+            String iso = TimeUtils::isoUtcFromUnixSeconds(kv.second.unixTimestamp);
+            if (iso.length() > 0) updated["iso"] = iso;
+        } else if (timeValid && nowUnix != 0 && kv.second.updatedAtMs != 0) {
+            // Best-effort: derive an epoch time for cached values created before time became valid.
+            uint32_t uptimeSeconds = kv.second.updatedAtMs / 1000;
+            uint32_t estEpoch = TimeUtils::unixFromUptimeSeconds(uptimeSeconds);
+            if (estEpoch != 0) {
+                updated["epoch"] = estEpoch;
+                String iso = TimeUtils::isoUtcFromUnixSeconds(estEpoch);
+                if (iso.length() > 0) updated["iso"] = iso;
+            }
+        }
     }
+
+    doc["unknownU16Count"] = (uint32_t)device.unknownU16.size();
+    static constexpr size_t MAX_UNKNOWN_U16_JSON = 128;
+    JsonArray unknown = doc["unknownU16"].to<JsonArray>();
+
+    size_t emitted = 0;
+    for (const auto& kv : device.unknownU16) {
+        if (emitted >= MAX_UNKNOWN_U16_JSON) break;
+        JsonObject val = unknown.add<JsonObject>();
+        val["address"] = kv.first;
+        val["name"] = kv.second.name;
+        val["value"] = kv.second.value;
+        val["valid"] = kv.second.valid;
+
+        JsonObject updated = val["updated"].to<JsonObject>();
+        updated["uptimeMs"] = kv.second.updatedAtMs;
+        if (kv.second.unixTimestamp != 0) {
+            updated["epoch"] = kv.second.unixTimestamp;
+            String iso = TimeUtils::isoUtcFromUnixSeconds(kv.second.unixTimestamp);
+            if (iso.length() > 0) updated["iso"] = iso;
+        } else if (timeValid && nowUnix != 0 && kv.second.updatedAtMs != 0) {
+            uint32_t uptimeSeconds = kv.second.updatedAtMs / 1000;
+            uint32_t estEpoch = TimeUtils::unixFromUptimeSeconds(uptimeSeconds);
+            if (estEpoch != 0) {
+                updated["epoch"] = estEpoch;
+                String iso = TimeUtils::isoUtcFromUnixSeconds(estEpoch);
+                if (iso.length() > 0) updated["iso"] = iso;
+            }
+        }
+        emitted++;
+    }
+
+    doc["unknownU16Truncated"] = (bool)(device.unknownU16.size() > emitted);
     
     String output;
     serializeJson(doc, output);
@@ -362,6 +561,9 @@ String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
 }
 
 void ModbusDeviceManager::loop() {
+#if MODBUS_LISTEN_ONLY
+    return;
+#endif
     if (_devices.empty()) return;
     
     unsigned long now = millis();
@@ -375,7 +577,7 @@ void ModbusDeviceManager::loop() {
             if (reg.pollIntervalMs == 0) continue;  // On-demand only
             
             auto& cached = device.currentValues[reg.name];
-            unsigned long lastPoll = cached.timestamp * 1000;
+            unsigned long lastPoll = cached.updatedAtMs;
             
             if (now - lastPoll >= reg.pollIntervalMs) {
                 // Time to poll this register
@@ -570,8 +772,10 @@ String ModbusDeviceManager::toLineProtocol(uint8_t unitId, const char* measureme
         }
         line += " value=";
         line += String(kv.second.value, 4);
-        line += " ";
-        line += String((uint64_t)kv.second.timestamp * 1000000000ULL);  // ns
+        if (kv.second.unixTimestamp != 0) {
+            line += " ";
+            line += String((uint64_t)kv.second.unixTimestamp * 1000000000ULL);  // ns
+        }
         line += "\n";
         lines += line;
     }
@@ -602,8 +806,10 @@ std::vector<String> ModbusDeviceManager::allToLineProtocol(const char* measureme
             }
             line += " value=";
             line += String(regKv.second.value, 4);
-            line += " ";
-            line += String((uint64_t)regKv.second.timestamp * 1000000000ULL);  // ns
+            if (regKv.second.unixTimestamp != 0) {
+                line += " ";
+                line += String((uint64_t)regKv.second.unixTimestamp * 1000000000ULL);  // ns
+            }
             
             result.push_back(line);
         }

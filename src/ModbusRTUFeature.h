@@ -31,7 +31,9 @@ struct ModbusFrame {
     uint8_t functionCode;
     std::vector<uint8_t> data;      // Payload without unit ID, FC, and CRC
     uint16_t crc;
-    unsigned long timestamp;
+    unsigned long timestamp;         // millis() at capture time (monotonic)
+    uint32_t unixTimestamp;          // epoch seconds at capture time (0 if time invalid)
+    bool isRequest;                  // request vs response (best-effort)
     bool isValid;                   // CRC check passed
     bool isException;               // Exception response (FC | 0x80)
     uint8_t exceptionCode;
@@ -280,6 +282,7 @@ public:
 private:
     void processReceivedData();
     bool parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame);
+    ModbusRegisterMap& ensureRegisterMap(uint8_t unitId, uint8_t functionCode);
     void updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response);
     void processQueue();
     bool sendRequest(const ModbusPendingRequest& request);
@@ -314,6 +317,7 @@ private:
     
     // Frame tracking for request/response matching
     ModbusFrame _lastRequest;
+    std::map<uint8_t, ModbusFrame> _lastRequestPerUnit;
     bool _waitingForResponse;
     unsigned long _requestSentTime;
     
@@ -352,6 +356,10 @@ private:
 #ifndef MODBUS_BUS_BUSY_WARN_PERCENT
 #define MODBUS_BUS_BUSY_WARN_PERCENT 95
 #endif
+
+#ifndef MODBUS_LISTEN_ONLY
+#define MODBUS_LISTEN_ONLY 0
+#endif
     
     static const size_t FRAME_HISTORY_SIZE = 20;
     ModbusFrame _frameHistory[FRAME_HISTORY_SIZE];
@@ -367,7 +375,9 @@ public:
         _recentFramesCache.reserve(FRAME_HISTORY_SIZE);
         for (size_t i = 0; i < FRAME_HISTORY_SIZE; i++) {
             size_t idx = (_frameHistoryIndex + i) % FRAME_HISTORY_SIZE;
-            _recentFramesCache.push_back(_frameHistory[idx]);
+            const ModbusFrame& f = _frameHistory[idx];
+            if (f.timestamp == 0) continue;
+            _recentFramesCache.push_back(f);
         }
         return _recentFramesCache;
     }
