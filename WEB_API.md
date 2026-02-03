@@ -62,6 +62,13 @@ Firmware build information.
 curl -u admin:<password> http://<device-ip>/api/buildinfo
 ```
 
+Notes:
+- The response includes both **firmware** build info (compiled into the binary) and a **filesystem manifest** loaded from `/build_info.json`.
+- If `firmwareFilesystemMismatch` is `true`, you likely OTA-uploaded only the firmware and not the filesystem image. Fix by uploading the filesystem too:
+  - `pio run -e ota -t uploadfs` (OTA)
+  - `pio run -e serial -t uploadfs` (USB/serial)
+- `firmware.ota.running` / `firmware.ota.boot` show which OTA slot is currently running vs selected for boot.
+
 ### POST `/api/reset`
 Schedules a device restart (ESP32 reboot). This is delayed slightly so the HTTP response can be returned.
 
