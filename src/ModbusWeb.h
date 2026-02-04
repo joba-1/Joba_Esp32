@@ -198,7 +198,9 @@ public:
                 doc["listenOnly"] = (bool)MODBUS_LISTEN_ONLY;
                 doc["busSilent"] = modbus.isBusSilent();
                 doc["silenceMs"] = modbus.getTimeSinceLastActivity();
-                doc["queuedRequests"] = modbus.getPendingRequestCount();
+                doc["queuedRequests"] = modbus.getQueuedRequestCount();
+                doc["inFlightRequest"] = modbus.isWaitingForResponse();
+                doc["pendingRequests"] = modbus.getPendingRequestCount();
                 doc["rxFrames"] = modbus.getStats().framesReceived;
                 doc["txFrames"] = modbus.getStats().framesSent;
                 doc["crcErrors"] = modbus.getStats().crcErrors;
@@ -206,6 +208,21 @@ public:
                 doc["ownRequestsSuccess"] = modbus.getStats().ownRequestsSuccess;
                 doc["ownRequestsFailed"] = modbus.getStats().ownRequestsFailed;
                 doc["ownRequestsDiscarded"] = modbus.getStats().ownRequestsDiscarded;
+                doc["consecutiveTimeouts"] = modbus.getConsecutiveTimeouts();
+                doc["queueingPaused"] = modbus.isQueueingPaused();
+                doc["queueingPauseRemainingMs"] = modbus.getQueueingPauseRemainingMs();
+                doc["queueingBackoffMs"] = modbus.getQueueingBackoffMs();
+
+                JsonArray unitBackoff = doc["unitBackoff"].to<JsonArray>();
+                for (const auto& info : modbus.getUnitBackoffInfo()) {
+                    JsonObject o = unitBackoff.add<JsonObject>();
+                    o["unitId"] = info.unitId;
+                    o["consecutiveTimeouts"] = info.consecutiveTimeouts;
+                    o["backoffMs"] = info.backoffMs;
+                    o["pausedUntilMs"] = info.pausedUntilMs;
+                    o["paused"] = info.paused;
+                    o["pauseRemainingMs"] = info.pauseRemainingMs;
+                }
 
                 JsonObject debug = doc["debug"].to<JsonObject>();
                 debug["sinceLastByteUs"] = modbus.getTimeSinceLastByteUs();

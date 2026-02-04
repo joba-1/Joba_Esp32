@@ -214,9 +214,45 @@ public:
     bool sendRawFrame(const uint8_t* data, size_t length);
     
     /**
-     * @brief Get pending request count
+     * @brief Get queued request count (not including in-flight)
      */
-    size_t getPendingRequestCount() const { return _requestQueue.size(); }
+    size_t getQueuedRequestCount() const { return _requestQueue.size(); }
+
+    /**
+     * @brief Get pending request count (queued + in-flight)
+     */
+    size_t getPendingRequestCount() const {
+        return _requestQueue.size() + ((_waitingForResponse && _hasPendingRequest) ? 1 : 0);
+    }
+
+    /**
+     * @brief True if a request is currently in-flight (TX sent, awaiting response)
+     */
+    bool isWaitingForResponse() const { return _waitingForResponse; }
+
+    /**
+     * @brief Timeout backoff state (sending may be paused after repeated timeouts)
+     */
+    bool isQueueingPaused() const;
+    uint32_t getQueueingPauseRemainingMs() const;
+    uint32_t getQueueingPausedUntilMs() const;
+    uint32_t getQueueingBackoffMs() const;
+    uint32_t getConsecutiveTimeouts() const;
+
+    bool isUnitQueueingPaused(uint8_t unitId) const;
+    uint32_t getUnitQueueingPauseRemainingMs(uint8_t unitId) const;
+    uint32_t getUnitQueueingBackoffMs(uint8_t unitId) const;
+    uint32_t getUnitConsecutiveTimeouts(uint8_t unitId) const;
+
+    struct UnitBackoffInfo {
+        uint8_t unitId;
+        uint32_t consecutiveTimeouts;
+        uint32_t backoffMs;
+        uint32_t pausedUntilMs;
+        bool paused;
+        uint32_t pauseRemainingMs;
+    };
+    std::vector<UnitBackoffInfo> getUnitBackoffInfo() const;
     
     /**
      * @brief Clear all pending requests
@@ -349,9 +385,14 @@ private:
     std::vector<ModbusPendingRequest> _requestQueue;
     ModbusPendingRequest _currentRequest;  // Copy, not pointer - prevents invalid references
     bool _hasPendingRequest;
-    uint32_t _consecutiveTimeouts;  // Track timeouts to pause queueing during bus issues
-    unsigned long _queueingPausedUntilMs;  // When queueing is allowed again after timeout backoff
-    uint32_t _queueingBackoffMs;  // Backoff window length (exponential), capped
+
+    struct TimeoutBackoffState {
+        uint32_t consecutiveTimeouts{0};
+        uint32_t backoffMs{2000};
+        uint32_t pausedUntilMs{0};
+    };
+    std::map<uint8_t, TimeoutBackoffState> _backoffByUnit;
+
     unsigned long _lastSuccessTime;  // Time of last successful request
     unsigned long _lastTimeoutWarningMs;  // Throttle timeout warning messages
     std::map<uint16_t, unsigned long> _lastTimeoutPerUnit;  // Track last timeout per unit (throttle spam)

@@ -398,7 +398,7 @@
       "length": 1,
       "functionCode": 4,
       "dataType": "uint16",
-      "factor": 0.01,
+      "factor": 1.0,
       "offset": 0,
       "unit": "%",
       "pollInterval": 10000
@@ -409,7 +409,7 @@
       "length": 1,
       "functionCode": 4,
       "dataType": "uint16",
-      "factor": 0.01,
+      "factor": 1.0,
       "offset": 0,
       "unit": "%",
       "pollInterval": 60000

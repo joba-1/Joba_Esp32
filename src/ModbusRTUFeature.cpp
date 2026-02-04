@@ -3,6 +3,114 @@
 #include <algorithm>
 #include "TimeUtils.h"
 
+static inline bool timeBefore32(uint32_t a, uint32_t b) {
+    return (int32_t)(a - b) < 0;
+}
+
+bool ModbusRTUFeature::isQueueingPaused() const {
+    if (_requestQueue.empty()) return false;
+
+    // Consider the queue "paused" only if *all* queued requests are currently paused.
+    for (const auto& req : _requestQueue) {
+        if (!isUnitQueueingPaused(req.unitId)) return false;
+    }
+    return true;
+}
+
+uint32_t ModbusRTUFeature::getQueueingPauseRemainingMs() const {
+    if (!isQueueingPaused()) return 0;
+    uint32_t minRemaining = 0;
+    bool any = false;
+    for (const auto& req : _requestQueue) {
+        const uint32_t rem = getUnitQueueingPauseRemainingMs(req.unitId);
+        if (rem == 0) continue;
+        if (!any || rem < minRemaining) {
+            minRemaining = rem;
+            any = true;
+        }
+    }
+    return any ? minRemaining : 0;
+}
+
+uint32_t ModbusRTUFeature::getQueueingPausedUntilMs() const {
+    if (!isQueueingPaused()) return 0;
+    uint32_t minUntil = 0;
+    bool any = false;
+    for (const auto& req : _requestQueue) {
+        auto it = _backoffByUnit.find(req.unitId);
+        if (it == _backoffByUnit.end()) continue;
+        const uint32_t until = it->second.pausedUntilMs;
+        if (until == 0) continue;
+        if (!any || timeBefore32(until, minUntil)) {
+            minUntil = until;
+            any = true;
+        }
+    }
+    return any ? minUntil : 0;
+}
+
+uint32_t ModbusRTUFeature::getQueueingBackoffMs() const {
+    // Return the maximum backoff window across units (diagnostics only).
+    uint32_t maxBackoff = 0;
+    for (const auto& kv : _backoffByUnit) {
+        maxBackoff = std::max(maxBackoff, kv.second.backoffMs);
+    }
+    return maxBackoff;
+}
+
+uint32_t ModbusRTUFeature::getConsecutiveTimeouts() const {
+    // Return the maximum consecutive timeout streak across units (diagnostics only).
+    uint32_t maxTimeouts = 0;
+    for (const auto& kv : _backoffByUnit) {
+        maxTimeouts = std::max(maxTimeouts, kv.second.consecutiveTimeouts);
+    }
+    return maxTimeouts;
+}
+
+bool ModbusRTUFeature::isUnitQueueingPaused(uint8_t unitId) const {
+    auto it = _backoffByUnit.find(unitId);
+    if (it == _backoffByUnit.end()) return false;
+    const TimeoutBackoffState& st = it->second;
+    if (st.consecutiveTimeouts <= 2) return false;
+    const uint32_t now = (uint32_t)millis();
+    return timeBefore32(now, st.pausedUntilMs);
+}
+
+uint32_t ModbusRTUFeature::getUnitQueueingPauseRemainingMs(uint8_t unitId) const {
+    if (!isUnitQueueingPaused(unitId)) return 0;
+    auto it = _backoffByUnit.find(unitId);
+    if (it == _backoffByUnit.end()) return 0;
+    const uint32_t now = (uint32_t)millis();
+    return (uint32_t)(it->second.pausedUntilMs - now);
+}
+
+uint32_t ModbusRTUFeature::getUnitQueueingBackoffMs(uint8_t unitId) const {
+    auto it = _backoffByUnit.find(unitId);
+    if (it == _backoffByUnit.end()) return 2000;
+    return it->second.backoffMs;
+}
+
+uint32_t ModbusRTUFeature::getUnitConsecutiveTimeouts(uint8_t unitId) const {
+    auto it = _backoffByUnit.find(unitId);
+    if (it == _backoffByUnit.end()) return 0;
+    return it->second.consecutiveTimeouts;
+}
+
+std::vector<ModbusRTUFeature::UnitBackoffInfo> ModbusRTUFeature::getUnitBackoffInfo() const {
+    std::vector<UnitBackoffInfo> out;
+    out.reserve(_backoffByUnit.size());
+    const uint32_t now = (uint32_t)millis();
+
+    for (const auto& kv : _backoffByUnit) {
+        const uint8_t unitId = kv.first;
+        const TimeoutBackoffState& st = kv.second;
+        const bool paused = (st.consecutiveTimeouts > 2) && timeBefore32(now, st.pausedUntilMs);
+        const uint32_t rem = paused ? (uint32_t)(st.pausedUntilMs - now) : 0;
+        out.push_back(UnitBackoffInfo{unitId, st.consecutiveTimeouts, st.backoffMs, st.pausedUntilMs, paused, rem});
+    }
+    return out;
+}
+
 ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
                                    uint32_t baudRate,
                                    uint32_t config,
@@ -26,9 +134,6 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     , _waitingForResponse(false)
     , _requestSentTime(0)
     , _hasPendingRequest(false)
-    , _consecutiveTimeouts(0)
-    , _queueingPausedUntilMs(0)
-    , _queueingBackoffMs(2000)
     , _lastSuccessTime(0)
     , _lastTimeoutWarningMs(0)
     , _frameCallback(nullptr)
@@ -205,18 +310,18 @@ void ModbusRTUFeature::loop() {
             _lastTimeoutPerUnit[unitKey] = nowMs;
         }
         
-        // Track consecutive timeouts to trigger backoff
-        _consecutiveTimeouts++;
-        if (_consecutiveTimeouts >= 3) {
-            // Pause queueing temporarily (time-bounded) so the system can recover by sending
-            // an occasional probe request after the backoff window.
-            _queueingPausedUntilMs = nowMs + _queueingBackoffMs;
-            if (_consecutiveTimeouts == 3) {
-                LOG_W("Modbus: 3 consecutive timeouts detected, pausing queue for %ums", _queueingBackoffMs);
+        // Track consecutive timeouts per unit to trigger backoff (do not globally pause other units).
+        const uint8_t unitId = _currentRequest.unitId;
+        TimeoutBackoffState& st = _backoffByUnit[unitId];
+        st.consecutiveTimeouts++;
+        if (st.consecutiveTimeouts >= 3) {
+            st.pausedUntilMs = (uint32_t)nowMs + st.backoffMs;
+            if (st.consecutiveTimeouts == 3) {
+                LOG_W("Modbus: 3 consecutive timeouts for unit %u, pausing sends for %ums", unitId, st.backoffMs);
             }
             // Exponential backoff, capped at 60s.
-            if (_queueingBackoffMs < 60000) {
-                _queueingBackoffMs = std::min<uint32_t>(_queueingBackoffMs * 2, 60000);
+            if (st.backoffMs < 60000) {
+                st.backoffMs = std::min<uint32_t>(st.backoffMs * 2, 60000);
             }
         }
         
@@ -227,12 +332,19 @@ void ModbusRTUFeature::loop() {
         _hasPendingRequest = false;
         endActiveTime();
         
-        // Aggressive queue clearing on repeated timeouts to prevent memory exhaustion
-        // If queue has accumulated many items, this indicates slave is unresponsive
+        // If the queue is building up, drop requests for the timed-out unit only.
+        // This prevents one unresponsive unit from starving other devices.
         if (_requestQueue.size() > _maxQueueSize / 2) {
-            LOG_W("Modbus queue building up (%u items), clearing to prevent memory exhaustion",
-                  _requestQueue.size());
-            _requestQueue.clear();
+            const size_t before = _requestQueue.size();
+            _requestQueue.erase(
+                std::remove_if(_requestQueue.begin(), _requestQueue.end(),
+                               [unitId](const ModbusPendingRequest& r) { return r.unitId == unitId; }),
+                _requestQueue.end());
+            const size_t after = _requestQueue.size();
+            if (after != before) {
+                LOG_W("Modbus queue building up (%u items). Dropped %u requests for unit %u",
+                      before, (unsigned)(before - after), unitId);
+            }
         }
     }
     
@@ -388,21 +500,36 @@ void ModbusRTUFeature::processReceivedData() {
                     size_t respLen = (size_t)byteCount + 5;
                     if (tryParseAtLen(respLen) && !frame.isException) {
                         // Optional stronger validation using last seen request for this unit/fc
-                        auto reqIt = _lastRequestPerUnit.find(unitId);
-                        if (reqIt != _lastRequestPerUnit.end()) {
-                            const ModbusFrame& req = reqIt->second;
-                            uint8_t reqFc = req.functionCode & 0x7F;
-                            if (req.isValid && reqFc == fc && req.data.size() == 4) {
-                                // Only enforce if response is reasonably close in time
-                                if ((frame.timestamp - req.timestamp) < 2000) {
-                                    uint16_t qty = req.getQuantity();
-                                    if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                                        if ((size_t)byteCount != (size_t)qty * 2) {
-                                            // Mismatched byte count => not a valid FC3/FC4 response for the request we saw.
-                                            // Treat as noise and keep searching.
-                                            sawNoise = true;
-                                            i++;
-                                            continue;
+                        // Prefer our in-flight request (if any) over sniffed traffic.
+                        // This avoids foreign masters overwriting _lastRequestPerUnit and causing us
+                        // to incorrectly discard our own response as "noise" due to byteCount mismatch.
+                        const uint8_t inflightFc = (uint8_t)(_currentRequest.functionCode & 0x7F);
+                        if (_waitingForResponse && _hasPendingRequest && unitId == _currentRequest.unitId && inflightFc == fc) {
+                            const uint16_t qty = _currentRequest.quantity;
+                            if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
+                                if ((size_t)byteCount != (size_t)qty * 2) {
+                                    sawNoise = true;
+                                    i++;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            auto reqIt = _lastRequestPerUnit.find(unitId);
+                            if (reqIt != _lastRequestPerUnit.end()) {
+                                const ModbusFrame& req = reqIt->second;
+                                uint8_t reqFc = req.functionCode & 0x7F;
+                                if (req.isValid && reqFc == fc && req.data.size() == 4) {
+                                    // Only enforce if response is reasonably close in time
+                                    if ((frame.timestamp - req.timestamp) < 2000) {
+                                        uint16_t qty = req.getQuantity();
+                                        if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
+                                            if ((size_t)byteCount != (size_t)qty * 2) {
+                                                // Mismatched byte count => not a valid FC3/FC4 response for the request we saw.
+                                                // Treat as noise and keep searching.
+                                                sawNoise = true;
+                                                i++;
+                                                continue;
+                                            }
                                         }
                                     }
                                 }
@@ -444,20 +571,31 @@ void ModbusRTUFeature::processReceivedData() {
 
         bool isOurResponse = false;
 
-        // Match our response more strictly: unitId + functionCode (or exception variant)
-        uint8_t expectedFc = _currentRequest.functionCode;
-        bool fcMatches = (frame.functionCode == expectedFc) ||
-                         (frame.isException && ((frame.functionCode & 0x7F) == (expectedFc & 0x7F)));
+        // Match our response more strictly:
+        // - must be a response (not a request)
+        // - unitId + functionCode (or exception variant)
+        // - for FC3/FC4: response byteCount must match our requested quantity
+        const uint8_t expectedFc = _currentRequest.functionCode;
+        const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
+        const bool fcMatches = (frame.functionCode == expectedFc) ||
+                               (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
+
+        bool byteCountMatches = true;
+        if (!frame.isException && (expectedFcBase == FC3 || expectedFcBase == FC4)) {
+            const size_t expectedBytes = (size_t)_currentRequest.quantity * 2;
+            const size_t actualBytes = frame.getByteCount();
+            byteCountMatches = (actualBytes == expectedBytes);
+        }
 
         if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
-            frame.unitId == _currentRequest.unitId && fcMatches) {
+            !frame.isRequest && frame.unitId == _currentRequest.unitId &&
+            fcMatches && byteCountMatches) {
             isRequest = false;
             isOurResponse = true;
             _waitingForResponse = false;
 
-            _consecutiveTimeouts = 0;
-            _queueingPausedUntilMs = 0;
-            _queueingBackoffMs = 2000;
+            // Reset backoff for this unit only
+            _backoffByUnit.erase(frame.unitId);
             _lastSuccessTime = millis();
 
             if (!frame.isException) {
@@ -491,6 +629,19 @@ void ModbusRTUFeature::processReceivedData() {
         } else {
             // Foreign traffic (sniffed)
             if (isRequest) {
+                // Some RS485 transceivers/UART setups echo our own transmitted bytes back into RX.
+                // If we are currently waiting for a response, and this request exactly matches
+                // the in-flight request, treat it as TX echo and do not feed it into the passive
+                // request/response tracking.
+                if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
+                    frame.unitId == _currentRequest.unitId &&
+                    ((frame.functionCode & 0x7F) == (_currentRequest.functionCode & 0x7F)) &&
+                    (frame.getStartRegister() == _currentRequest.startRegister) &&
+                    (frame.getQuantity() == _currentRequest.quantity)) {
+                    // Echo is typically immediate; still accept it regardless of exact timing.
+                    // We already keep _lastRequestPerUnit for our own requests in processQueue().
+                    // Do not count this as other traffic.
+                } else {
                 // FC3/FC4: track per-unit requests and register-map requestCount
                 uint8_t reqFc = frame.functionCode & 0x7F;
                 if (reqFc == FC3 || reqFc == FC4) {
@@ -500,9 +651,9 @@ void ModbusRTUFeature::processReceivedData() {
                 }
 
                 _lastRequestPerUnit[frame.unitId] = frame;
-                _lastRequest = frame;
                 _stats.otherRequestsSeen++;
                 startActiveTime(false);
+                }
             } else {
                 if (frame.isException) {
                     _stats.otherExceptionsSeen++;
@@ -661,11 +812,21 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
 void ModbusRTUFeature::processQueue() {
     if (_requestQueue.empty()) return;
 
+    // Pick the first request whose unit isn't paused.
+    size_t sendIndex = (size_t)-1;
+    for (size_t i = 0; i < _requestQueue.size(); i++) {
+        if (!isUnitQueueingPaused(_requestQueue[i].unitId)) {
+            sendIndex = i;
+            break;
+        }
+    }
+    if (sendIndex == (size_t)-1) return;
+
     _processQueueCounter++;
     _lastProcessQueueMs = millis();
     
-    // Copy the front request (not reference/pointer - prevents vector reallocation issues)
-    ModbusPendingRequest req = _requestQueue.front();
+    // Copy the selected request (not reference/pointer - prevents vector reallocation issues)
+    ModbusPendingRequest req = _requestQueue[sendIndex];
     LOG_D("Processing request: Unit=%d, FC=0x%02X, Addr=%d, Qty=%d",
           req.unitId, req.functionCode, req.startRegister, req.quantity);
     
@@ -699,11 +860,20 @@ void ModbusRTUFeature::processQueue() {
         _lastRequest.data.push_back(req.startRegister & 0xFF);
         _lastRequest.data.push_back(req.quantity >> 8);
         _lastRequest.data.push_back(req.quantity & 0xFF);
+
+        // Also store under per-unit so FC3/FC4 response parsing can validate against our own requests.
+        _lastRequest.timestamp = millis();
+        _lastRequest.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+        _lastRequest.isRequest = true;
+        _lastRequest.isValid = true;
+        _lastRequest.isException = false;
+        _lastRequest.exceptionCode = 0;
+        _lastRequestPerUnit[req.unitId] = _lastRequest;
+
+        _requestQueue.erase(_requestQueue.begin() + (ptrdiff_t)sendIndex);
     } else {
         LOG_W("Failed to send request - bus not silent");
     }
-    
-    _requestQueue.erase(_requestQueue.begin());
 }
 
 bool ModbusRTUFeature::sendRequest(const ModbusPendingRequest& request) {
@@ -770,19 +940,6 @@ void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
     delayMicroseconds(100);
     
     setDE(false);  // Back to receive mode
-    
-    // Discard any RX echo of our transmission (half-duplex RS485 can read own bytes back).
-    // Otherwise we either treat our echo as the response or concatenate echo+response and get CRC errors.
-    delayMicroseconds(_charTimeUs * 2);  // Allow echo to appear on line
-    int discarded = 0;
-    while (_serial.available()) {
-        (void)_serial.read();
-        discarded++;
-    }
-    if (discarded > 0) {
-        LOG_V("Modbus TX: discarded %d RX echo bytes", discarded);
-    }
-    _rxBuffer.clear();
 
     // Mark end-of-TX as last bus activity for accurate silence detection.
     _lastByteTime = micros();
@@ -844,21 +1001,9 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
-    // If we're experiencing repeated timeouts, pause queueing temporarily to prevent memory exhaustion.
-    // This is time-bounded to avoid a permanent deadlock when the queue becomes empty.
-    const unsigned long nowMs = millis();
-    if (_consecutiveTimeouts > 2 && nowMs < _queueingPausedUntilMs) {
-        _stats.queueOverflows++;
-        _stats.ownRequestsDiscarded++;
-        
-        // Throttle warning message - only log once per 60 seconds to avoid spam
-        if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
-            LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
-                  _consecutiveTimeouts);
-            _lastTimeoutWarningMs = nowMs;
-        }
-        return false;
-    }
+    // NOTE: Do not reject queueing during timeout backoff.
+    // Backoff is enforced in processQueue() (sending), which prevents discard storms
+    // and allows callers (web API, poll scheduler) to enqueue a probe request.
     
     // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
@@ -902,20 +1047,7 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
-    // If we're experiencing repeated timeouts, pause queueing temporarily.
-    const unsigned long nowMs = millis();
-    if (_consecutiveTimeouts > 2 && nowMs < _queueingPausedUntilMs) {
-        _stats.queueOverflows++;
-        _stats.ownRequestsDiscarded++;
-        
-        // Throttle warning message - only log once per 60 seconds
-        if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
-            LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
-                  _consecutiveTimeouts);
-            _lastTimeoutWarningMs = nowMs;
-        }
-        return false;
-    }
+    // NOTE: Do not reject queueing during timeout backoff; backoff is enforced on sending.
     
     // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
@@ -961,20 +1093,7 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
-    // If we're experiencing repeated timeouts, pause queueing temporarily.
-    const unsigned long nowMs = millis();
-    if (_consecutiveTimeouts > 2 && nowMs < _queueingPausedUntilMs) {
-        _stats.queueOverflows++;
-        _stats.ownRequestsDiscarded++;
-        
-        // Throttle warning message - only log once per 60 seconds
-        if ((nowMs - _lastTimeoutWarningMs) >= 60000) {
-            LOG_W("Modbus: Queueing paused - %u consecutive timeouts (discarding requests)",
-                  _consecutiveTimeouts);
-            _lastTimeoutWarningMs = nowMs;
-        }
-        return false;
-    }
+    // NOTE: Do not reject queueing during timeout backoff; backoff is enforced on sending.
     
     // Check queue size
     if (_requestQueue.size() >= _maxQueueSize) {
