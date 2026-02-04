@@ -121,6 +121,7 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "<p><a href='/api/modbus/types'>/api/modbus/types</a></p>";
         html += "<p><a href='/api/modbus/monitor'>/api/modbus/monitor</a></p>";
         html += "<p><a href='/view/modbus'>/view/modbus</a> <small>(HTML dashboard)</small></p>";
+        html += "<p><a href='/view/modbus/raw'>/view/modbus/raw</a> <small>(raw request tool)</small></p>";
 
         html += "<form action='/api/modbus/device' method='get'>"
             "<strong>/api/modbus/device</strong> "

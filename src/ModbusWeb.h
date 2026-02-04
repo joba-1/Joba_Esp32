@@ -5,6 +5,7 @@
 #include "ModbusRTUFeature.h"
 #include "WebServerFeature.h"
 #include <ArduinoJson.h>
+#include <map>
 #include "TimeUtils.h"
 
 /**
@@ -27,6 +28,52 @@ public:
     static void setup(WebServerFeature& server, ModbusRTUFeature& modbus,
                       ModbusDeviceManager& devices) {
         auto* webServer = server.getServer();
+
+        struct TrackedRawReadResult {
+            uint32_t id{0};
+            uint32_t createdMs{0};
+            uint32_t completedMs{0};
+            uint8_t unitId{0};
+            uint8_t functionCode{0};
+            uint16_t address{0};
+            uint16_t count{0};
+            bool queued{false};
+            bool completed{false};
+            bool success{false};
+            bool isException{false};
+            uint8_t exceptionCode{0};
+            uint16_t crc{0};
+            String dataHex;
+            String registerDataHex;
+            std::vector<uint16_t> words;
+        };
+
+        static std::map<uint32_t, TrackedRawReadResult> s_trackedRawReads;
+        static uint32_t s_nextTrackedId = 1;
+
+        auto purgeTracked = [&]() {
+            static constexpr uint32_t MAX_AGE_MS = 5UL * 60UL * 1000UL;
+            static constexpr size_t MAX_ITEMS = 32;
+            const uint32_t nowMs = (uint32_t)millis();
+
+            // Age-based purge
+            for (auto it = s_trackedRawReads.begin(); it != s_trackedRawReads.end();) {
+                if ((uint32_t)(nowMs - it->second.createdMs) > MAX_AGE_MS) {
+                    it = s_trackedRawReads.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // Size-based purge (oldest first)
+            while (s_trackedRawReads.size() > MAX_ITEMS) {
+                auto oldestIt = s_trackedRawReads.begin();
+                for (auto it = s_trackedRawReads.begin(); it != s_trackedRawReads.end(); ++it) {
+                    if (it->second.createdMs < oldestIt->second.createdMs) oldestIt = it;
+                }
+                s_trackedRawReads.erase(oldestIt);
+            }
+        };
         
         // List all configured devices
         webServer->on("/api/modbus/devices", HTTP_GET,
@@ -183,6 +230,151 @@ public:
                 doc["functionCode"] = fc;
                 doc["queued"] = queued;
                 
+                String output;
+                serializeJson(doc, output);
+                request->send(200, "application/json", output);
+            });
+
+        // Raw read request (tracked) - returns a requestId that can be polled via /api/modbus/raw/result
+        webServer->on("/api/modbus/raw/readTracked", HTTP_GET,
+            [&modbus, &server, purgeTracked](AsyncWebServerRequest* request) mutable {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+#if MODBUS_LISTEN_ONLY
+                request->send(409, "application/json",
+                              "{\"error\":\"Modbus is in listen-only mode (sending disabled)\"}");
+                return;
+#endif
+
+                if (!request->hasParam("unit") ||
+                    !request->hasParam("address") ||
+                    !request->hasParam("count")) {
+                    request->send(400, "application/json",
+                                  "{\"error\":\"Missing unit, address or count parameter\"}");
+                    return;
+                }
+
+                purgeTracked();
+
+                uint8_t unitId = request->getParam("unit")->value().toInt();
+                uint16_t address = request->getParam("address")->value().toInt();
+                uint16_t count = request->getParam("count")->value().toInt();
+                uint8_t fc = request->hasParam("fc") ?
+                             request->getParam("fc")->value().toInt() : 3;
+
+                uint32_t requestId = s_nextTrackedId++;
+                if (requestId == 0) requestId = s_nextTrackedId++;
+
+                TrackedRawReadResult st;
+                st.id = requestId;
+                st.createdMs = (uint32_t)millis();
+                st.unitId = unitId;
+                st.functionCode = fc;
+                st.address = address;
+                st.count = count;
+
+                // Install state before queueing so the callback can always find it.
+                s_trackedRawReads[requestId] = st;
+
+                bool queued = modbus.queueReadRegisters(
+                    unitId, fc, address, count,
+                    [&modbus, requestId](bool success, const ModbusFrame& response) {
+                        auto it = s_trackedRawReads.find(requestId);
+                        if (it == s_trackedRawReads.end()) return;
+                        TrackedRawReadResult& r = it->second;
+                        r.completed = true;
+                        r.completedMs = (uint32_t)millis();
+                        r.success = success;
+                        r.isException = response.isException;
+                        r.exceptionCode = response.exceptionCode;
+                        r.crc = response.crc;
+
+                        r.dataHex = modbus.formatHex(response.data.data(), response.data.size());
+
+                        // FC3/FC4 response: byteCount + payload
+                        uint8_t fcBase = response.functionCode & 0x7F;
+                        if (!response.isException && (fcBase == ModbusFC::READ_HOLDING_REGISTERS || fcBase == ModbusFC::READ_INPUT_REGISTERS)) {
+                            const size_t byteCount = response.getByteCount();
+                            const uint8_t* regData = response.getRegisterData();
+                            if (regData && byteCount >= 2) {
+                                r.registerDataHex = modbus.formatHex(regData, byteCount);
+                                r.words.clear();
+                                size_t wordCount = byteCount / 2;
+                                static constexpr size_t MAX_WORDS = 32;
+                                size_t emitCount = wordCount > MAX_WORDS ? MAX_WORDS : wordCount;
+                                r.words.reserve(emitCount);
+                                for (size_t i = 0; i < emitCount; i++) {
+                                    size_t idx = i * 2;
+                                    uint16_t w = ((uint16_t)regData[idx] << 8) | (uint16_t)regData[idx + 1];
+                                    r.words.push_back(w);
+                                }
+                            }
+                        }
+                    });
+
+                s_trackedRawReads[requestId].queued = queued;
+
+                JsonDocument doc;
+                doc["requestId"] = requestId;
+                doc["queued"] = queued;
+                doc["unitId"] = unitId;
+                doc["address"] = address;
+                doc["count"] = count;
+                doc["functionCode"] = fc;
+
+                String output;
+                serializeJson(doc, output);
+                request->send(queued ? 200 : 503, "application/json", output);
+            });
+
+        // Fetch tracked raw read result
+        webServer->on("/api/modbus/raw/result", HTTP_GET,
+            [&server, purgeTracked](AsyncWebServerRequest* request) mutable {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                if (!request->hasParam("id")) {
+                    request->send(400, "application/json", "{\"error\":\"Missing id parameter\"}");
+                    return;
+                }
+
+                purgeTracked();
+
+                uint32_t id = (uint32_t)request->getParam("id")->value().toInt();
+                auto it = s_trackedRawReads.find(id);
+                if (it == s_trackedRawReads.end()) {
+                    request->send(404, "application/json", "{\"error\":\"Unknown request id\"}");
+                    return;
+                }
+
+                const TrackedRawReadResult& r = it->second;
+                JsonDocument doc;
+                doc["requestId"] = r.id;
+                doc["queued"] = r.queued;
+                doc["completed"] = r.completed;
+                doc["success"] = r.success;
+                doc["unitId"] = r.unitId;
+                doc["address"] = r.address;
+                doc["count"] = r.count;
+                doc["functionCode"] = r.functionCode;
+                doc["isException"] = r.isException;
+                if (r.isException) doc["exceptionCode"] = r.exceptionCode;
+                doc["createdMs"] = r.createdMs;
+                if (r.completed) doc["completedMs"] = r.completedMs;
+                if (r.completed) {
+                    doc["crc"] = r.crc;
+                    {
+                        char crcHex[7];
+                        snprintf(crcHex, sizeof(crcHex), "0x%04X", (unsigned)r.crc);
+                        doc["crcHex"] = crcHex;
+                    }
+                    if (r.dataHex.length() > 0) doc["dataHex"] = r.dataHex;
+                    if (r.registerDataHex.length() > 0) doc["registerDataHex"] = r.registerDataHex;
+                    if (!r.words.empty()) {
+                        JsonArray words = doc["registerWords"].to<JsonArray>();
+                        for (uint16_t w : r.words) words.add(w);
+                    }
+                }
+
                 String output;
                 serializeJson(doc, output);
                 request->send(200, "application/json", output);
@@ -383,6 +575,86 @@ public:
                 html += F("<script>setTimeout(()=>location.reload(),5000)</script>");
                 html += F("</body></html>");
                 
+                request->send(200, "text/html", html);
+            });
+
+        // HTML tool page for tracked raw reads (shows request frame and waits for response)
+        webServer->on("/view/modbus/raw", HTTP_GET,
+            [&server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                String html = F("<!DOCTYPE html><html><head>"
+                    "<title>Modbus Raw Tools</title>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<style>"
+                    "body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}"
+                    ".card{background:#fff;border-radius:8px;padding:15px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+                    "label{display:inline-block;margin:6px 10px 6px 0}"
+                    "input,select{padding:6px}button{padding:6px 12px}"
+                    "pre{background:#111;color:#eee;padding:10px;border-radius:6px;overflow:auto}"
+                    "small{color:#666}"
+                    "</style></head><body>"
+                    "<h1>Modbus Raw Tools</h1>"
+                    "<p><a href='/view/modbus'>&larr; Back to dashboard</a></p>"
+                    "<div class='card'>"
+                    "<h2>Tracked Raw Read</h2>"
+                    "<p><small>Sends via <code>/api/modbus/raw/readTracked</code> and polls <code>/api/modbus/raw/result</code>.</small></p>"
+                    "<div>"
+                    "<label>unit <input id='unit' type='number' value='1' min='1' max='247'></label>"
+                    "<label>address <input id='address' type='number' value='0' min='0' max='65535'></label>"
+                    "<label>count <input id='count' type='number' value='2' min='1' max='125'></label>"
+                    "<label>fc <select id='fc'><option value='3'>3</option><option value='4'>4</option></select></label>"
+                    "<button onclick='sendRead()'>Send</button>"
+                    "</div>"
+                    "<h3>Request Frame (hex)</h3><pre id='req'>-</pre>"
+                    "<h3>Result</h3><pre id='out'>Ready.</pre>"
+                    "</div>"
+                    "<script>"
+                    "let lastRequestId = 0;"
+                    "function qs(id){return document.getElementById(id);}"
+                    "function toHexByte(b){return ('0'+(b&0xFF).toString(16)).slice(-2).toUpperCase();}"
+                    "function toHex(bytes){return bytes.map(toHexByte).join(' ');}"
+                    "function crc16Modbus(bytes){"
+                    "  let crc=0xFFFF;"
+                    "  for(const bb of bytes){"
+                    "    crc ^= (bb & 0xFF);"
+                    "    for(let i=0;i<8;i++){"
+                    "      const lsb = crc & 1;"
+                    "      crc >>= 1;"
+                    "      if(lsb) crc ^= 0xA001;"
+                    "    }"
+                    "  }"
+                    "  return crc & 0xFFFF;"
+                    "}"
+                    "async function sendRead(){"
+                    "  const u=qs('unit').value, a=qs('address').value, c=qs('count').value, fc=qs('fc').value;"
+                    "  const unit = parseInt(u,10)||0;"
+                    "  const addr = parseInt(a,10)||0;"
+                    "  const cnt  = parseInt(c,10)||0;"
+                    "  const fcc  = parseInt(fc,10)||3;"
+                    "  const req = [unit, fcc, (addr>>8)&0xFF, addr&0xFF, (cnt>>8)&0xFF, cnt&0xFF];"
+                    "  const crc = crc16Modbus(req);"
+                    "  req.push(crc & 0xFF, (crc>>8)&0xFF);" // Modbus CRC is little-endian on the wire
+                    "  qs('req').textContent = toHex(req);"
+                    "  qs('out').textContent='Queueing...';"
+                    "  const url=`/api/modbus/raw/readTracked?unit=${encodeURIComponent(u)}&address=${encodeURIComponent(a)}&count=${encodeURIComponent(c)}&fc=${encodeURIComponent(fc)}`;"
+                    "  const r=await fetch(url);"
+                    "  const j=await r.json();"
+                    "  lastRequestId = j.requestId || 0;"
+                    "  qs('out').textContent = JSON.stringify(j,null,2);"
+                    "  if(!j.queued || !lastRequestId) return;"
+                    "  pollResult(lastRequestId, 0);"
+                    "}"
+                    "async function pollResult(id, n){"
+                    "  if(n>40){ qs('out').textContent += `\n\nNo response yet (timeout waiting in UI).` ; return; }"
+                    "  const r=await fetch(`/api/modbus/raw/result?id=${encodeURIComponent(id)}`);"
+                    "  const j=await r.json();"
+                    "  qs('out').textContent = JSON.stringify(j,null,2);"
+                    "  if(j.completed) return;"
+                    "  setTimeout(()=>pollResult(id,n+1), 250);"
+                    "}"
+                    "</script></body></html>");
+
                 request->send(200, "text/html", html);
             });
         
