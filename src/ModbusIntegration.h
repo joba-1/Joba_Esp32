@@ -73,26 +73,19 @@ public:
                                     const ModbusDeviceInstance& device,
                                     const char* baseTopic) {
         if (!mqtt || !mqtt->isConnected()) return;
-        
-        // Build state JSON
-        JsonDocument doc;
-        
+
+        // Publish as individual topics to keep payload small (PubSubClient buffer)
+        // and to make Home Assistant integration robust.
         for (const auto& kv : device.currentValues) {
-            if (kv.second.valid) {
-                doc[kv.first] = serialized(String(kv.second.value, 4));
-            }
+            if (!kv.second.valid) continue;
+            publishRegisterValue(mqtt,
+                                 device.unitId,
+                                 device.deviceName.c_str(),
+                                 kv.first.c_str(),
+                                 kv.second.value,
+                                 baseTopic,
+                                 true /* retain */);
         }
-        
-        String payload;
-        serializeJson(doc, payload);
-        
-        // Topic: baseTopic/unit_N/state
-        String topic = baseTopic;
-        topic += "/unit_";
-        topic += String(device.unitId);
-        topic += "/state";
-        
-        mqtt->publish(topic.c_str(), payload.c_str());
     }
     
     /**
@@ -125,7 +118,8 @@ public:
                                       const char* deviceName,
                                       const char* registerName,
                                       float value,
-                                      const char* baseTopic) {
+                                      const char* baseTopic,
+                                      bool retain = false) {
         if (!mqtt || !mqtt->isConnected()) return;
         
         // Topic: baseTopic/unit_N/registerName
@@ -134,8 +128,8 @@ public:
         topic += String(unitId);
         topic += "/";
         topic += registerName;
-        
-        mqtt->publish(topic.c_str(), String(value, 4).c_str());
+
+        mqtt->publish(topic.c_str(), String(value, 4).c_str(), retain);
     }
     
     /**
@@ -221,17 +215,21 @@ private:
         discoveryTopic += "/config";
         
         // Build state topic
+        // PublishRegisterValue() publishes one topic per register:
+        //   <baseTopic>/unit_<n>/<registerName>
         String stateTopic = baseTopic;
         stateTopic += "/unit_";
         stateTopic += String(device.unitId);
-        stateTopic += "/state";
+        stateTopic += "/";
+        stateTopic += reg.name;
         
         // Build discovery payload
         JsonDocument doc;
         doc["name"] = String(device.deviceName) + " " + reg.name;
         doc["unique_id"] = uniqueId;
         doc["state_topic"] = stateTopic;
-        doc["value_template"] = String("{{ value_json.") + reg.name + " }}";
+
+        // Register values are published as plain numeric payloads; no JSON template needed.
         
         if (deviceClass) {
             doc["device_class"] = deviceClass;
@@ -244,8 +242,10 @@ private:
         }
         
         // Availability
-        String availTopic = baseTopic;
-        availTopic += "/status";
+        // Use the gateway-wide availability topic. MQTTFeature publishes this as retained
+        // (<mqttBaseTopic>/status). Using baseTopic (".../modbus") here would require a
+        // separate ".../modbus/status" publisher and makes HA show the entities as unavailable.
+        String availTopic = String(mqtt->getBaseTopic()) + "/status";
         doc["availability_topic"] = availTopic;
         doc["payload_available"] = "online";
         doc["payload_not_available"] = "offline";

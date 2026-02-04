@@ -312,7 +312,7 @@ void setup() {
             // Publish individual value to MQTT
             String modbusTopic = mqttBaseTopic + "/modbus";
             ModbusIntegration::publishRegisterValue(&mqtt, unitId, deviceName,
-                                                     registerName, value, modbusTopic.c_str());
+                                                     registerName, value, modbusTopic.c_str(), true /* retain */);
             
             // Pulse LED to indicate Modbus data received
             led.pulse();
