@@ -17,6 +17,7 @@
 #include "ModbusWeb.h"
 #include "ModbusIntegration.h"
 #include "ResetManager.h"
+#include <ArduinoJson.h>
 
 // ============================================
 // Example Data Collection Definition
@@ -231,19 +232,125 @@ void setup() {
 
         const String resetTopic = mqttBaseTopic + "/cmd/reset";
         const String restartTopic = mqttBaseTopic + "/cmd/restart";
+        const String modbusRawReadTopic = mqttBaseTopic + "/modbus/cmd/raw/read";
         const String t(topic);
-        if (t != resetTopic && t != restartTopic) return;
+        if (t != resetTopic && t != restartTopic && t != modbusRawReadTopic) return;
 
-        String p(payload);
-        p.trim();
-        p.toLowerCase();
-        if (p != "1" && p != "true" && p != "reset" && p != "restart" && p != "reboot") {
-            LOG_W("MQTT reset ignored (payload='%s')", payload);
+        if (t == resetTopic || t == restartTopic) {
+            String p(payload);
+            p.trim();
+            p.toLowerCase();
+            if (p != "1" && p != "true" && p != "reset" && p != "restart" && p != "reboot") {
+                LOG_W("MQTT reset ignored (payload='%s')", payload);
+                return;
+            }
+
+            const bool scheduled = ResetManager::scheduleRestart(250, "mqtt");
+            mqtt.publishToBase("status/reset", scheduled ? "scheduled" : "already_scheduled", false);
             return;
         }
 
-        const bool scheduled = ResetManager::scheduleRestart(250, "mqtt");
-        mqtt.publishToBase("status/reset", scheduled ? "scheduled" : "already_scheduled", false);
+        // Modbus raw read command
+        // Topic: <base>/modbus/cmd/raw/read
+        // Payload JSON: {"id":"optional", "unit":1, "address":0, "count":2, "fc":3}
+        if (t == modbusRawReadTopic) {
+#if MODBUS_LISTEN_ONLY
+            mqtt.publishToBase("modbus/ack/raw/read", "{\"queued\":false,\"error\":\"listen_only\"}", false);
+            return;
+#else
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, payload);
+
+            String id = doc["id"].is<const char*>() ? String((const char*)doc["id"]) : String((uint32_t)millis());
+            uint8_t unitId = doc["unit"] | 0;
+            uint16_t address = doc["address"] | 0;
+            uint16_t count = doc["count"] | 0;
+            uint8_t fc = doc["fc"] | 3;
+
+            JsonDocument ack;
+            ack["id"] = id;
+            ack["topic"] = (const char*)modbusRawReadTopic.c_str();
+
+            if (err || unitId == 0 || count == 0) {
+                ack["queued"] = false;
+                ack["error"] = err ? "invalid_json" : "invalid_params";
+                String out;
+                serializeJson(ack, out);
+                mqtt.publishToBase("modbus/ack/raw/read", out.c_str(), false);
+                return;
+            }
+
+            // ACK immediately so callers know we accepted the command.
+            ack["queued"] = true;
+            ack["unitId"] = unitId;
+            ack["address"] = address;
+            ack["count"] = count;
+            ack["functionCode"] = fc;
+            String outAck;
+            serializeJson(ack, outAck);
+            mqtt.publishToBase("modbus/ack/raw/read", outAck.c_str(), false);
+
+            bool queued = modbus.queueReadRegisters(
+                unitId, fc, address, count,
+                [id](bool success, const ModbusFrame& response) {
+                    JsonDocument resp;
+                    resp["id"] = id;
+                    resp["unitId"] = response.unitId;
+                    resp["functionCode"] = response.functionCode;
+                    resp["success"] = success;
+                    resp["isException"] = response.isException;
+                    if (response.isException) resp["exceptionCode"] = response.exceptionCode;
+                    {
+                        char crcHex[7];
+                        snprintf(crcHex, sizeof(crcHex), "0x%04X", (unsigned)response.crc);
+                        resp["crcHex"] = crcHex;
+                    }
+
+                    // Raw payload hex (no unit/fc/crc)
+                    resp["dataHex"] = modbus.formatHex(response.data.data(), response.data.size());
+
+                    uint8_t fcBase = response.functionCode & 0x7F;
+                    if (!response.isException && (fcBase == ModbusFC::READ_HOLDING_REGISTERS || fcBase == ModbusFC::READ_INPUT_REGISTERS)) {
+                        const size_t byteCount = response.getByteCount();
+                        const uint8_t* regData = response.getRegisterData();
+                        resp["byteCount"] = (uint32_t)byteCount;
+                        if (regData && byteCount >= 2) {
+                            resp["registerDataHex"] = modbus.formatHex(regData, byteCount);
+
+                            JsonArray words = resp["registerWords"].to<JsonArray>();
+                            size_t wordCount = byteCount / 2;
+                            static constexpr size_t MAX_WORDS = 32;
+                            size_t emitCount = wordCount > MAX_WORDS ? MAX_WORDS : wordCount;
+                            for (size_t i = 0; i < emitCount; i++) {
+                                size_t idx = i * 2;
+                                uint16_t w = ((uint16_t)regData[idx] << 8) | (uint16_t)regData[idx + 1];
+                                words.add(w);
+                            }
+                            if (wordCount > MAX_WORDS) {
+                                resp["registerWordsTruncated"] = true;
+                                resp["registerWordCount"] = (uint32_t)wordCount;
+                            }
+                        }
+                    }
+
+                    resp["uptimeMs"] = (uint32_t)millis();
+                    String out;
+                    serializeJson(resp, out);
+                    mqtt.publishToBase("modbus/resp/raw/read", out.c_str(), false);
+                });
+
+            if (!queued) {
+                JsonDocument nack;
+                nack["id"] = id;
+                nack["queued"] = false;
+                nack["error"] = "queue_failed";
+                String out;
+                serializeJson(nack, out);
+                mqtt.publishToBase("modbus/ack/raw/read", out.c_str(), false);
+            }
+#endif
+            return;
+        }
     });
     
     // Log firmware info
@@ -360,7 +467,8 @@ void loop() {
         if (!mqttResetCmdSubscribed) {
             bool ok1 = mqtt.subscribeToBase("cmd/reset");
             bool ok2 = mqtt.subscribeToBase("cmd/restart");
-            mqttResetCmdSubscribed = (ok1 && ok2);
+            bool ok3 = mqtt.subscribeToBase("modbus/cmd/raw/read");
+            mqttResetCmdSubscribed = (ok1 && ok2 && ok3);
             LOG_I("MQTT reset cmd subscribed: %s", mqttResetCmdSubscribed ? "yes" : "no");
         }
     } else {
