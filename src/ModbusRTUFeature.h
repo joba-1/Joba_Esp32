@@ -274,6 +274,12 @@ public:
         uint32_t otherRequestsSeen;
         uint32_t otherResponsesSeen;
         uint32_t otherExceptionsSeen;
+
+        // Pairing quality for other devices (FC3/FC4 only, best-effort)
+        uint32_t otherResponsesPaired;       // response matched to an observed request
+        uint32_t otherResponsesUnpaired;     // response without a matching observed request
+        uint32_t otherExceptionsPaired;      // exception matched to an observed request
+        uint32_t otherExceptionsUnpaired;    // exception without a matching observed request
         
         // Legacy/general counts (cumulative)
         uint32_t framesReceived;
@@ -332,15 +338,43 @@ public:
     
     String formatHex(const uint8_t* data, size_t length) const;
 
+    /**
+     * @brief Format a full Modbus RTU frame as hex (unit + fc + payload + CRC bytes)
+     */
+    String formatFrameHex(const ModbusFrame& frame) const;
+
+    /**
+     * @brief Calculate CRC16 for a parsed frame (unit + fc + payload/exception)
+     *
+     * Note: ModbusFrame::crc stores the CRC received on the wire.
+     */
+    uint16_t calculateFrameCrc(const ModbusFrame& frame) const;
+
+    struct CrcErrorContext {
+        uint32_t id{0};
+        bool hasBefore{false};
+        bool hasAfter{false};
+        ModbusFrame before;
+        ModbusFrame bad;
+        ModbusFrame after;
+    };
+
+    /**
+     * @brief Get recent CRC error contexts (ring buffer)
+     */
+    const CrcErrorContext* getRecentCrcErrorContexts(size_t& outCount) const;
+
 private:
     void processReceivedData();
     bool parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame);
+    void recordFrameToHistory(const ModbusFrame& frame);
+    void recordCrcErrorContext(const ModbusFrame& badFrame);
     ModbusRegisterMap& ensureRegisterMap(uint8_t unitId, uint8_t functionCode);
     void updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response);
     void processQueue();
     bool sendRequest(const ModbusPendingRequest& request);
     void sendFrame(const std::vector<uint8_t>& frame);
-    uint16_t calculateCRC(const uint8_t* data, size_t length);
+    uint16_t calculateCRC(const uint8_t* data, size_t length) const;
     void setDE(bool transmit);
     void checkAndLogWarnings();
     void startActiveTime(bool isOwn);
@@ -443,6 +477,18 @@ private:
     ModbusFrame _frameHistory[FRAME_HISTORY_SIZE];
     size_t _frameHistoryIndex = 0;
     mutable std::vector<ModbusFrame> _recentFramesCache;
+
+    // RX buffer timing (best-effort start-of-buffer timestamps)
+    uint32_t _rxBufferStartUs{0};
+    uint32_t _rxBufferStartMs{0};
+
+    // CRC error contexts (before/bad/after)
+    static const size_t CRC_CONTEXT_SIZE = 10;
+    CrcErrorContext _crcContexts[CRC_CONTEXT_SIZE];
+    size_t _crcContextIndex{0};
+    uint32_t _crcContextNextId{1};
+    bool _crcContextPendingNext{false};
+    size_t _crcContextPendingIndex{0};
 
 public:
     /**

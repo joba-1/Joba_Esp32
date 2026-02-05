@@ -18,10 +18,26 @@
 #include "ModbusIntegration.h"
 #include "ResetManager.h"
 #include <ArduinoJson.h>
+#include <esp_ota_ops.h>
 
 // ============================================
 // Example Data Collection Definition
 // ============================================
+
+static void markOtaAppValidIfPendingVerify() {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (!running) return;
+
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(running, &state) != ESP_OK) return;
+
+    if (state == ESP_OTA_IMG_PENDING_VERIFY) {
+        // If OTA rollback is enabled, newly-booted images may start in a
+        // "pending verify" state and will be rolled back unless marked valid.
+        // Mark as valid immediately; this firmware is expected to be stable.
+        esp_ota_mark_app_valid_cancel_rollback();
+    }
+}
 
 // Define your data structure
 struct SensorData {
@@ -196,6 +212,10 @@ void collectSensorData() {
 }
 
 void setup() {
+    // Ensure OTA updates stick even when rollback is enabled.
+    // Must run early, before any long initialization.
+    markOtaAppValidIfPendingVerify();
+
     // Initialize WiFi in station mode (needed for MAC address)
     WiFi.mode(WIFI_STA);
     

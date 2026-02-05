@@ -138,6 +138,22 @@ Modbus RTU runtime status and counters.
 curl -u admin:<password> http://<device-ip>/api/modbus/status
 ```
 
+### GET `/api/modbus/crc[?limit=<n>]`
+Returns recent CRC error contexts with hex dumps for the bad frame plus the frame immediately before and after (when available).
+
+Notes:
+- Each frame includes `frameType` (`request` or `response`).
+- `crcReceivedHex` is the CRC that was present on the wire.
+- `crcCalculatedHex` is the CRC computed from the frame bytes (unit + function + payload).
+- If `isValid` is `false`, you will get `invalidReason=crc_mismatch` (and a human-readable `invalidWhy`).
+
+Parameters:
+- `limit` (integer, optional): max items to return (default `10`, max `50`)
+
+```bash
+curl --anyauth -u admin:<password> 'http://<device-ip>/api/modbus/crc?limit=10'
+```
+
 ### GET `/api/modbus/devices`
 List configured Modbus units, their type, and cached value counts.
 

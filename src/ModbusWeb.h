@@ -400,6 +400,16 @@ public:
                 doc["ownRequestsSuccess"] = modbus.getStats().ownRequestsSuccess;
                 doc["ownRequestsFailed"] = modbus.getStats().ownRequestsFailed;
                 doc["ownRequestsDiscarded"] = modbus.getStats().ownRequestsDiscarded;
+
+                doc["otherRequestsSeen"] = modbus.getStats().otherRequestsSeen;
+                doc["otherResponsesSeen"] = modbus.getStats().otherResponsesSeen;
+                doc["otherExceptionsSeen"] = modbus.getStats().otherExceptionsSeen;
+
+                JsonObject otherPairing = doc["otherPairing"].to<JsonObject>();
+                otherPairing["responsesPaired"] = modbus.getStats().otherResponsesPaired;
+                otherPairing["responsesUnpaired"] = modbus.getStats().otherResponsesUnpaired;
+                otherPairing["exceptionsPaired"] = modbus.getStats().otherExceptionsPaired;
+                otherPairing["exceptionsUnpaired"] = modbus.getStats().otherExceptionsUnpaired;
                 doc["consecutiveTimeouts"] = modbus.getConsecutiveTimeouts();
                 doc["queueingPaused"] = modbus.isQueueingPaused();
                 doc["queueingPauseRemainingMs"] = modbus.getQueueingPauseRemainingMs();
@@ -444,6 +454,95 @@ public:
                 serializeJson(doc, output);
                 request->send(200, "application/json", output);
             });
+
+        // Recent CRC error contexts (before/bad/after) with full hex dumps
+        auto handleModbusCrc = [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                uint32_t limit = 10;
+                if (request->hasParam("limit")) {
+                    limit = (uint32_t)request->getParam("limit")->value().toInt();
+                    if (limit > 50) limit = 50;
+                }
+
+                size_t count = 0;
+                const ModbusRTUFeature::CrcErrorContext* ctxs = modbus.getRecentCrcErrorContexts(count);
+
+                JsonDocument doc;
+                JsonObject updated = doc["updated"].to<JsonObject>();
+                updated["uptimeMs"] = (uint32_t)millis();
+
+                JsonArray items = doc["items"].to<JsonArray>();
+
+                // Emit contexts in descending id (best-effort; small N so O(N^2) is fine).
+                uint32_t lastId = 0xFFFFFFFF;
+                for (uint32_t emitted = 0; emitted < limit; emitted++) {
+                    const ModbusRTUFeature::CrcErrorContext* best = nullptr;
+                    for (size_t i = 0; i < count; i++) {
+                        const auto& c = ctxs[i];
+                        if (c.id == 0) continue;
+                        if (c.id >= lastId) continue;
+                        if (!best || c.id > best->id) best = &c;
+                    }
+                    if (!best) break;
+                    lastId = best->id;
+
+                    JsonObject item = items.add<JsonObject>();
+                    item["id"] = best->id;
+
+                    auto writeFrame = [&](JsonObject obj, const ModbusFrame& f) {
+                        obj["startUptimeMs"] = (uint32_t)f.timestamp;
+                        obj["unitId"] = f.unitId;
+                        obj["functionCode"] = f.functionCode;
+                        obj["frameType"] = f.isRequest ? "request" : "response";
+                        obj["isValid"] = f.isValid;
+                        obj["isException"] = f.isException;
+                        if (f.isException) obj["exceptionCode"] = f.exceptionCode;
+                        {
+                            const uint16_t calculatedCrc = modbus.calculateFrameCrc(f);
+
+                            char crcReceivedHex[7];
+                            snprintf(crcReceivedHex, sizeof(crcReceivedHex), "0x%04X", (unsigned)f.crc);
+                            obj["crcReceivedHex"] = crcReceivedHex;
+
+                            char crcCalculatedHex[7];
+                            snprintf(crcCalculatedHex, sizeof(crcCalculatedHex), "0x%04X", (unsigned)calculatedCrc);
+                            obj["crcCalculatedHex"] = crcCalculatedHex;
+
+                            if (!f.isValid) {
+                                obj["invalidReason"] = "crc_mismatch";
+                                char why[64];
+                                snprintf(why, sizeof(why), "CRC mismatch (received=%s calculated=%s)",
+                                         crcReceivedHex, crcCalculatedHex);
+                                obj["invalidWhy"] = why;
+                            }
+                        }
+                        obj["hex"] = modbus.formatFrameHex(f);
+                    };
+
+                    if (best->hasBefore) {
+                        JsonObject before = item["before"].to<JsonObject>();
+                        writeFrame(before, best->before);
+                    }
+
+                    {
+                        JsonObject bad = item["bad"].to<JsonObject>();
+                        writeFrame(bad, best->bad);
+                    }
+
+                    if (best->hasAfter) {
+                        JsonObject after = item["after"].to<JsonObject>();
+                        writeFrame(after, best->after);
+                    }
+                }
+
+                String output;
+                serializeJson(doc, output);
+                request->send(200, "application/json", output);
+            };
+
+        webServer->on("/api/modbus/crc", HTTP_GET, handleModbusCrc);
+        webServer->on("/api/modbus/crc/", HTTP_GET, handleModbusCrc);
         
         // Get register maps from bus monitoring
         webServer->on("/api/modbus/maps", HTTP_GET,

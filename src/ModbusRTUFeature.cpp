@@ -180,6 +180,94 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
         _frameHistory[i].isException = false;
         _frameHistory[i].exceptionCode = 0;
     }
+
+    for (size_t i = 0; i < CRC_CONTEXT_SIZE; i++) {
+        _crcContexts[i] = CrcErrorContext{};
+        _crcContexts[i].before.timestamp = 0;
+        _crcContexts[i].bad.timestamp = 0;
+        _crcContexts[i].after.timestamp = 0;
+    }
+}
+
+const ModbusRTUFeature::CrcErrorContext* ModbusRTUFeature::getRecentCrcErrorContexts(size_t& outCount) const {
+    outCount = CRC_CONTEXT_SIZE;
+    return _crcContexts;
+}
+
+void ModbusRTUFeature::recordFrameToHistory(const ModbusFrame& frame) {
+    // Close pending CRC context with the "after" frame.
+    if (_crcContextPendingNext) {
+        CrcErrorContext& ctx = _crcContexts[_crcContextPendingIndex];
+        if (!ctx.hasAfter) {
+            ctx.after = frame;
+            ctx.hasAfter = true;
+        }
+        _crcContextPendingNext = false;
+    }
+
+    _frameHistory[_frameHistoryIndex] = frame;
+    _frameHistoryIndex = (_frameHistoryIndex + 1) % FRAME_HISTORY_SIZE;
+
+    if (!frame.isValid) {
+        recordCrcErrorContext(frame);
+    }
+}
+
+void ModbusRTUFeature::recordCrcErrorContext(const ModbusFrame& badFrame) {
+    CrcErrorContext& ctx = _crcContexts[_crcContextIndex];
+    ctx = CrcErrorContext{};
+    ctx.id = _crcContextNextId++;
+    ctx.bad = badFrame;
+
+    // Before = most recent previously recorded frame (best-effort)
+    const size_t prevIdx = (_frameHistoryIndex + FRAME_HISTORY_SIZE - 2) % FRAME_HISTORY_SIZE;
+    const ModbusFrame& prev = _frameHistory[prevIdx];
+    if (prev.timestamp != 0) {
+        ctx.before = prev;
+        ctx.hasBefore = true;
+    }
+
+    // After will be filled by the next recorded frame
+    ctx.hasAfter = false;
+    _crcContextPendingNext = true;
+    _crcContextPendingIndex = _crcContextIndex;
+
+    _crcContextIndex = (_crcContextIndex + 1) % CRC_CONTEXT_SIZE;
+}
+
+String ModbusRTUFeature::formatFrameHex(const ModbusFrame& frame) const {
+    // unit + fc + payload + crc(2)
+    String result;
+    result.reserve(3 * (2 + frame.data.size() + 2));
+
+    auto appendByte = [&](uint8_t b) {
+        if (result.length() > 0) result += ' ';
+        char buf[4];
+        snprintf(buf, sizeof(buf), "%02X", b);
+        result += buf;
+    };
+
+    appendByte(frame.unitId);
+    appendByte(frame.functionCode);
+    for (uint8_t b : frame.data) appendByte(b);
+    appendByte((uint8_t)(frame.crc & 0xFF));
+    appendByte((uint8_t)((frame.crc >> 8) & 0xFF));
+    return result;
+}
+
+uint16_t ModbusRTUFeature::calculateFrameCrc(const ModbusFrame& frame) const {
+    // Reconstruct the bytes that CRC is computed over: unit + fc + payload.
+    // For exception frames, the payload is the single exception code byte.
+    std::vector<uint8_t> bytes;
+    bytes.reserve(2 + (frame.isException ? 1 : frame.data.size()));
+    bytes.push_back(frame.unitId);
+    bytes.push_back(frame.functionCode);
+    if (frame.isException) {
+        bytes.push_back(frame.exceptionCode);
+    } else {
+        bytes.insert(bytes.end(), frame.data.begin(), frame.data.end());
+    }
+    return calculateCRC(bytes.data(), bytes.size());
 }
 
 void ModbusRTUFeature::setup() {
@@ -244,6 +332,11 @@ void ModbusRTUFeature::loop() {
         if (_rxBuffer.size() > 0 && (byteTimeUs - _lastByteTime) > (_charTimeUs * 15 / 10)) {
             // Process previous frame before starting new one
             processReceivedData();
+        }
+
+        if (_rxBuffer.empty()) {
+            _rxBufferStartUs = (uint32_t)byteTimeUs;
+            _rxBufferStartMs = (uint32_t)millis();
         }
 
         _rxBuffer.push_back(byte);
@@ -462,15 +555,17 @@ void ModbusRTUFeature::processReceivedData() {
         size_t frameLen = 0;
         ModbusFrame frame;
 
-        auto tryParseAtLen = [&](size_t len) -> bool {
-            if (remaining < len) return false;
-            if (!parseFrame(p, len, frame)) return false;
-            return frame.isValid;
+        enum class TryParseResult : uint8_t { Fail = 0, Valid = 1, CrcInvalid = 2 };
+        auto tryParseAtLen = [&](size_t len) -> TryParseResult {
+            if (remaining < len) return TryParseResult::Fail;
+            if (!parseFrame(p, len, frame)) return TryParseResult::Fail;
+            return frame.isValid ? TryParseResult::Valid : TryParseResult::CrcInvalid;
         };
 
         // Exceptions for FC3/FC4 are fixed length: unit + fc|0x80 + excCode + crc(2) = 5
         if ((fc == FC3_EX || fc == FC4_EX) && remaining >= 5) {
-            if (tryParseAtLen(5) && frame.isException) {
+            const TryParseResult r = tryParseAtLen(5);
+            if (r != TryParseResult::Fail && frame.isException) {
                 // Exception responses are responses (never requests)
                 isRequest = false;
                 frameLen = 5;
@@ -483,7 +578,8 @@ void ModbusRTUFeature::processReceivedData() {
             // Many real-world register addresses start with an even MSB (e.g. 0x06xx), which can look like
             // a valid response byteCount and cause false-positive response parsing if we try response first.
             if (remaining >= 8) {
-                if (tryParseAtLen(8) && !frame.isException && frame.data.size() == 4) {
+                const TryParseResult r = tryParseAtLen(8);
+                if (r != TryParseResult::Fail && !frame.isException && frame.data.size() == 4) {
                     uint16_t qty = frame.getQuantity();
                     if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
                         isRequest = true;
@@ -498,7 +594,8 @@ void ModbusRTUFeature::processReceivedData() {
                 // Spec: byteCount must be even for register reads and <= 250.
                 if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
                     size_t respLen = (size_t)byteCount + 5;
-                    if (tryParseAtLen(respLen) && !frame.isException) {
+                    const TryParseResult r = tryParseAtLen(respLen);
+                    if (r != TryParseResult::Fail && !frame.isException) {
                         // Optional stronger validation using last seen request for this unit/fc
                         // Prefer our in-flight request (if any) over sniffed traffic.
                         // This avoids foreign masters overwriting _lastRequestPerUnit and causing us
@@ -554,20 +651,40 @@ void ModbusRTUFeature::processReceivedData() {
             continue;
         }
 
-        // At this point we have a spec-valid, CRC-valid frame.
-        extractedCount++;
-        _stats.framesReceived++;
+          // At this point we have a spec-plausible frame. It may be CRC-valid or CRC-invalid.
+          extractedCount++;
 
-        frame.isRequest = isRequest;
+          // Best-effort start-of-message uptime:
+          // - if this RX buffer was built from multiple frames, "i" approximates the offset.
+          // - works well when frames are contiguous in the buffer.
+          const uint32_t approxStartMs = _rxBufferStartMs + (uint32_t)((uint64_t)i * (uint64_t)_charTimeUs / 1000ULL);
+          frame.timestamp = approxStartMs;
+          frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+          frame.isRequest = isRequest;
 
-        LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X",
+          if (!frame.isValid) {
+            _stats.crcErrors++;
+            LOG_D("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
+                frame.unitId, frame.functionCode,
+                formatFrameHex(frame).c_str());
+            recordFrameToHistory(frame);
+            if (_frameCallback) {
+                _frameCallback(frame, isRequest);
+            }
+            i += frameLen;
+            continue;
+          }
+
+          // CRC-valid frame
+          _stats.framesReceived++;
+
+          LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X",
               frame.unitId, frame.functionCode,
               formatHex(frame.data.data(), frame.data.size()).c_str(),
               frame.crc);
 
-        // Debug: store in frame history
-        _frameHistory[_frameHistoryIndex] = frame;
-        _frameHistoryIndex = (_frameHistoryIndex + 1) % FRAME_HISTORY_SIZE;
+          // Debug: store in frame history (also closes pending CRC contexts)
+          recordFrameToHistory(frame);
 
         bool isOurResponse = false;
 
@@ -659,6 +776,30 @@ void ModbusRTUFeature::processReceivedData() {
                     _stats.otherExceptionsSeen++;
                     _intervalStats.otherFailed++;
 
+                    // Pairing quality (best-effort): try to associate exception with a recent request
+                    // from the same unit and matching FC.
+                    {
+                        uint8_t exFc = frame.functionCode & 0x7F;
+                        bool paired = false;
+                        if (exFc == FC3 || exFc == FC4) {
+                            auto reqIt = _lastRequestPerUnit.find(frame.unitId);
+                            if (reqIt != _lastRequestPerUnit.end()) {
+                                const ModbusFrame& req = reqIt->second;
+                                if (req.isValid && ((req.functionCode & 0x7F) == exFc) && req.data.size() == 4) {
+                                    if ((frame.timestamp - req.timestamp) < 2000) {
+                                        paired = true;
+                                    }
+                                }
+                            }
+
+                            if (paired) {
+                                _stats.otherExceptionsPaired++;
+                            } else {
+                                _stats.otherExceptionsUnpaired++;
+                            }
+                        }
+                    }
+
                     // FC3/FC4 exceptions: count as device/map errors
                     uint8_t exFc = frame.functionCode & 0x7F;
                     if (exFc == FC3 || exFc == FC4) {
@@ -692,6 +833,18 @@ void ModbusRTUFeature::processReceivedData() {
                         map.responseCount++;
                         map.lastUpdate = millis();
                     }
+
+                    // Pairing quality counters for FC3/FC4 responses
+                    {
+                        uint8_t respFc = frame.functionCode & 0x7F;
+                        if (respFc == FC3 || respFc == FC4) {
+                            if (updated) {
+                                _stats.otherResponsesPaired++;
+                            } else {
+                                _stats.otherResponsesUnpaired++;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -703,7 +856,7 @@ void ModbusRTUFeature::processReceivedData() {
         i += frameLen;
     }
 
-    // If there were leftover bytes that didn't form any valid frame, count as CRC/noise once.
+    // If there were leftover bytes that didn't form any frame, count as CRC/noise once.
     if ((i < _rxBuffer.size()) || (sawNoise && extractedCount == 0)) {
         _stats.crcErrors++;
     }
@@ -1134,7 +1287,7 @@ void ModbusRTUFeature::setDE(bool transmit) {
     }
 }
 
-uint16_t ModbusRTUFeature::calculateCRC(const uint8_t* data, size_t length) {
+uint16_t ModbusRTUFeature::calculateCRC(const uint8_t* data, size_t length) const {
     uint16_t crc = 0xFFFF;
     
     for (size_t i = 0; i < length; i++) {
