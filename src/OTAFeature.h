@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
+#include <functional>
 #include "Feature.h"
 
 /**
@@ -28,6 +29,21 @@ public:
     void setPassword(const char* password) { _password = password; }
     bool isReady() const override { return _ready; }
     
+    /**
+     * @brief Set callback for OTA start (use to suspend other features)
+     */
+    void onOTAStart(std::function<void()> callback) { _onStartCallback = callback; }
+    
+    /**
+     * @brief Set callback for OTA end (use to resume other features)
+     */
+    void onOTAEnd(std::function<void()> callback) { _onEndCallback = callback; }
+    
+    /**
+     * @brief Check if OTA update is in progress
+     */
+    bool isUpdating() const { return _state == State::UPDATING; }
+    
 private:
     enum class State {
         WAITING_FOR_WIFI,
@@ -43,6 +59,9 @@ private:
     State _state;
     bool _ready;
     bool _setupDone;
+    
+    std::function<void()> _onStartCallback;
+    std::function<void()> _onEndCallback;
 };
 
 #endif // OTA_FEATURE_H

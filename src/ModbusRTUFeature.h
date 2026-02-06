@@ -263,6 +263,22 @@ public:
      */
     void clearQueue() { _requestQueue.clear(); }
     
+    /**
+     * @brief Suspend all Modbus communication (for OTA, etc.)
+     * Clears queue, stops polling, ignores incoming data
+     */
+    void suspend();
+    
+    /**
+     * @brief Resume Modbus communication after suspend
+     */
+    void resume();
+    
+    /**
+     * @brief Check if Modbus is currently suspended
+     */
+    bool isSuspended() const { return _suspended; }
+    
     // ========================================
     // Statistics
     // ========================================
@@ -399,6 +415,8 @@ private:
     
     uint32_t _silenceTimeUs;          // 3.5 character times in microseconds
     uint32_t _charTimeUs;             // Time for one character
+    
+    bool _suspended{false};           // When true, skip all processing (for OTA)
     
     std::vector<uint8_t> _rxBuffer;
     unsigned long _lastByteTime;

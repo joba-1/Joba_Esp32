@@ -2,6 +2,9 @@
 #include "LoggingFeature.h"
 #include <WiFi.h>
 
+// Static instance pointer for ArduinoOTA callbacks (only one OTA instance expected)
+static OTAFeature* s_otaInstance = nullptr;
+
 OTAFeature::OTAFeature(const char* hostname, const char* password, uint16_t port)
     : _hostname(hostname)
     , _password(password)
@@ -9,7 +12,10 @@ OTAFeature::OTAFeature(const char* hostname, const char* password, uint16_t port
     , _state(State::WAITING_FOR_WIFI)
     , _ready(false)
     , _setupDone(false)
+    , _onStartCallback(nullptr)
+    , _onEndCallback(nullptr)
 {
+    s_otaInstance = this;
 }
 
 void OTAFeature::setup() {
@@ -57,10 +63,19 @@ void OTAFeature::loop() {
                 ArduinoOTA.onStart([]() {
                     String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
                     LOG_I("OTA Start: %s", type.c_str());
+                    if (s_otaInstance) {
+                        s_otaInstance->_state = State::UPDATING;
+                        if (s_otaInstance->_onStartCallback) {
+                            s_otaInstance->_onStartCallback();
+                        }
+                    }
                 });
                 
                 ArduinoOTA.onEnd([]() {
                     LOG_I("OTA End - Rebooting...");
+                    if (s_otaInstance && s_otaInstance->_onEndCallback) {
+                        s_otaInstance->_onEndCallback();
+                    }
                 });
                 
                 ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {

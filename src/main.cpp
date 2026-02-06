@@ -247,6 +247,8 @@ void setup() {
     webServer.setPassword(defaultPassword.c_str());
     ota.setHostname(hostname.c_str());
     ota.setPassword(defaultPassword.c_str());
+    ota.onOTAStart([](){ modbus.suspend(); });
+    ota.onOTAEnd([](){ modbus.resume(); });
     logging.setHostname(hostname.c_str());
     mqtt.setClientId(mqttClientId.c_str());
     mqtt.setBaseTopic(mqttBaseTopic.c_str());

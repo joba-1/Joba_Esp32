@@ -77,6 +77,44 @@ bool ModbusRTUFeature::isUnitQueueingPaused(uint8_t unitId) const {
     return timeBefore32(now, st.pausedUntilMs);
 }
 
+void ModbusRTUFeature::suspend() {
+    if (_suspended) return;
+    _suspended = true;
+    
+    // Clear pending requests - they would timeout anyway during OTA
+    _requestQueue.clear();
+    _waitingForResponse = false;
+    _hasPendingRequest = false;
+    
+    // Drain and discard any buffered RX data
+    _rxBuffer.clear();
+    while (_serial.available()) {
+        _serial.read();
+    }
+    
+    LOG_I("ModbusRTU suspended");
+}
+
+void ModbusRTUFeature::resume() {
+    if (!_suspended) return;
+    _suspended = false;
+    
+    // Re-synchronize timing
+    _lastByteTime = micros();
+    _lastActivityTime = millis();
+    _busSilent = true;
+    _serialWasEmpty = true;
+    _serialEmptySinceUs = micros();
+    
+    // Drain any garbage that accumulated
+    _rxBuffer.clear();
+    while (_serial.available()) {
+        _serial.read();
+    }
+    
+    LOG_I("ModbusRTU resumed");
+}
+
 uint32_t ModbusRTUFeature::getUnitQueueingPauseRemainingMs(uint8_t unitId) const {
     if (!isUnitQueueingPaused(unitId)) return 0;
     auto it = _backoffByUnit.find(unitId);
@@ -308,6 +346,9 @@ void ModbusRTUFeature::setup() {
 
 void ModbusRTUFeature::loop() {
     if (!_ready) return;
+    
+    // When suspended, skip all processing (OTA in progress)
+    if (_suspended) return;
 
     _loopCounter++;
     
@@ -1164,6 +1205,12 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
+    // Reject requests when suspended (e.g., during OTA)
+    if (_suspended) {
+        _stats.ownRequestsDiscarded++;
+        return false;
+    }
+    
     // NOTE: Do not reject queueing during timeout backoff.
     // Backoff is enforced in processQueue() (sending), which prevents discard storms
     // and allows callers (web API, poll scheduler) to enqueue a probe request.
@@ -1216,6 +1263,12 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
+    // Reject requests when suspended (e.g., during OTA)
+    if (_suspended) {
+        _stats.ownRequestsDiscarded++;
+        return false;
+    }
+    
     // NOTE: Do not reject queueing during timeout backoff; backoff is enforced on sending.
     
     // Check queue size
@@ -1268,6 +1321,12 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
     _stats.ownRequestsDiscarded++;
     return false;
 #endif
+    // Reject requests when suspended (e.g., during OTA)
+    if (_suspended) {
+        _stats.ownRequestsDiscarded++;
+        return false;
+    }
+    
     // NOTE: Do not reject queueing during timeout backoff; backoff is enforced on sending.
     
     // Check queue size
