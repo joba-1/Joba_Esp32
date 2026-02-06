@@ -82,7 +82,7 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
         html += "<div class='card'>";
         html += "<h2>System</h2>";
-        html += "<p><a href='/health'>/health</a> <small>(health check, no auth)</small></p>";
+        html += "<p><a href='/health?json'>/health?json</a> <small>(health check, no auth)</small></p>";
         html += "<p><a href='/api/status'>/api/status</a></p>";
         html += "<p><a href='/api/buildinfo'>/api/buildinfo</a></p>";
         html += "<form action='/api/reset' method='post' onsubmit=\"return confirm('Restart device now?')\">"
