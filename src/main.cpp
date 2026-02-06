@@ -17,6 +17,7 @@
 #include "ModbusWeb.h"
 #include "ModbusIntegration.h"
 #include "ResetManager.h"
+#include "ResetDiagnostics.h"
 #include <ArduinoJson.h>
 #include <esp_ota_ops.h>
 
@@ -212,6 +213,10 @@ void collectSensorData() {
 }
 
 void setup() {
+    // Capture reset reason + boot counter early for diagnostics.
+    ResetDiagnostics::init();
+    ResetDiagnostics::setBreadcrumb("setup", "start");
+
     // Ensure OTA updates stick even when rollback is enabled.
     // Must run early, before any long initialization.
     markOtaAppValidIfPendingVerify();
@@ -379,10 +384,14 @@ void setup() {
     LOG_I("Device ID: %s", deviceId.c_str());
     LOG_I("Hostname: %s", hostname.c_str());
     LOG_I("Default Password: %s", defaultPassword.c_str());
+    LOG_I("Boot Count (RTC): %u", (unsigned)ResetDiagnostics::bootCount());
+    LOG_I("Reset Reason: %s (%d)", ResetDiagnostics::resetReasonString(), (int)ResetDiagnostics::resetReason());
+    LOG_I("RTC Reset Reason Core0/Core1: %u/%u", (unsigned)ResetDiagnostics::rtcResetReasonCore0(), (unsigned)ResetDiagnostics::rtcResetReasonCore1());
     LOG_I("======================================");
     
     // Initialize all features
     for (size_t i = 0; i < featureCount; i++) {
+        ResetDiagnostics::setBreadcrumb("setup", features[i]->getName());
         features[i]->setup();
         LOG_I("Feature '%s' setup complete", features[i]->getName());
     }
@@ -456,16 +465,22 @@ void setup() {
     
     // Setup complete - turn off LED (will pulse on activity)
     led.setupComplete();
+    ResetDiagnostics::setBreadcrumb("setup", "done");
 }
 
 void loop() {
     // Run all feature loop handlers
     for (size_t i = 0; i < featureCount; i++) {
+        ResetDiagnostics::setBreadcrumb("loop", features[i]->getName());
+        const uint32_t startUs = (uint32_t)micros();
         features[i]->loop();
+        const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
+        ResetDiagnostics::recordLoopDurationUs(features[i]->getName(), durUs);
     }
     
     // Publish Home Assistant autodiscovery once MQTT is connected
     if (mqtt.isConnected() && !haDiscoveryPublished) {
+        ResetDiagnostics::setBreadcrumb("job", "haDiscovery");
         String deviceName = String(DeviceInfo::getFirmwareName()) + " " + deviceId;
         DataCollectionMQTT::publishDiscovery(
             &mqtt,
@@ -485,6 +500,7 @@ void loop() {
     // Subscribe to MQTT reset commands after connect (and after reconnect)
     if (mqtt.isConnected()) {
         if (!mqttResetCmdSubscribed) {
+            ResetDiagnostics::setBreadcrumb("job", "mqttSubscribeCmd");
             bool ok1 = mqtt.subscribeToBase("cmd/reset");
             bool ok2 = mqtt.subscribeToBase("cmd/restart");
             bool ok3 = mqtt.subscribeToBase("modbus/cmd/raw/read");
@@ -497,6 +513,7 @@ void loop() {
     
     // Publish Modbus Home Assistant autodiscovery once MQTT is connected
     if (mqtt.isConnected() && !modbusHADiscoveryPublished && modbusDevices) {
+        ResetDiagnostics::setBreadcrumb("job", "modbusHADiscovery");
         String modbusTopic = mqttBaseTopic + "/modbus";
         ModbusIntegration::publishDiscovery(
             &mqtt,
@@ -514,6 +531,7 @@ void loop() {
     if (mqtt.isConnected() && modbusDevices &&
         millis() - lastModbusStatePublish >= MODBUS_STATE_PUBLISH_INTERVAL) {
         lastModbusStatePublish = millis();
+        ResetDiagnostics::setBreadcrumb("job", "modbusStatePublish");
         String modbusTopic = mqttBaseTopic + "/modbus";
         ModbusIntegration::publishAllDeviceStates(&mqtt, *modbusDevices,
                                                    modbusTopic.c_str());
@@ -522,14 +540,25 @@ void loop() {
     // Periodic data collection
     if (millis() - lastDataCollection >= DATA_COLLECTION_INTERVAL) {
         lastDataCollection = millis();
+        ResetDiagnostics::setBreadcrumb("job", "collectSensorData");
         collectSensorData();
     }
     
     // Handle data collection persistence
+    ResetDiagnostics::setBreadcrumb("loop", "sensorData");
+    {
+        const uint32_t startUs = (uint32_t)micros();
     sensorData.loop();
+        const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
+        ResetDiagnostics::recordLoopDurationUs("sensorData", durUs);
+    }
     
     // Run Modbus device polling
     if (modbusDevices) {
+        ResetDiagnostics::setBreadcrumb("loop", "modbusDevices");
+        const uint32_t startUs = (uint32_t)micros();
         modbusDevices->loop();
+        const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
+        ResetDiagnostics::recordLoopDurationUs("modbusDevices", durUs);
     }
 }

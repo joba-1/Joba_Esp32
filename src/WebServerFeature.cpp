@@ -9,6 +9,8 @@
 
 #include <esp_ota_ops.h>
 
+#include "ResetDiagnostics.h"
+
 #ifndef FIRMWARE_GIT_SHA
 #define FIRMWARE_GIT_SHA unknown
 #endif
@@ -483,6 +485,43 @@ void WebServerFeature::setupDefaultRoutes() {
     
     // Health check endpoint (no auth required)
     _server->on("/health", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (request->hasParam("json")) {
+            ResetDiagnostics::init();
+
+            JsonDocument doc;
+            doc["status"] = "ok";
+
+            JsonObject updated = doc["updated"].to<JsonObject>();
+            updated["uptimeMs"] = (uint32_t)millis();
+
+            JsonObject reset = doc["reset"].to<JsonObject>();
+            reset["bootCount"] = (uint32_t)ResetDiagnostics::bootCount();
+            reset["reason"] = ResetDiagnostics::resetReasonString();
+            reset["reasonCode"] = (int32_t)ResetDiagnostics::resetReason();
+            reset["rtcCore0"] = (uint32_t)ResetDiagnostics::rtcResetReasonCore0();
+            reset["rtcCore1"] = (uint32_t)ResetDiagnostics::rtcResetReasonCore1();
+
+            JsonObject breadcrumb = reset["breadcrumb"].to<JsonObject>();
+            breadcrumb["phase"] = ResetDiagnostics::breadcrumbPhase();
+            breadcrumb["name"] = ResetDiagnostics::breadcrumbName();
+            breadcrumb["uptimeMs"] = (uint32_t)ResetDiagnostics::breadcrumbUptimeMs();
+
+            JsonObject lastLoop = reset["lastLoop"].to<JsonObject>();
+            lastLoop["name"] = ResetDiagnostics::lastLoopName();
+            lastLoop["durationUs"] = (uint32_t)ResetDiagnostics::lastLoopDurationUs();
+
+            JsonObject maxLoop = reset["maxLoop"].to<JsonObject>();
+            maxLoop["name"] = ResetDiagnostics::maxLoopName();
+            maxLoop["durationUs"] = (uint32_t)ResetDiagnostics::maxLoopDurationUs();
+
+            doc["freeHeap"] = (uint32_t)ESP.getFreeHeap();
+
+            String out;
+            serializeJson(doc, out);
+            request->send(200, "application/json", out);
+            return;
+        }
+
         request->send(200, "text/plain", "OK");
     });
     
