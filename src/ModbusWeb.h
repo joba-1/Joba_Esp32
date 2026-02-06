@@ -289,7 +289,7 @@ public:
                         r.exceptionCode = response.exceptionCode;
                         r.crc = response.crc;
 
-                        r.dataHex = modbus.formatHex(response.data.data(), response.data.size());
+                        r.dataHex = modbus.formatHex(response.data.data(), response.dataLen);
 
                         // FC3/FC4 response: byteCount + payload
                         uint8_t fcBase = response.functionCode & 0x7F;
@@ -809,14 +809,14 @@ public:
                     }
 
                     // Keep the previous raw payload as hex for debugging.
-                    f["dataHex"] = modbus.formatHex(frame.data.data(), frame.data.size());
+                    f["dataHex"] = modbus.formatHex(frame.data.data(), frame.dataLen);
 
                     // Split out common Modbus RTU FC3/FC4 fields.
                     if (fc == ModbusFC::READ_HOLDING_REGISTERS || fc == ModbusFC::READ_INPUT_REGISTERS) {
-                        if (frame.isRequest && frame.data.size() == 4) {
+                        if (frame.isRequest && frame.dataLen == 4) {
                             f["startRegister"] = frame.getStartRegister();
                             f["quantity"] = frame.getQuantity();
-                        } else if (!frame.isRequest && !frame.isException && frame.data.size() >= 1) {
+                        } else if (!frame.isRequest && !frame.isException && frame.dataLen >= 1) {
                             uint32_t byteCount = (uint32_t)frame.getByteCount();
                             f["byteCount"] = byteCount;
 

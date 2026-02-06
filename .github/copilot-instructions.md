@@ -3,7 +3,7 @@ applyTo: "**"
 ---
 # Joba_Esp32 (ESP32 + Arduino + PlatformIO)
 
-- Build is PlatformIO (`platformio.ini`) with envs `serial` (USB, usually not connected) and `ota` (espota). `pio` isn’t on PATH, use `/home/joachim/.platformio/penv/bin/pio`.
+- Build is PlatformIO (`platformio.ini`) with envs `serial` (USB, usually not connected) and `ota` (espota). `pio` isn’t on PATH, activate `/home/joachim/.platformio/penv` before using it or other stuff below the penv directory.
 - Local config lives in `config.ini` (gitignored) based on `config.ini.template`. `pre_build.py` may create it and generates `data/build_info.json` for LittleFS build diagnostics.
 - When changing files under `data/` (Modbus JSON, build_info, etc), run `/home/joachim/.platformio/penv/bin/pio run -t uploadfs` so the filesystem matches firmware; see `WEB_API.md` `/api/buildinfo`.
 - uploads sometimes fail after upload started transferring data; retrying usually works.

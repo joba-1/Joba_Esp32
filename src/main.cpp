@@ -332,7 +332,7 @@ void setup() {
                     }
 
                     // Raw payload hex (no unit/fc/crc)
-                    resp["dataHex"] = modbus.formatHex(response.data.data(), response.data.size());
+                    resp["dataHex"] = modbus.formatHex(response.data.data(), response.dataLen);
 
                     uint8_t fcBase = response.functionCode & 0x7F;
                     if (!response.isException && (fcBase == ModbusFC::READ_HOLDING_REGISTERS || fcBase == ModbusFC::READ_INPUT_REGISTERS)) {

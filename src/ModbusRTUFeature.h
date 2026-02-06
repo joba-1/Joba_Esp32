@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include <array>
 #include <vector>
 #include <map>
 #include <functional>
@@ -27,9 +28,12 @@ namespace ModbusFC {
  * @brief A single Modbus RTU frame (request or response)
  */
 struct ModbusFrame {
+    static constexpr size_t MAX_DATA_LEN = 252;  // up to FC3/FC4 response payload (byteCount+data)
+
     uint8_t unitId;
     uint8_t functionCode;
-    std::vector<uint8_t> data;      // Payload without unit ID, FC, and CRC
+    std::array<uint8_t, MAX_DATA_LEN> data{};  // Payload without unit ID, FC, and CRC
+    uint16_t dataLen{0};
     uint16_t crc;
     unsigned long timestamp;         // millis() at capture time (monotonic)
     uint32_t unixTimestamp;          // epoch seconds at capture time (0 if time invalid)
@@ -40,23 +44,23 @@ struct ModbusFrame {
     
     // For read requests: extract start register and quantity
     uint16_t getStartRegister() const {
-        if (data.size() >= 2) return (data[0] << 8) | data[1];
+        if (dataLen >= 2) return (data[0] << 8) | data[1];
         return 0;
     }
     
     uint16_t getQuantity() const {
-        if (data.size() >= 4) return (data[2] << 8) | data[3];
+        if (dataLen >= 4) return (data[2] << 8) | data[3];
         return 0;
     }
     
     // For read responses: get register data
     size_t getByteCount() const {
-        if (data.size() >= 1) return data[0];
+        if (dataLen >= 1) return data[0];
         return 0;
     }
     
     const uint8_t* getRegisterData() const {
-        if (data.size() > 1) return &data[1];
+        if (dataLen > 1) return &data[1];
         return nullptr;
     }
 };

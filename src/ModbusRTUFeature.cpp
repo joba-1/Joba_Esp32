@@ -1,6 +1,7 @@
 #include "ModbusRTUFeature.h"
 #include <esp_heap_caps.h>
 #include <algorithm>
+#include <cstring>
 #include "TimeUtils.h"
 
 static inline bool timeBefore32(uint32_t a, uint32_t b) {
@@ -171,7 +172,7 @@ ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
     for (size_t i = 0; i < FRAME_HISTORY_SIZE; i++) {
         _frameHistory[i].unitId = 0;
         _frameHistory[i].functionCode = 0;
-        _frameHistory[i].data.clear();
+        _frameHistory[i].dataLen = 0;
         _frameHistory[i].crc = 0;
         _frameHistory[i].timestamp = 0;
         _frameHistory[i].unixTimestamp = 0;
@@ -238,7 +239,7 @@ void ModbusRTUFeature::recordCrcErrorContext(const ModbusFrame& badFrame) {
 String ModbusRTUFeature::formatFrameHex(const ModbusFrame& frame) const {
     // unit + fc + payload + crc(2)
     String result;
-    result.reserve(3 * (2 + frame.data.size() + 2));
+    result.reserve(3 * (2 + frame.dataLen + 2));
 
     auto appendByte = [&](uint8_t b) {
         if (result.length() > 0) result += ' ';
@@ -249,7 +250,7 @@ String ModbusRTUFeature::formatFrameHex(const ModbusFrame& frame) const {
 
     appendByte(frame.unitId);
     appendByte(frame.functionCode);
-    for (uint8_t b : frame.data) appendByte(b);
+    for (size_t i = 0; i < frame.dataLen; i++) appendByte(frame.data[i]);
     appendByte((uint8_t)(frame.crc & 0xFF));
     appendByte((uint8_t)((frame.crc >> 8) & 0xFF));
     return result;
@@ -258,16 +259,20 @@ String ModbusRTUFeature::formatFrameHex(const ModbusFrame& frame) const {
 uint16_t ModbusRTUFeature::calculateFrameCrc(const ModbusFrame& frame) const {
     // Reconstruct the bytes that CRC is computed over: unit + fc + payload.
     // For exception frames, the payload is the single exception code byte.
-    std::vector<uint8_t> bytes;
-    bytes.reserve(2 + (frame.isException ? 1 : frame.data.size()));
-    bytes.push_back(frame.unitId);
-    bytes.push_back(frame.functionCode);
+    uint8_t bytes[2 + ModbusFrame::MAX_DATA_LEN];
+    size_t len = 0;
+    bytes[len++] = frame.unitId;
+    bytes[len++] = frame.functionCode;
     if (frame.isException) {
-        bytes.push_back(frame.exceptionCode);
+        bytes[len++] = frame.exceptionCode;
     } else {
-        bytes.insert(bytes.end(), frame.data.begin(), frame.data.end());
+        const size_t copyLen = (frame.dataLen <= ModbusFrame::MAX_DATA_LEN) ? (size_t)frame.dataLen : ModbusFrame::MAX_DATA_LEN;
+        if (copyLen > 0) {
+            memcpy(bytes + len, frame.data.data(), copyLen);
+            len += copyLen;
+        }
     }
-    return calculateCRC(bytes.data(), bytes.size());
+    return calculateCRC(bytes, len);
 }
 
 void ModbusRTUFeature::setup() {
@@ -579,7 +584,7 @@ void ModbusRTUFeature::processReceivedData() {
             // a valid response byteCount and cause false-positive response parsing if we try response first.
             if (remaining >= 8) {
                 const TryParseResult r = tryParseAtLen(8);
-                if (r != TryParseResult::Fail && !frame.isException && frame.data.size() == 4) {
+                if (r != TryParseResult::Fail && !frame.isException && frame.dataLen == 4) {
                     uint16_t qty = frame.getQuantity();
                     if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
                         isRequest = true;
@@ -615,7 +620,7 @@ void ModbusRTUFeature::processReceivedData() {
                             if (reqIt != _lastRequestPerUnit.end()) {
                                 const ModbusFrame& req = reqIt->second;
                                 uint8_t reqFc = req.functionCode & 0x7F;
-                                if (req.isValid && reqFc == fc && req.data.size() == 4) {
+                                if (req.isValid && reqFc == fc && req.dataLen == 4) {
                                     // Only enforce if response is reasonably close in time
                                     if ((frame.timestamp - req.timestamp) < 2000) {
                                         uint16_t qty = req.getQuantity();
@@ -680,7 +685,7 @@ void ModbusRTUFeature::processReceivedData() {
 
           LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X",
               frame.unitId, frame.functionCode,
-              formatHex(frame.data.data(), frame.data.size()).c_str(),
+              formatHex(frame.data.data(), frame.dataLen).c_str(),
               frame.crc);
 
           // Debug: store in frame history (also closes pending CRC contexts)
@@ -785,7 +790,7 @@ void ModbusRTUFeature::processReceivedData() {
                             auto reqIt = _lastRequestPerUnit.find(frame.unitId);
                             if (reqIt != _lastRequestPerUnit.end()) {
                                 const ModbusFrame& req = reqIt->second;
-                                if (req.isValid && ((req.functionCode & 0x7F) == exFc) && req.data.size() == 4) {
+                                if (req.isValid && ((req.functionCode & 0x7F) == exFc) && req.dataLen == 4) {
                                     if ((frame.timestamp - req.timestamp) < 2000) {
                                         paired = true;
                                     }
@@ -818,7 +823,7 @@ void ModbusRTUFeature::processReceivedData() {
                     bool updated = false;
                     if (reqIt != _lastRequestPerUnit.end()) {
                         const ModbusFrame& req = reqIt->second;
-                        if (req.isValid && ((req.functionCode & 0x7F) == (frame.functionCode & 0x7F)) && req.data.size() == 4) {
+                        if (req.isValid && ((req.functionCode & 0x7F) == (frame.functionCode & 0x7F)) && req.dataLen == 4) {
                             if ((frame.timestamp - req.timestamp) < 2000) {
                                 updateRegisterMap(req, frame);
                                 updated = true;
@@ -897,11 +902,15 @@ bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFram
     // Verify CRC (Modbus: LSB first)
     uint16_t receivedCrc = (uint16_t)data[length - 2] | ((uint16_t)data[length - 1] << 8);
     uint16_t calculatedCrc = calculateCRC(data, length - 2);
+
+    const size_t payloadLenRaw = length - 4; // exclude unit, fc, crc(2)
+    const size_t payloadLen = (payloadLenRaw <= ModbusFrame::MAX_DATA_LEN) ? payloadLenRaw : ModbusFrame::MAX_DATA_LEN;
     
     if (receivedCrc != calculatedCrc) {
         frame.isValid = false;
         frame.crc = receivedCrc;
-        frame.data.assign(data + 2, data + length - 2);
+        frame.dataLen = (uint16_t)payloadLen;
+        if (payloadLen > 0) memcpy(frame.data.data(), data + 2, payloadLen);
         frame.isException = false;
         frame.exceptionCode = 0;
         return true;  // Return true so caller can count CRC error and log
@@ -914,11 +923,12 @@ bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFram
     if (frame.functionCode & 0x80) {
         frame.isException = true;
         frame.exceptionCode = (length > 2) ? data[2] : 0;
-        frame.data.clear();
+        frame.dataLen = 0;
     } else {
         frame.isException = false;
         frame.exceptionCode = 0;
-        frame.data.assign(data + 2, data + length - 2);
+        frame.dataLen = (uint16_t)payloadLen;
+        if (payloadLen > 0) memcpy(frame.data.data(), data + 2, payloadLen);
     }
     
     return true;
@@ -1008,11 +1018,11 @@ void ModbusRTUFeature::processQueue() {
         // Build the last request frame for response matching
         _lastRequest.unitId = req.unitId;
         _lastRequest.functionCode = req.functionCode;
-        _lastRequest.data.clear();
-        _lastRequest.data.push_back(req.startRegister >> 8);
-        _lastRequest.data.push_back(req.startRegister & 0xFF);
-        _lastRequest.data.push_back(req.quantity >> 8);
-        _lastRequest.data.push_back(req.quantity & 0xFF);
+        _lastRequest.dataLen = 4;
+        _lastRequest.data[0] = (uint8_t)(req.startRegister >> 8);
+        _lastRequest.data[1] = (uint8_t)(req.startRegister & 0xFF);
+        _lastRequest.data[2] = (uint8_t)(req.quantity >> 8);
+        _lastRequest.data[3] = (uint8_t)(req.quantity & 0xFF);
 
         // Also store under per-unit so FC3/FC4 response parsing can validate against our own requests.
         _lastRequest.timestamp = millis();
