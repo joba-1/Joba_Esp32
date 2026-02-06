@@ -1182,8 +1182,14 @@ bool ModbusRTUFeature::queueReadRegisters(uint8_t unitId, uint8_t functionCode,
     if (freeHeap < 25000) {  // Less than 25 KB free - too risky
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_E("Modbus request DISCARDED: critical heap (%u bytes) - unit %d FC 0x%02X",
-              freeHeap, unitId, functionCode);
+          const uint32_t minFree8 = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+          const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+          const uint32_t minFreeInt = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          const uint32_t largestInt = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          LOG_E("Modbus request DISCARDED: critical heap (free8=%u min8=%u largest8=%u freeInt=%u minInt=%u largestInt=%u) - unit %d FC 0x%02X",
+              freeHeap, minFree8, largest8,
+              heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), minFreeInt, largestInt,
+              unitId, functionCode);
         return false;
     }
     
@@ -1226,8 +1232,14 @@ bool ModbusRTUFeature::queueWriteSingleRegister(uint8_t unitId, uint16_t address
     if (freeHeap < 25000) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_E("Modbus write request DISCARDED: critical heap (%u bytes) - unit %d reg %d",
-              freeHeap, unitId, address);
+          const uint32_t minFree8 = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+          const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+          const uint32_t minFreeInt = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          const uint32_t largestInt = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          LOG_E("Modbus write request DISCARDED: critical heap (free8=%u min8=%u largest8=%u freeInt=%u minInt=%u largestInt=%u) - unit %d reg %d",
+              freeHeap, minFree8, largest8,
+              heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), minFreeInt, largestInt,
+              unitId, address);
         return false;
     }
     
@@ -1272,8 +1284,14 @@ bool ModbusRTUFeature::queueWriteMultipleRegisters(uint8_t unitId, uint16_t star
     if (freeHeap < 25000) {
         _stats.queueOverflows++;
         _stats.ownRequestsDiscarded++;
-        LOG_E("Modbus write-multi request DISCARDED: critical heap (%u bytes) - unit %d",
-              freeHeap, unitId);
+          const uint32_t minFree8 = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+          const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+          const uint32_t minFreeInt = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          const uint32_t largestInt = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          LOG_E("Modbus write-multi request DISCARDED: critical heap (free8=%u min8=%u largest8=%u freeInt=%u minInt=%u largestInt=%u) - unit %d",
+              freeHeap, minFree8, largest8,
+              heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), minFreeInt, largestInt,
+              unitId);
         return false;
     }
     
@@ -1416,12 +1434,22 @@ void ModbusRTUFeature::checkAndLogWarnings() {
     unsigned long uptimeSec = (millis() - _stats.lastStatsReset) / 1000;
     uint32_t totalOwn = _stats.ownRequestsSuccess + _stats.ownRequestsFailed;
     if (uptimeSec > 0 && totalOwn > 0) {
-        LOG_I("Modbus stats (%lus): own=%u/%u ok, other=%u req, CRC=%u, idle=%.1f%%",
-              uptimeSec, 
+          const uint32_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+          const uint32_t minFree8 = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+          const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+          const uint32_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          const uint32_t minFreeInt = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          const uint32_t largestInt = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+          const float frag8Pct = (free8 > 0) ? (100.0f - ((float)largest8 * 100.0f / (float)free8)) : 0.0f;
+
+          LOG_I("Modbus stats (%lus): own=%u/%u ok, other=%u req, CRC=%u, idle=%.1f%%, heap8=%u(min=%u,largest=%u,frag=%.0f%%) heapInt=%u(min=%u,largest=%u)",
+              uptimeSec,
               _stats.ownRequestsSuccess, totalOwn,
               _stats.otherRequestsSeen,
               _stats.crcErrors,
-              getBusIdlePercent());
+              getBusIdlePercent(),
+              free8, minFree8, largest8, frag8Pct,
+              freeInt, minFreeInt, largestInt);
     }
     
     // Reset interval stats for next period
