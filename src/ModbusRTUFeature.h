@@ -519,6 +519,9 @@ private:
     bool _crcContextPendingNext{false};
     size_t _crcContextPendingIndex{0};
 
+    // Frame resynchronization state (persists across processReceivedData() calls)
+    bool _inResync{false};
+
 public:
     /**
      * @brief Get recent RX frames for debugging (valid and invalid, last FRAME_HISTORY_SIZE)

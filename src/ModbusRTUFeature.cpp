@@ -709,21 +709,29 @@ void ModbusRTUFeature::processReceivedData() {
           frame.isRequest = isRequest;
 
           if (!frame.isValid) {
-            _stats.crcErrors++;
-            LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
-                frame.unitId, frame.functionCode,
-                formatFrameHex(frame).c_str());
+            // Only count CRC error if this is the first bad frame (not during resync scanning)
+            if (!_inResync) {
+                _stats.crcErrors++;
+                LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
+                    frame.unitId, frame.functionCode,
+                    formatFrameHex(frame).c_str());
+            } else {
+                LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", 
+                    frame.unitId, frame.functionCode);
+            }
             recordFrameToHistory(frame);
             if (_frameCallback) {
                 _frameCallback(frame, isRequest);
             }
             // Advance by only 1 byte on CRC errors to allow frame resynchronization
             // (the calculated frameLen is unreliable when parsing started at wrong offset)
+            _inResync = true;  // Enter resync mode
             i++;
             continue;
           }
 
-          // CRC-valid frame
+          // CRC-valid frame - exit resync mode
+          _inResync = false;
           _stats.framesReceived++;
 
           // Frame details available via /api/modbus/monitor; don't spam logs
