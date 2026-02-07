@@ -81,6 +81,8 @@ led_pulse_duration = 50
 
 ; Serial upload configuration
 upload_port_serial = /dev/ttyUSB0       ; Or /dev/ttyUSB* for auto-detect
+upload_speed = 921600
 
-; HTTP OTA firmware update:
-; curl -u admin:password -F "firmware=@.pio/build/serial/firmware.bin" http://device-ip/api/update
+; HTTP OTA upload configuration
+ota_host = joba-esp32.local              ; Hostname or IP of your device for OTA uploads
+ota_password = ""                        ; Device password (see /api/buildinfo or auto-generated from MAC)
