@@ -717,7 +717,9 @@ void ModbusRTUFeature::processReceivedData() {
             if (_frameCallback) {
                 _frameCallback(frame, isRequest);
             }
-            i += frameLen;
+            // Advance by only 1 byte on CRC errors to allow frame resynchronization
+            // (the calculated frameLen is unreliable when parsing started at wrong offset)
+            i++;
             continue;
           }
 
