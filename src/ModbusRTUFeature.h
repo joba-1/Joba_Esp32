@@ -522,6 +522,20 @@ private:
     // Frame resynchronization state (persists across processReceivedData() calls)
     bool _inResync{false};
 
+    // Response mismatch tracking (for diagnostics)
+    struct ResponseMismatch {
+        unsigned long timestamp;
+        uint8_t expectedUnit;
+        uint8_t actualUnit;
+        uint8_t expectedFc;
+        uint8_t actualFc;
+        bool byteCountMatch;
+    };
+    static const size_t MISMATCH_HISTORY_SIZE = 10;
+    ResponseMismatch _mismatchHistory[MISMATCH_HISTORY_SIZE];
+    size_t _mismatchIndex{0};
+    uint32_t _mismatchCount{0};
+
 public:
     /**
      * @brief Get recent RX frames for debugging (valid and invalid, last FRAME_HISTORY_SIZE)
@@ -536,6 +550,15 @@ public:
             _recentFramesCache.push_back(f);
         }
         return _recentFramesCache;
+    }
+    
+    /**
+     * @brief Get response mismatch history for diagnostics
+     */
+    const ResponseMismatch* getMismatchHistory(size_t& outCount, uint32_t& totalMismatches) const {
+        outCount = MISMATCH_HISTORY_SIZE;
+        totalMismatches = _mismatchCount;
+        return _mismatchHistory;
     }
 };
 

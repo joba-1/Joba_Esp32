@@ -607,6 +607,49 @@ public:
                 request->send(200, "application/json", output);
             });
         
+        // Response mismatch diagnostics
+        webServer->on("/api/modbus/mismatches", HTTP_GET,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                size_t count;
+                uint32_t totalMismatches;
+                const auto* history = modbus.getMismatchHistory(count, totalMismatches);
+
+                JsonDocument doc;
+                doc["totalMismatches"] = totalMismatches;
+                doc["uptimeMs"] = millis();
+                
+                JsonArray arr = doc["history"].to<JsonArray>();
+                for (size_t i = 0; i < count; i++) {
+                    const auto& m = history[i];
+                    if (m.timestamp == 0) continue;
+                    
+                    JsonObject obj = arr.add<JsonObject>();
+                    obj["timestampMs"] = m.timestamp;
+                    obj["expectedUnit"] = m.expectedUnit;
+                    obj["actualUnit"] = m.actualUnit;
+                    obj["expectedFc"] = m.expectedFc;
+                    obj["actualFc"] = m.actualFc;
+                    obj["byteCountMatch"] = m.byteCountMatch;
+                    
+                    // Diagnose the issue
+                    if (m.expectedUnit != m.actualUnit) {
+                        obj["issue"] = "unit_mismatch";
+                    } else if (m.expectedFc != m.actualFc) {
+                        obj["issue"] = "fc_mismatch";
+                    } else if (!m.byteCountMatch) {
+                        obj["issue"] = "bytecount_mismatch";
+                    } else {
+                        obj["issue"] = "unknown";
+                    }
+                }
+                
+                String output;
+                serializeJson(doc, output);
+                request->send(200, "application/json", output);
+            });
+        
         // HTML dashboard
         webServer->on("/view/modbus", HTTP_GET,
             [&devices, &modbus, &server](AsyncWebServerRequest* request) {

@@ -796,6 +796,17 @@ void ModbusRTUFeature::processReceivedData() {
 
         } else if (_waitingForResponse && _hasPendingRequest && frame.isValid && !frame.isRequest) {
             // Debug: why didn't this match our request?
+            // Record mismatch for diagnostics
+            ResponseMismatch& m = _mismatchHistory[_mismatchIndex];
+            m.timestamp = millis();
+            m.expectedUnit = _currentRequest.unitId;
+            m.actualUnit = frame.unitId;
+            m.expectedFc = _currentRequest.functionCode;
+            m.actualFc = frame.functionCode;
+            m.byteCountMatch = byteCountMatches;
+            _mismatchIndex = (_mismatchIndex + 1) % MISMATCH_HISTORY_SIZE;
+            _mismatchCount++;
+            
             LOG_W("RX mismatch: unit=%d/%d fc=%d/%d byteCount=%s",
                   frame.unitId, _currentRequest.unitId,
                   frame.functionCode, _currentRequest.functionCode,
