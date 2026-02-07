@@ -625,6 +625,7 @@ public:
                     "th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}"
                     "th{background:#f9f9f9}"
                     ".ok{color:#4CAF50}.err{color:#F44336}"
+                    ".outdated{opacity:0.4;color:#999}"
                     "h1{color:#333}h2{color:#666;margin:0 0 10px 0}"
                     "</style></head><body>"
                     "<h1>Modbus Dashboard</h1>");
@@ -657,8 +658,29 @@ public:
                     html += String(dev.errorCount);
                     html += F("</p><table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>");
                     
+                    unsigned long now = millis();
                     for (const auto& val : dev.currentValues) {
-                        html += F("<tr><td>");
+                        // Find the register definition to get poll interval
+                        uint32_t pollIntervalMs = 0;
+                        if (dev.deviceType) {
+                            for (const auto& reg : dev.deviceType->registers) {
+                                if (strcmp(reg.name, val.second.name) == 0) {
+                                    pollIntervalMs = reg.pollIntervalMs;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Check if value is outdated (>3 poll cycles old)
+                        bool isOutdated = false;
+                        if (pollIntervalMs > 0) {
+                            uint32_t age = (uint32_t)(now - val.second.updatedAtMs);
+                            isOutdated = age > (pollIntervalMs * 3);
+                        }
+                        
+                        html += F("<tr");
+                        if (isOutdated) html += F(" class='outdated' title='Outdated (>3 poll cycles)'");
+                        html += F("><td>");
                         html += val.second.name;
                         html += F("</td><td>");
                         html += String(val.second.value, 2);
