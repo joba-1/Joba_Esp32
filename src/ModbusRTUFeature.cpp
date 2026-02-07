@@ -794,6 +794,12 @@ void ModbusRTUFeature::processReceivedData() {
 
             endActiveTime();
 
+        } else if (_waitingForResponse && _hasPendingRequest && frame.isValid && !frame.isRequest) {
+            // Debug: why didn't this match our request?
+            LOG_W("RX mismatch: unit=%d/%d fc=%d/%d byteCount=%s",
+                  frame.unitId, _currentRequest.unitId,
+                  frame.functionCode, _currentRequest.functionCode,
+                  byteCountMatches ? "ok" : "MISMATCH");
         } else {
             // Foreign traffic (sniffed)
             if (isRequest) {
