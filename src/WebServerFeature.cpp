@@ -6,6 +6,7 @@
 #include "TimeUtils.h"
 #include "ResetManager.h"
 #include <WiFi.h>
+#include <esp_task_wdt.h>
 
 #include <esp_ota_ops.h>
 #include <Update.h>
@@ -65,6 +66,7 @@ void WebServerFeature::setupDefaultRoutes() {
         
         String title = String(DeviceInfo::getFirmwareName()) + " " + DeviceInfo::getDeviceId();
         String html = "<!DOCTYPE html><html><head><title>" + title + "</title>";
+        html += "<meta charset='UTF-8'>";
         html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
         html += "<style>"
             "body{font-family:Arial,sans-serif;margin:20px;}"
@@ -536,7 +538,9 @@ void WebServerFeature::setupDefaultRoutes() {
     _server->on("/api/update", HTTP_POST, 
         // Request handler (called after upload completes)
         [this](AsyncWebServerRequest* request) {
+            Serial.println("[OTA] Request handler called");
             if (_authEnabled && !authenticate(request)) {
+                Serial.println("[OTA] Auth failed in request handler");
                 return request->requestAuthentication();
             }
             
@@ -562,25 +566,40 @@ void WebServerFeature::setupDefaultRoutes() {
             }
             
             if (index == 0) {
+                Serial.printf("\n[OTA] Starting: %s, free heap: %u\n", filename.c_str(), ESP.getFreeHeap());
                 LOG_I("HTTP OTA update starting: %s", filename.c_str());
                 // Start with max available size
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    Serial.printf("[OTA] Begin FAILED: %s\n", Update.errorString());
                     LOG_E("HTTP OTA begin failed: %s", Update.errorString());
                     return;
                 }
+                Serial.println("[OTA] Begin OK");
             }
             
             if (len > 0) {
-                if (Update.write(data, len) != len) {
+                size_t written = Update.write(data, len);
+                if (written != len) {
+                    Serial.printf("[OTA] Write FAILED at %u: %s\n", index, Update.errorString());
                     LOG_E("HTTP OTA write failed: %s", Update.errorString());
                     return;
                 }
+                // Progress every 100KB
+                if ((index % 102400) < len) {
+                    Serial.printf("[OTA] %uKB, heap: %u\n", (index + len) / 1024, ESP.getFreeHeap());
+                }
+                // Feed watchdog and let other tasks run during upload
+                esp_task_wdt_reset();
+                yield();
             }
             
             if (final) {
+                Serial.printf("[OTA] Finalizing at %u bytes\n", index + len);
                 if (Update.end(true)) {
+                    Serial.println("[OTA] SUCCESS");
                     LOG_I("HTTP OTA update complete: %u bytes", index + len);
                 } else {
+                    Serial.printf("[OTA] End FAILED: %s\n", Update.errorString());
                     LOG_E("HTTP OTA end failed: %s", Update.errorString());
                 }
             }

@@ -614,6 +614,7 @@ public:
 
                 String html = F("<!DOCTYPE html><html><head>"
                     "<title>Modbus Dashboard</title>"
+                    "<meta charset='UTF-8'>"
                     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                     "<style>"
                     "body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}"
@@ -684,6 +685,7 @@ public:
 
                 String html = F("<!DOCTYPE html><html><head>"
                     "<title>Modbus Raw Tools</title>"
+                    "<meta charset='UTF-8'>"
                     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                     "<style>"
                     "body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}"
