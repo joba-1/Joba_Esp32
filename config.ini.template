@@ -34,9 +34,6 @@ ntp_sync_interval = 3600000             ; Milliseconds (1 hour)
 webserver_port = 80
 webserver_username = "admin"
 
-; OTA configuration
-ota_port = 3232
-
 ; InfluxDB 1.x configuration (user/password auth)
 influxdb_version = 1
 influxdb_url = ""                       ; e.g., "http://192.168.1.100:8086"
@@ -85,5 +82,5 @@ led_pulse_duration = 50
 ; Serial upload configuration
 upload_port_serial = /dev/ttyUSB0       ; Or /dev/ttyUSB* for auto-detect
 
-; OTA upload configuration
-; upload_port_ota = device-hostname.local  ; Or use IP: 192.168.1.100
+; HTTP OTA firmware update:
+; curl -u admin:password -F "firmware=@.pio/build/serial/firmware.bin" http://device-ip/api/update

@@ -4,7 +4,6 @@
 #include "WiFiManagerFeature.h"
 #include "TimeSyncFeature.h"
 #include "WebServerFeature.h"
-#include "OTAFeature.h"
 #include "StorageFeature.h"
 #include "InfluxDBFeature.h"
 #include "MQTTFeature.h"
@@ -95,7 +94,6 @@ WiFiManagerFeature wifiManager("", "", WIFI_CONFIG_PORTAL_TIMEOUT);  // AP name 
 TimeSyncFeature timeSync(NTP_SERVER1, NTP_SERVER2, TIMEZONE, NTP_SYNC_INTERVAL);
 StorageFeature storage(true);  // Format on fail
 WebServerFeature webServer(WEBSERVER_PORT, WEBSERVER_USERNAME, "");  // Password set in setup()
-OTAFeature ota("", "", OTA_PORT);  // Hostname and password set in setup()
 
 // InfluxDB: supports V1.x (user/password) and V2.x (org/bucket/token)
 // Note: Database name defaults to FIRMWARE_NAME if empty
@@ -164,7 +162,6 @@ Feature* features[] = {
     &timeSync,
     &storage,      // Filesystem before features that need it
     &webServer,
-    &ota,
     &influxDB,
     &mqtt,         // MQTT after network is ready
     &modbus        // Modbus RTU bus monitor
@@ -245,10 +242,6 @@ void setup() {
     wifiManager.setAPName(apName.c_str());
     wifiManager.setAPPassword(defaultPassword.c_str());
     webServer.setPassword(defaultPassword.c_str());
-    ota.setHostname(hostname.c_str());
-    ota.setPassword(defaultPassword.c_str());
-    ota.onOTAStart([](){ modbus.suspend(); });
-    ota.onOTAEnd([](){ modbus.resume(); });
     logging.setHostname(hostname.c_str());
     mqtt.setClientId(mqttClientId.c_str());
     mqtt.setBaseTopic(mqttBaseTopic.c_str());

@@ -8,6 +8,7 @@
 #include <WiFi.h>
 
 #include <esp_ota_ops.h>
+#include <Update.h>
 
 #include "ResetDiagnostics.h"
 
@@ -89,6 +90,11 @@ void WebServerFeature::setupDefaultRoutes() {
             "<strong>/api/reset</strong> <small>(POST)</small> "
             "<label>delayMs <input name='delayMs' type='number' value='250' min='50' max='10000'></label>"
             "<button type='submit'>Restart</button>"
+            "</form>";
+        html += "<form action='/api/update' method='post' enctype='multipart/form-data' onsubmit=\"return confirm('Upload firmware and reboot?')\">"
+            "<strong>/api/update</strong> <small>(HTTP OTA)</small> "
+            "<input type='file' name='firmware' accept='.bin'> "
+            "<button type='submit'>Upload</button>"
             "</form>";
         html += "</div>";
 
@@ -524,6 +530,62 @@ void WebServerFeature::setupDefaultRoutes() {
 
         request->send(200, "text/plain", "OK");
     });
+
+    // HTTP OTA firmware update endpoint
+    // Usage: curl -u admin:password -F "firmware=@.pio/build/serial/firmware.bin" http://device/api/update
+    _server->on("/api/update", HTTP_POST, 
+        // Request handler (called after upload completes)
+        [this](AsyncWebServerRequest* request) {
+            if (_authEnabled && !authenticate(request)) {
+                return request->requestAuthentication();
+            }
+            
+            bool success = !Update.hasError();
+            AsyncWebServerResponse* response = request->beginResponse(
+                success ? 200 : 500, 
+                "application/json",
+                success ? "{\"status\":\"ok\",\"message\":\"Update successful, rebooting...\"}" 
+                        : "{\"status\":\"error\",\"message\":\"Update failed\"}"
+            );
+            response->addHeader("Connection", "close");
+            request->send(response);
+            
+            if (success) {
+                LOG_I("HTTP OTA update successful, scheduling restart");
+                ResetManager::scheduleRestart(1000, "http_ota");
+            }
+        },
+        // Upload handler (called for each chunk)
+        [this](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+            if (_authEnabled && !authenticate(request)) {
+                return;
+            }
+            
+            if (index == 0) {
+                LOG_I("HTTP OTA update starting: %s", filename.c_str());
+                // Start with max available size
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    LOG_E("HTTP OTA begin failed: %s", Update.errorString());
+                    return;
+                }
+            }
+            
+            if (len > 0) {
+                if (Update.write(data, len) != len) {
+                    LOG_E("HTTP OTA write failed: %s", Update.errorString());
+                    return;
+                }
+            }
+            
+            if (final) {
+                if (Update.end(true)) {
+                    LOG_I("HTTP OTA update complete: %u bytes", index + len);
+                } else {
+                    LOG_E("HTTP OTA end failed: %s", Update.errorString());
+                }
+            }
+        }
+    );
     
     // 404 handler
     _server->onNotFound([](AsyncWebServerRequest* request) {
