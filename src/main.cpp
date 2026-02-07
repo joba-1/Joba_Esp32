@@ -567,5 +567,5 @@ void loop() {
 
     // Small delay to allow WiFi/TCP stack and other background tasks to run.
     // Without this, the tight loop can starve RTOS background tasks.
-    delay(1);
+    delay(2);
 }
