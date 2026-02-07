@@ -78,8 +78,9 @@ bool MQTTFeature::publish(const char* topic, const char* payload, bool retain) {
 }
 
 bool MQTTFeature::publishToBase(const char* subtopic, const char* payload, bool retain) {
-    String topic = String(_baseTopic) + "/" + subtopic;
-    return publish(topic.c_str(), payload, retain);
+    // Use instance buffer instead of heap allocation
+    snprintf(_topicBuffer, MAX_TOPIC_LEN, "%s/%s", _baseTopic, subtopic);
+    return publish(_topicBuffer, payload, retain);
 }
 
 bool MQTTFeature::subscribe(const char* topic) {
@@ -88,8 +89,9 @@ bool MQTTFeature::subscribe(const char* topic) {
 }
 
 bool MQTTFeature::subscribeToBase(const char* subtopic) {
-    String topic = String(_baseTopic) + "/" + subtopic;
-    return subscribe(topic.c_str());
+    // Use instance buffer instead of heap allocation
+    snprintf(_topicBuffer, MAX_TOPIC_LEN, "%s/%s", _baseTopic, subtopic);
+    return subscribe(_topicBuffer);
 }
 
 void MQTTFeature::onMessage(MessageCallback callback) {

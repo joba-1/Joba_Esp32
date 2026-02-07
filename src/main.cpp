@@ -17,6 +17,7 @@
 #include "ModbusIntegration.h"
 #include "ResetManager.h"
 #include "ResetDiagnostics.h"
+#include "CpuMonitor.h"
 #include <ArduinoJson.h>
 #include <esp_ota_ops.h>
 
@@ -458,12 +459,17 @@ void setup() {
     LOG_I("All features initialized");
     LOG_I("Free heap: %d bytes", ESP.getFreeHeap());
     
+    // Enable periodic CPU stats logging (every 60 seconds)
+    CpuMonitor::setLogInterval(60000);
+
     // Setup complete - turn off LED (will pulse on activity)
     led.setupComplete();
     ResetDiagnostics::setBreadcrumb("setup", "done");
 }
 
 void loop() {
+    CpuMonitor::markLoopStart();
+
     // Run all feature loop handlers
     for (size_t i = 0; i < featureCount; i++) {
         ResetDiagnostics::setBreadcrumb("loop", features[i]->getName());
@@ -556,4 +562,10 @@ void loop() {
         const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
         ResetDiagnostics::recordLoopDurationUs("modbusDevices", durUs);
     }
+
+    CpuMonitor::markLoopEnd();
+
+    // Small delay to allow WiFi/TCP stack and other background tasks to run.
+    // Without this, the tight loop can starve RTOS background tasks.
+    delay(1);
 }

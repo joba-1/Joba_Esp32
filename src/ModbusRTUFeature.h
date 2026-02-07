@@ -393,7 +393,8 @@ private:
     void updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response);
     void processQueue();
     bool sendRequest(const ModbusPendingRequest& request);
-    void sendFrame(const std::vector<uint8_t>& frame);
+    void sendFrameFromBuffer();  // Uses static _txFrameBuffer
+    void sendFrame(const std::vector<uint8_t>& frame);  // Legacy wrapper for sendRawFrame
     uint16_t calculateCRC(const uint8_t* data, size_t length) const;
     void setDE(bool transmit);
     void checkAndLogWarnings();
@@ -467,6 +468,12 @@ private:
     uint32_t _loopCounter{0};
     uint32_t _processQueueCounter{0};
     unsigned long _lastProcessQueueMs{0};
+
+    // Static TX frame buffer (avoids heap allocation per send)
+    // Max Modbus RTU frame: 256 bytes payload + 3 header + 2 CRC = 261
+    static constexpr size_t TX_FRAME_BUFFER_SIZE = 264;
+    uint8_t _txFrameBuffer[TX_FRAME_BUFFER_SIZE];
+    size_t _txFrameLen{0};
 
     // Last-loop debug snapshot (best-effort; used for diagnostics only)
     uint16_t _dbgQueueSizeInLoop{0};

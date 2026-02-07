@@ -12,6 +12,7 @@
 #include <Update.h>
 
 #include "ResetDiagnostics.h"
+#include "CpuMonitor.h"
 
 #ifndef FIRMWARE_GIT_SHA
 #define FIRMWARE_GIT_SHA unknown
@@ -501,6 +502,13 @@ void WebServerFeature::setupDefaultRoutes() {
 
             JsonObject updated = doc["updated"].to<JsonObject>();
             updated["uptimeMs"] = (uint32_t)millis();
+
+            JsonObject cpu = doc["cpu"].to<JsonObject>();
+            cpu["usagePercent"] = CpuMonitor::usagePercent();
+            cpu["busyTimeUs"] = CpuMonitor::busyTimeUs();
+            cpu["idleTimeUs"] = CpuMonitor::idleTimeUs();
+            cpu["loopCount"] = CpuMonitor::loopCount();
+            cpu["avgLoopDurationUs"] = CpuMonitor::avgLoopDurationUs();
 
             JsonObject reset = doc["reset"].to<JsonObject>();
             reset["bootCount"] = (uint32_t)ResetDiagnostics::bootCount();

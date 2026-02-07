@@ -1076,40 +1076,42 @@ void ModbusRTUFeature::processQueue() {
 }
 
 bool ModbusRTUFeature::sendRequest(const ModbusPendingRequest& request) {
-    std::vector<uint8_t> frame;
+    // Use static TX buffer instead of heap allocation
+    _txFrameLen = 0;
     
-    frame.push_back(request.unitId);
-    frame.push_back(request.functionCode);
+    _txFrameBuffer[_txFrameLen++] = request.unitId;
+    _txFrameBuffer[_txFrameLen++] = request.functionCode;
     
     switch (request.functionCode) {
         case ModbusFC::READ_COILS:
         case ModbusFC::READ_DISCRETE_INPUTS:
         case ModbusFC::READ_HOLDING_REGISTERS:
         case ModbusFC::READ_INPUT_REGISTERS:
-            frame.push_back(request.startRegister >> 8);
-            frame.push_back(request.startRegister & 0xFF);
-            frame.push_back(request.quantity >> 8);
-            frame.push_back(request.quantity & 0xFF);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.startRegister >> 8);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.startRegister & 0xFF);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.quantity >> 8);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.quantity & 0xFF);
             break;
             
         case ModbusFC::WRITE_SINGLE_REGISTER:
-            frame.push_back(request.startRegister >> 8);
-            frame.push_back(request.startRegister & 0xFF);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.startRegister >> 8);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.startRegister & 0xFF);
             if (!request.writeData.empty()) {
-                frame.push_back(request.writeData[0] >> 8);
-                frame.push_back(request.writeData[0] & 0xFF);
+                _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.writeData[0] >> 8);
+                _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.writeData[0] & 0xFF);
             }
             break;
             
         case ModbusFC::WRITE_MULTIPLE_REGISTERS:
-            frame.push_back(request.startRegister >> 8);
-            frame.push_back(request.startRegister & 0xFF);
-            frame.push_back(request.quantity >> 8);
-            frame.push_back(request.quantity & 0xFF);
-            frame.push_back(request.quantity * 2);  // Byte count
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.startRegister >> 8);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.startRegister & 0xFF);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.quantity >> 8);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.quantity & 0xFF);
+            _txFrameBuffer[_txFrameLen++] = (uint8_t)(request.quantity * 2);  // Byte count
             for (uint16_t val : request.writeData) {
-                frame.push_back(val >> 8);
-                frame.push_back(val & 0xFF);
+                if (_txFrameLen + 2 > TX_FRAME_BUFFER_SIZE - 2) break;  // Leave room for CRC
+                _txFrameBuffer[_txFrameLen++] = (uint8_t)(val >> 8);
+                _txFrameBuffer[_txFrameLen++] = (uint8_t)(val & 0xFF);
             }
             break;
             
@@ -1118,19 +1120,19 @@ bool ModbusRTUFeature::sendRequest(const ModbusPendingRequest& request) {
             return false;
     }
     
-    sendFrame(frame);
+    sendFrameFromBuffer();
     return true;
 }
 
-void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
+void ModbusRTUFeature::sendFrameFromBuffer() {
     // Calculate and append CRC
-    uint16_t crc = calculateCRC(frame.data(), frame.size());
+    uint16_t crc = calculateCRC(_txFrameBuffer, _txFrameLen);
     
     setDE(true);  // Enable transmitter
     delayMicroseconds(100);  // Small delay for transceiver
     
-    for (uint8_t byte : frame) {
-        _serial.write(byte);
+    for (size_t i = 0; i < _txFrameLen; i++) {
+        _serial.write(_txFrameBuffer[i]);
     }
     _serial.write(crc & 0xFF);
     _serial.write(crc >> 8);
@@ -1155,7 +1157,15 @@ void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
     _lastActivityTime = millis();
     _busSilent = false;
     
-    LOG_V("Modbus TX: unit=%u, FC=0x%02X, len=%u", frame[0], frame[1], frame.size());
+    LOG_V("Modbus TX: unit=%u, FC=0x%02X, len=%u", _txFrameBuffer[0], _txFrameBuffer[1], _txFrameLen);
+}
+
+// Legacy sendFrame for sendRawFrame compatibility
+void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
+    // Copy to static buffer and send
+    _txFrameLen = (frame.size() < TX_FRAME_BUFFER_SIZE - 2) ? frame.size() : TX_FRAME_BUFFER_SIZE - 2;
+    memcpy(_txFrameBuffer, frame.data(), _txFrameLen);
+    sendFrameFromBuffer();
 }
 
 bool ModbusRTUFeature::sendRawFrame(const uint8_t* data, size_t length) {

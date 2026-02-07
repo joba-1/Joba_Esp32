@@ -64,6 +64,10 @@ private:
     
     MessageCallback _messageCallback;
     
+    // Static buffer for topic building (avoids heap allocation per publish)
+    static constexpr size_t MAX_TOPIC_LEN = 128;
+    char _topicBuffer[MAX_TOPIC_LEN];
+    
     void reconnect();
     static void mqttCallback(char* topic, byte* payload, unsigned int length);
 };
