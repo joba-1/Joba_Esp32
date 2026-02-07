@@ -562,7 +562,7 @@ void ModbusRTUFeature::loop() {
 
 void ModbusRTUFeature::processReceivedData() {
     if (_rxBuffer.size() < 4) {
-        LOG_D("Incomplete frame received (size=%u)", _rxBuffer.size());
+        // Incomplete frames are common on noisy buses; don't spam logs
         _rxBuffer.clear();
         return;
     }
@@ -710,7 +710,7 @@ void ModbusRTUFeature::processReceivedData() {
 
           if (!frame.isValid) {
             _stats.crcErrors++;
-            LOG_D("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
+            LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
                 frame.unitId, frame.functionCode,
                 formatFrameHex(frame).c_str());
             recordFrameToHistory(frame);
@@ -724,12 +724,7 @@ void ModbusRTUFeature::processReceivedData() {
           // CRC-valid frame
           _stats.framesReceived++;
 
-          LOG_D("RX Frame: Unit=%d, FC=0x%02X, Data=%s, CRC=0x%04X",
-              frame.unitId, frame.functionCode,
-              formatHex(frame.data.data(), frame.dataLen).c_str(),
-              frame.crc);
-
-          // Debug: store in frame history (also closes pending CRC contexts)
+          // Frame details available via /api/modbus/monitor; don't spam logs
           recordFrameToHistory(frame);
 
         bool isOurResponse = false;
@@ -1031,11 +1026,11 @@ void ModbusRTUFeature::processQueue() {
     
     // Copy the selected request (not reference/pointer - prevents vector reallocation issues)
     ModbusPendingRequest req = _requestQueue[sendIndex];
-    LOG_D("Processing request: Unit=%d, FC=0x%02X, Addr=%d, Qty=%d",
+    LOG_V("Processing request: Unit=%d, FC=0x%02X, Addr=%d, Qty=%d",
           req.unitId, req.functionCode, req.startRegister, req.quantity);
     
     if (sendRequest(req)) {
-        LOG_D("Request sent successfully");
+        LOG_V("Request sent successfully");
         _stats.ownRequestsSent++;
 
         // Track our own FC3/FC4 requests in the register map
