@@ -559,7 +559,7 @@ void WebServerFeature::setupDefaultRoutes() {
                 ResetManager::scheduleRestart(1000, "http_ota");
             }
         },
-        // Upload handler (called for each chunk)
+        // File upload handler (multipart)
         [this](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
             if (_authEnabled && !authenticate(request)) {
                 return;
@@ -568,7 +568,6 @@ void WebServerFeature::setupDefaultRoutes() {
             if (index == 0) {
                 Serial.printf("\n[OTA] Starting: %s, free heap: %u\n", filename.c_str(), ESP.getFreeHeap());
                 LOG_I("HTTP OTA update starting: %s", filename.c_str());
-                // Start with max available size
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                     Serial.printf("[OTA] Begin FAILED: %s\n", Update.errorString());
                     LOG_E("HTTP OTA begin failed: %s", Update.errorString());
@@ -584,11 +583,9 @@ void WebServerFeature::setupDefaultRoutes() {
                     LOG_E("HTTP OTA write failed: %s", Update.errorString());
                     return;
                 }
-                // Progress every 100KB
                 if ((index % 102400) < len) {
                     Serial.printf("[OTA] %uKB, heap: %u\n", (index + len) / 1024, ESP.getFreeHeap());
                 }
-                // Feed watchdog and let other tasks run during upload
                 esp_task_wdt_reset();
                 yield();
             }
