@@ -398,7 +398,9 @@ void ModbusDeviceManager::applyReadResponseToDevice(ModbusDeviceInstance& device
 
     // Update every register definition that is covered by this read window.
     for (const auto& reg : device.deviceType->registers) {
-        if (reg.pollIntervalMs != pollIntervalMs) continue;
+        // Apply pollIntervalFactor to match the adjusted batch interval
+        uint32_t adjustedRegInterval = (uint32_t)(reg.pollIntervalMs * device.pollIntervalFactor);
+        if (adjustedRegInterval != pollIntervalMs) continue;
         if (reg.functionCode != functionCode) continue;
         if (reg.dataType == ModbusDataType::STRING) continue;
 
@@ -1022,7 +1024,9 @@ void ModbusDeviceManager::loop() {
                 const uint32_t nowMs = millis();
                 const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
                 for (const auto& reg : device.deviceType->registers) {
-                    if (reg.pollIntervalMs != interval) continue;
+                    // Apply pollIntervalFactor to match the adjusted batch interval
+                    uint32_t adjustedRegInterval = (uint32_t)(reg.pollIntervalMs * device.pollIntervalFactor);
+                    if (adjustedRegInterval != interval) continue;
                     if (reg.functionCode != fc) continue;
                     if (reg.address < startAddr) continue;
                     uint32_t offset = (uint32_t)(reg.address - startAddr);
