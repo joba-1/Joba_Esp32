@@ -162,6 +162,20 @@ public:
      */
     uint32_t getMinSilenceTimeUs() const { return _silenceTimeUs; }
     
+    /**
+     * @brief Set silence time for testing different arbitration thresholds
+     * @param us Silence time in microseconds (0 = reset to default 3.5 char times)
+     */
+    void setSilenceTimeUs(uint32_t us) {
+        if (us == 0) {
+            // Reset to default
+            _silenceTimeUs = (_baudRate > 19200) ? 1750 : (_charTimeUs * 35 / 10);
+        } else {
+            _silenceTimeUs = us;
+        }
+        LOG_I("Silence time set to %lu us (%.2f char times)", _silenceTimeUs, (float)_silenceTimeUs / _charTimeUs);
+    }
+    
     // ========================================
     // Bus Monitoring
     // ========================================
@@ -428,6 +442,11 @@ private:
     // Serial buffer emptiness tracking (best-effort for TX arbitration when loop is slow)
     bool _serialWasEmpty{true};
     unsigned long _serialEmptySinceUs{0};
+    
+    // Multi-master arbitration: wait for foreign response before transmitting
+    bool _sawForeignRequest{false};         // True if we saw a request from another master
+    unsigned long _foreignRequestTimeMs{0}; // When we saw it
+    static constexpr uint32_t FOREIGN_RESPONSE_TIMEOUT_MS = 200; // Max time to wait for their response
     
     // Frame tracking for request/response matching
     ModbusFrame _lastRequest;

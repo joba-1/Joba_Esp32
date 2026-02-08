@@ -455,6 +455,38 @@ public:
                 request->send(200, "application/json", output);
             });
 
+        // Set silence time for arbitration testing
+        // GET /api/modbus/silence?us=3000 to set 3000us
+        // GET /api/modbus/silence?us=0 to reset to default
+        // GET /api/modbus/silence to get current value
+        webServer->on("/api/modbus/silence", HTTP_GET,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                if (request->hasParam("us")) {
+                    uint32_t us = request->getParam("us")->value().toInt();
+                    modbus.setSilenceTimeUs(us);
+                }
+
+                JsonDocument doc;
+                doc["silenceTimeUs"] = modbus.getSilenceTimeUs();
+                doc["charTimeUs"] = modbus.getCharTimeUs();
+                doc["charTimes"] = (float)modbus.getSilenceTimeUs() / modbus.getCharTimeUs();
+                doc["specMinCharTimes"] = 3.5;
+                
+                String output;
+                serializeJson(doc, output);
+                request->send(200, "application/json", output);
+            });
+
+        // Reset stats for clean testing
+        webServer->on("/api/modbus/stats/reset", HTTP_POST,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+                modbus.resetStats();
+                request->send(200, "application/json", "{\"reset\":true}");
+            });
+
         // Recent CRC error contexts (before/bad/after) with full hex dumps
         auto handleModbusCrc = [&modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
@@ -708,7 +740,8 @@ public:
                         if (dev.deviceType) {
                             for (const auto& reg : dev.deviceType->registers) {
                                 if (strcmp(reg.name, val.second.name) == 0) {
-                                    pollIntervalMs = reg.pollIntervalMs;
+                                    // Apply device's poll interval factor
+                                    pollIntervalMs = (uint32_t)(reg.pollIntervalMs * dev.pollIntervalFactor);
                                     break;
                                 }
                             }

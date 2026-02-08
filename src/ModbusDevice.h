@@ -94,6 +94,7 @@ struct ModbusDeviceInstance {
     unsigned long lastPollTime;
     uint32_t successCount;
     uint32_t errorCount;
+    float pollIntervalFactor;   // Multiplier for poll intervals (from devices.json)
 
     struct ModbusPollBatch {
         uint8_t functionCode;

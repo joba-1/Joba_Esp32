@@ -266,6 +266,7 @@ bool ModbusDeviceManager::loadDeviceMappings(const char* path) {
         instance.lastPollTime = 0;
         instance.successCount = 0;
         instance.errorCount = 0;
+        instance.pollIntervalFactor = dev["pollIntervalFactor"] | 1.0f;
         
         // Initialize values for all registers
         for (const auto& reg : instance.deviceType->registers) {
@@ -315,7 +316,9 @@ void ModbusDeviceManager::rebuildPollBatches(ModbusDeviceInstance& device) {
         if (reg.pollIntervalMs == 0) continue;
         uint16_t start = reg.address;
         uint16_t end = (uint16_t)(reg.address + reg.length - 1);
-        segs.push_back({start, end, reg.functionCode, reg.pollIntervalMs});
+        // Apply device-specific poll interval factor
+        uint32_t adjustedInterval = (uint32_t)(reg.pollIntervalMs * device.pollIntervalFactor);
+        segs.push_back({start, end, reg.functionCode, adjustedInterval});
     }
 
     if (segs.empty()) return;

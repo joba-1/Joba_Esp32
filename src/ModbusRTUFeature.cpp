@@ -500,7 +500,19 @@ void ModbusRTUFeature::loop() {
 
         const uint32_t idleUs = _serialWasEmpty ? (uint32_t)(nowUs - _serialEmptySinceUs) : 0;
         const uint32_t requiredIdleUs = _silenceTimeUs;  // 3.5 char times (Modbus RTU spec)
-        const bool gapEnoughForTx = _serialWasEmpty && (idleUs > requiredIdleUs);
+        bool gapEnoughForTx = _serialWasEmpty && (idleUs > requiredIdleUs);
+        
+        // Multi-master arbitration: if we saw a foreign request, wait for its response
+        // before transmitting. This reduces collisions on busy multi-master buses.
+        if (gapEnoughForTx && _sawForeignRequest) {
+            // Check if we've waited long enough (foreign response timeout)
+            if ((nowMs - _foreignRequestTimeMs) < FOREIGN_RESPONSE_TIMEOUT_MS) {
+                gapEnoughForTx = false;  // Keep waiting
+            } else {
+                // Timeout - clear flag and proceed
+                _sawForeignRequest = false;
+            }
+        }
 
         _dbgGapUsInLoop = idleUs;
         _dbgGapEnoughForTxInLoop = gapEnoughForTx;
@@ -837,12 +849,21 @@ void ModbusRTUFeature::processReceivedData() {
 
                 _lastRequestPerUnit[frame.unitId] = frame;
                 _stats.otherRequestsSeen++;
+                
+                // Multi-master arbitration: mark that we saw a foreign request, 
+                // so we wait for its response before transmitting
+                _sawForeignRequest = true;
+                _foreignRequestTimeMs = millis();
+                
                 startActiveTime(false);
                 }
             } else {
                 if (frame.isException) {
                     _stats.otherExceptionsSeen++;
                     _intervalStats.otherFailed++;
+                    
+                    // Foreign response received - clear the "waiting for response" flag
+                    _sawForeignRequest = false;
 
                     // Pairing quality (best-effort): try to associate exception with a recent request
                     // from the same unit and matching FC.
@@ -879,6 +900,9 @@ void ModbusRTUFeature::processReceivedData() {
                 } else {
                     _stats.otherResponsesSeen++;
                     _intervalStats.otherSuccess++;
+                    
+                    // Foreign response received - clear the "waiting for response" flag
+                    _sawForeignRequest = false;
                 }
 
                 if (!frame.isException) {
@@ -1184,7 +1208,15 @@ void ModbusRTUFeature::sendFrameFromBuffer() {
     _lastActivityTime = millis();
     _busSilent = false;
     
-    LOG_V("Modbus TX: unit=%u, FC=0x%02X, len=%u", _txFrameBuffer[0], _txFrameBuffer[1], _txFrameLen);
+    // Log TX with hex dump for debugging bus issues
+    char hexBuf[64];
+    size_t hexLen = 0;
+    size_t totalLen = _txFrameLen + 2; // +2 for CRC
+    for (size_t i = 0; i < _txFrameLen && hexLen < 58; i++) {
+        hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X ", _txFrameBuffer[i]);
+    }
+    hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X %02X", crc & 0xFF, crc >> 8);
+    LOG_I("TX[%u]: %s", totalLen, hexBuf);
 }
 
 // Legacy sendFrame for sendRawFrame compatibility
