@@ -286,7 +286,7 @@ curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | pytho
 - `entries[].interval.meanMs` for each register range shows how often the other master polls each register block
 - If a `cycle` is detected, each step shows its `gap` (time available before that step). Steps with gaps larger than your RTT are safe insertion points
 
-### GET `/modbus/patterns`
+### GET `/view/modbus/patterns`
 
 Human-friendly HTML page for the bus pattern analysis data. Auto-refreshes every 10 seconds.
 Shows summary cards, transaction time histogram, register polling table, gap histogram,

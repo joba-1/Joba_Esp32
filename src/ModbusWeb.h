@@ -945,12 +945,6 @@ function render(d){
 refresh();startA();
 </script></body></html>)rawliteral";
 
-        webServer->on("/modbus/patterns", HTTP_GET,
-            [&server](AsyncWebServerRequest* request) {
-                if (!server.authenticate(request)) return request->requestAuthentication();
-                request->send_P(200, "text/html", PATTERNS_PAGE);
-            });
-
         // Device types list
         webServer->on("/api/modbus/types", HTTP_GET,
             [&devices, &server](AsyncWebServerRequest* request) {
@@ -1062,9 +1056,14 @@ refresh();startA();
                 request->send(response);
             });
 
-        // HTML tool page for tracked raw reads (shows request frame and waits for response)
-        // NOTE: Must be registered BEFORE /view/modbus to avoid prefix-match collision
-        //       in ESPAsyncWebServer.
+        // HTML pages: register more-specific paths first to avoid
+        // ESPAsyncWebServer prefix-match collisions with /view/modbus.
+        webServer->on("/view/modbus/patterns", HTTP_GET,
+            [&server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+                request->send_P(200, "text/html", PATTERNS_PAGE);
+            });
+
         webServer->on("/view/modbus/raw", HTTP_GET,
             [&server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
