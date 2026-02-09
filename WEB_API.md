@@ -300,6 +300,36 @@ Clears all bus pattern tracking data for a fresh collection window.
 curl --digest -u admin:<password> -X POST http://<device-ip>/api/modbus/patterns/reset
 ```
 
+### GET `/api/modbus/gap-scheduler`
+
+Gap-aware TX scheduler monitoring data. Returns prediction accuracy, collision stats, dynamic safety margin, and current gap prediction.
+
+```bash
+curl --digest -u admin:<password> http://<device-ip>/api/modbus/gap-scheduler | python3 -m json.tool
+```
+
+**Response fields:**
+
+| Field | Description |
+|---|---|
+| `txDecisions.inGap` | Transmissions sent into a predicted gap |
+| `txDecisions.fallback` | Transmissions sent via silence-based fallback (no prediction available) |
+| `txDecisions.deferred` | Requests deferred because predicted gap was too small |
+| `txDecisions.gapPct` | Percentage of TX that used gap prediction |
+| `prediction.successRate` | Percentage of gap-predicted TX that succeeded without collision |
+| `prediction.sufficient` | Predictions confirmed by successful response |
+| `prediction.insufficient` | Predictions that led to a collision/timeout |
+| `collisions.count` | Total detected collisions (timeout during gap window) |
+| `collisions.rate` | Collision rate as percentage of gap TX |
+| `margin.current` | Current dynamic safety margin (starts 20%, +5% per collision, −1% per 50 successes) |
+| `margin.min` / `margin.max` | Allowed margin range (10%–60%) |
+| `currentGap.valid` | Whether a gap prediction is currently available |
+| `currentGap.predictedMs` | Conservative predicted gap in ms (if valid) |
+
+### GET `/view/modbus/scheduler`
+
+Human-readable monitoring dashboard for the gap-aware TX scheduler. Auto-refreshes every 5 seconds.
+
 ---
 
 # MQTT Commands

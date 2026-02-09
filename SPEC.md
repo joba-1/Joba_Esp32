@@ -1051,6 +1051,157 @@ public:
 };
 ```
 
+#### Bus Pattern Tracking & Transition Map
+
+ModbusRTUFeature passively monitors all foreign Modbus traffic and builds a
+statistical model of the foreign master's polling behaviour:
+
+1. **`BusPatternEntry`** — per-register-range statistics: request count, interval
+   mean/stddev/min/max, and successor gap (idle time after response before the
+   next request on the bus).
+2. **`BusTransitionEntry`** — Markov chain: for each pair *(predecessor register,
+   successor register)* tracks the transition count and the gap (ms) between the
+   predecessor's response end and the successor's request start, with running
+   mean/stddev/min/max.
+3. **`BusTransitionMap`** — `std::map<uint64_t, std::map<uint64_t, BusTransitionEntry>>`
+   keyed by 64-bit pattern key (encoding unitId, FC, startRegister, quantity).
+
+Gap measurement is based on **response end time** (last byte of the response
+frame), not response start time, so the measured gap represents actual bus
+silence.
+
+The transition map is populated at runtime and continuously updated. It survives
+as long as the device is running; a `POST /api/modbus/patterns/reset` clears all
+collected data for a fresh collection window.
+
+#### Gap-Aware TX Scheduler
+
+When the ESP32 shares a Modbus RTU bus with a foreign master (e.g. an inverter's
+built-in meter polling), it must inject its own requests into the idle gaps
+between the foreign master's transactions to avoid collisions. The gap-aware TX
+scheduler uses the transition map to predict when and how long the next gap will
+be, then decides whether to send.
+
+**Design principles:**
+
+- Occasional collisions are acceptable — the device will re-request on timeout.
+- The algorithm optimises for high gap utilisation with minimal collision rate.
+- All predictions degrade gracefully: if the transition map has insufficient data,
+  the scheduler falls back to the existing silence-based send logic.
+- The foreign master may change its pattern at any time; the transition map
+  adapts continuously.
+
+##### Prediction Algorithm (`predictCurrentGap`)
+
+After a foreign response completes, the scheduler predicts the available idle
+time before the next foreign request:
+
+1. Look up the last completed transaction key in the transition map.
+2. Sum observation counts across all successor edges. Require ≥ `GAP_MIN_SAMPLES`
+   (10) total samples before trusting the prediction.
+3. For each successor edge with ≥ 2 samples, compute a conservative gap estimate:
+   `conservative = max(mean − 1σ, observed_min)`.
+4. Take the **minimum** conservative estimate across all possible successors
+   (worst-case next transition).
+5. Apply the dynamic safety margin: `predicted = conservative × (1 − safetyMargin)`.
+6. Return a `GapPrediction` struct with `valid`, `predictedGapMs`,
+   `minObservedMs`, and `sampleCount`.
+
+##### Wire Time Estimation (`estimateWireTimeMs`)
+
+Estimates the round-trip wire time for a Modbus read request + response:
+
+```
+totalBytes = 8 (request) + 5 + 2×quantity (response)
+wireMs     = totalBytes × charTimeUs / 1000 + 5ms (device turnaround)
+```
+
+At 9600 baud 8N1 this gives ~1.146 ms per byte. A single-register read takes
+~20 ms; an 18-register read takes ~50 ms.
+
+##### TX Decision Flow (`processQueue`)
+
+When a request is ready to send:
+
+1. Call `predictCurrentGap()` to get the current prediction.
+2. Estimate wire time for the selected request.
+3. Compute remaining gap: `remaining = predictedGapMs − elapsed` (time since
+   the gap window opened when the foreign response completed).
+4. **If `wireTime > remaining`**: defer the request (`txDeferred++`,
+   `gapSkippedSmall++`). The request stays in the queue for the next gap.
+5. **If gap is sufficient or no prediction available**: send the request.
+6. Track whether the TX used gap prediction (`txInGap`) or silence-based
+   fallback (`txFallback`).
+
+##### Gap Window State Machine
+
+- **Window opens** when a foreign response frame completes (`_gapWindowActive = true`,
+  `_gapWindowOpenMs = millis()`).
+- **Window closes** when the next foreign request is detected
+  (`_gapWindowActive = false`).
+- The `_sentDuringGapWindow` flag tracks whether the current pending own request
+  was sent using a gap prediction, enabling collision attribution.
+
+##### Dynamic Safety Margin
+
+The safety margin adapts based on observed outcomes:
+
+| Event | Margin change | Bounds |
+|-------|---------------|--------|
+| Collision detected (timeout during gap window) | +5% | max 60% |
+| Every 50 consecutive successful gap TXes | −1% | min 10% |
+
+Starting margin: 20%. The margin is exposed via the API and monitoring page for
+operational visibility.
+
+##### Collision Detection
+
+A "collision" is detected when:
+- A request was sent during a predicted gap window (`_sentDuringGapWindow` is true).
+- The request times out (no response received within `responseTimeoutMs`).
+
+On collision, `reportCollision()` increments the collision counter, bumps the
+safety margin by +5%, and logs a warning.
+
+##### Monitoring
+
+- **`GET /api/modbus/gap-scheduler`** — JSON with TX decisions, prediction
+  quality, collision stats, dynamic margin, current gap prediction, and timing.
+- **`GET /view/modbus/scheduler`** — Human-readable dashboard with color-coded
+  cards, progress bars, and auto-refresh (5s).
+
+##### Planned: Dynamic `pollIntervalFactor`
+
+The `pollIntervalFactor` setting in `devices.json` (per device) multiplies every
+register's `pollInterval` to slow down or speed up polling. Currently set
+manually (e.g. `16.0` = poll 16× slower than the register definition requests).
+
+**Planned automatic adaptation:**
+
+The gap scheduler will dynamically adjust each device's `pollIntervalFactor`
+based on observed bus conditions:
+
+1. **Start conservatively** — use the configured `pollIntervalFactor` or a high
+   default (e.g. 4.0) to avoid overloading the bus.
+2. **Decrease toward minimum** — when the collision rate is low (< 1%) and
+   prediction success rate is high (> 95%), gradually reduce the factor toward
+   a calculated bandwidth minimum (`F_min`). `F_min` is derived from total
+   wire demand vs. available idle bus time:
+   ```
+   totalDemandPerSec = sum of (wireTime / pollInterval) across all batches
+   availablePerSec   = 1.0 − busUtilisation
+   F_min             = totalDemandPerSec / availablePerSec × headroom
+   ```
+   At 9600 baud with 16.6% foreign bus utilisation, `F_min ≈ 0.32` with 20%
+   headroom, giving a comfortable recommended minimum of `0.50`.
+3. **Increase on pressure** — if the collision rate exceeds a threshold (e.g.
+   > 5%) or the deferred-TX rate is too high, increase the factor to back off.
+4. **Per-device independence** — each device's factor adapts independently;
+   a single unresponsive device doesn't starve others.
+
+The goal is to reach the configured refresh rates (`pollInterval` per register)
+as closely as bus conditions allow, without manual tuning.
+
 ### 11. ModbusDeviceManager
 
 **Purpose:** High-level device abstraction reading register definitions from filesystem.
@@ -1127,7 +1278,13 @@ public:
 - `GET /api/modbus/status` - Bus status and statistics
 - `GET /api/modbus/maps` - Raw register maps from monitoring
 - `GET /api/modbus/types` - List loaded device types
+- `GET /api/modbus/patterns` - Bus pattern analysis (timing, cycles, transitions)
+- `POST /api/modbus/patterns/reset` - Clear collected pattern data
+- `GET /api/modbus/gap-scheduler` - Gap scheduler stats and current prediction
 - `GET /view/modbus` - HTML dashboard
+- `GET /view/modbus/patterns` - Pattern analysis page
+- `GET /view/modbus/scheduler` - Gap scheduler monitoring page
+- `GET /view/modbus/raw` - Raw read/write tools
 
 ## PlatformIO Configuration
 

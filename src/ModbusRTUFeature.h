@@ -149,6 +149,68 @@ struct BusTransitionEntry {
  */
 using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntry>>;
 
+// ---- Gap-aware TX scheduling ----
+
+/**
+ * @brief Predicted gap window after observing a foreign transaction.
+ *
+ * When we see a foreign response complete, we look up the predecessor in the
+ * transition map and compute how much idle time is available before the likely
+ * next foreign request.  The TX scheduler uses this to decide whether to send
+ * our own request(s) into the gap.
+ */
+struct GapPrediction {
+    bool    valid{false};          // true if we have enough data to predict
+    uint32_t predictedGapMs{0};   // conservative predicted gap (mean - 1*stddev) * (1 - margin)
+    uint32_t minObservedMs{0};    // hard minimum ever observed for this predecessor
+    uint32_t sampleCount{0};      // total successor observations for this predecessor
+};
+
+/**
+ * @brief Statistics for the gap-aware TX scheduler.
+ *
+ * Tracks prediction accuracy, collision count, and the dynamic safety margin.
+ * Exposed via /api/modbus/gap-scheduler for monitoring.
+ */
+struct GapSchedulerStats {
+    // TX decisions
+    uint32_t txInGap{0};          // sent into a predicted gap
+    uint32_t txFallback{0};       // sent via silence-based fallback (no prediction)
+    uint32_t txDeferred{0};       // had request ready but gap too small — deferred
+
+    // Prediction quality
+    uint32_t predictionsUsed{0};  // times we used a gap prediction
+    uint32_t gapSufficient{0};    // prediction said OK and subsequent TX succeeded
+    uint32_t gapInsufficient{0};  // prediction said OK but we got a collision/timeout
+    uint32_t gapSkippedSmall{0};  // prediction said gap too small, skipped
+
+    // Collisions: we sent into a gap and a foreign frame appeared before our response
+    uint32_t collisions{0};
+
+    // Dynamic margin
+    float    safetyMargin{0.20f}; // current margin (starts at 20%, adapts)
+    float    initialMargin{0.20f};
+    float    maxMargin{0.60f};
+    float    minMargin{0.10f};
+
+    // Wire time budget
+    uint32_t totalWireTimeMs{0};  // cumulative wire time of our TX
+
+    // Timing
+    unsigned long lastTxMs{0};
+    unsigned long lastCollisionMs{0};
+    unsigned long lastMarginAdjustMs{0};
+
+    void reset() {
+        txInGap = txFallback = txDeferred = 0;
+        predictionsUsed = gapSufficient = gapInsufficient = gapSkippedSmall = 0;
+        collisions = 0;
+        safetyMargin = initialMargin;
+        totalWireTimeMs = 0;
+        lastTxMs = lastCollisionMs = lastMarginAdjustMs = 0;
+    }
+};
+
 /**
  * @brief Gap histogram: time between consecutive frame boundaries on the bus.
  *
@@ -635,6 +697,35 @@ public:
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
 
     /**
+     * @brief Get gap scheduler stats for monitoring
+     */
+    const GapSchedulerStats& getGapSchedulerStats() const { return _gapSchedulerStats; }
+
+    /**
+     * @brief Predict the available gap after the most recently completed foreign transaction.
+     *
+     * Looks up the last completed transaction key in the transition map and returns
+     * the conservative predicted gap (minimum across all successors, with safety margin).
+     */
+    GapPrediction predictCurrentGap() const;
+
+    /**
+     * @brief Estimate wire time for a Modbus read request+response.
+     *
+     * @param quantity Number of registers to read
+     * @return Estimated round-trip wire time in milliseconds
+     */
+    uint32_t estimateWireTimeMs(uint16_t quantity) const;
+
+    /**
+     * @brief Report a collision (foreign frame appeared during our TX window).
+     *
+     * Called from frame processing when we detect our TX was stepped on.
+     * Increases the dynamic safety margin.
+     */
+    void reportCollision();
+
+    /**
      * @brief Reset bus pattern tracking data
      */
     void resetBusPatterns();
@@ -841,6 +932,17 @@ private:
     BusTransitionMap _busTransitions;    // predecessor key -> successor key -> count
     uint64_t _lastCompletedTxKey{0};     // pattern key of the last completed (request→response) transaction
     bool _hasLastCompletedTx{false};     // true once first transaction is completed
+
+    // Gap-aware TX scheduler state
+    GapSchedulerStats _gapSchedulerStats;
+    unsigned long _gapWindowOpenMs{0};   // millis() when the current gap window opened
+    bool _gapWindowActive{false};        // true if we're in a predicted gap window
+    uint32_t _gapWindowBudgetMs{0};      // predicted available ms in this window
+    uint32_t _gapWindowUsedMs{0};        // wire time already consumed in this window
+    bool _sentDuringGapWindow{false};     // true if current pending request was sent using gap prediction
+    static constexpr uint32_t GAP_MIN_SAMPLES = 10;  // minimum transition samples before trusting prediction
+    static constexpr uint32_t GAP_MIN_USABLE_MS = 20; // minimum usable gap to attempt TX
+    static constexpr uint32_t GAP_RELAX_INTERVAL = 50; // relax margin after this many successful gap TXes
 
 public:
     /**

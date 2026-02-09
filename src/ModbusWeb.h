@@ -840,6 +840,54 @@ public:
                 request->send(200, "application/json", "{\"reset\":true}");
             });
 
+        // ---- Gap Scheduler API ----
+        webServer->on("/api/modbus/gap-scheduler", HTTP_GET,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                const auto& gs = modbus.getGapSchedulerStats();
+                auto gap = modbus.predictCurrentGap();
+                uint32_t totalTx = gs.txInGap + gs.txFallback;
+                float gapPct = totalTx > 0 ? (gs.txInGap * 100.0f / totalTx) : 0;
+                float collisionRate = gs.txInGap > 0 ? (gs.collisions * 100.0f / gs.txInGap) : 0;
+                float successRate = (gs.gapSufficient + gs.gapInsufficient) > 0
+                    ? (gs.gapSufficient * 100.0f / (gs.gapSufficient + gs.gapInsufficient)) : 0;
+
+                auto* response = request->beginResponseStream("application/json");
+                response->print(F("{\"txDecisions\":{"));
+                response->printf("\"inGap\":%u,\"fallback\":%u,\"deferred\":%u,\"total\":%u,\"gapPct\":%.1f",
+                    gs.txInGap, gs.txFallback, gs.txDeferred, totalTx, gapPct);
+                response->print(F("},\"prediction\":{"));
+                response->printf("\"used\":%u,\"sufficient\":%u,\"insufficient\":%u,\"skippedSmall\":%u,\"successRate\":%.1f",
+                    gs.predictionsUsed, gs.gapSufficient, gs.gapInsufficient, gs.gapSkippedSmall, successRate);
+                response->print(F("},\"collisions\":{"));
+                response->printf("\"count\":%u,\"rate\":%.2f", gs.collisions, collisionRate);
+                if (gs.lastCollisionMs > 0) {
+                    response->printf(",\"lastAgoMs\":%lu", (unsigned long)(millis() - gs.lastCollisionMs));
+                }
+                response->print(F("},\"margin\":{"));
+                response->printf("\"current\":%.2f,\"initial\":%.2f,\"min\":%.2f,\"max\":%.2f",
+                    gs.safetyMargin, gs.initialMargin, gs.minMargin, gs.maxMargin);
+                if (gs.lastMarginAdjustMs > 0) {
+                    response->printf(",\"lastAdjustAgoMs\":%lu", (unsigned long)(millis() - gs.lastMarginAdjustMs));
+                }
+                response->print(F("},\"wireTime\":{"));
+                response->printf("\"totalMs\":%u", gs.totalWireTimeMs);
+                response->print(F("},\"currentGap\":{"));
+                response->printf("\"valid\":%s", gap.valid ? "true" : "false");
+                if (gap.valid) {
+                    response->printf(",\"predictedMs\":%u,\"minObservedMs\":%u,\"samples\":%u",
+                        gap.predictedGapMs, gap.minObservedMs, gap.sampleCount);
+                }
+                response->print(F("},\"timing\":{"));
+                if (gs.lastTxMs > 0) {
+                    response->printf("\"lastTxAgoMs\":%lu", (unsigned long)(millis() - gs.lastTxMs));
+                }
+                response->print(F("}")); // timing
+                response->print('}');
+                request->send(response);
+            });
+
         // ---- Human-friendly bus pattern analysis page ----
         static const char PATTERNS_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1013,7 +1061,7 @@ function render(d){
     else h+=`<div class="note">Cycle detected (${cy.length} steps). Gap tracking will sync on next matching request.</div>`;
   }else h+=`<p style="color:#666">No repeating cycle detected yet. Collect more data (2+ minutes).</p>`;
 
-  h+=`<div class="footer"><a href="/">\u2190 Home</a> &middot; <a href="/api/modbus/patterns">Raw JSON</a></div>`;
+  h+=`<div class="footer"><a href="/">\u2190 Home</a> &middot; <a href="/view/modbus/scheduler">Gap Scheduler</a> &middot; <a href="/api/modbus/patterns">Raw JSON</a></div>`;
   $('content').innerHTML=h;
 }
 
@@ -1133,10 +1181,160 @@ refresh();startA();
 
         // HTML pages: register more-specific paths first to avoid
         // ESPAsyncWebServer prefix-match collisions with /view/modbus.
+
+        // ---- Gap Scheduler monitoring page ----
+        static const char SCHEDULER_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gap Scheduler</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,system-ui,sans-serif;padding:16px;max-width:900px;margin:0 auto}
+h1{color:#4fc3f7;margin-bottom:16px;font-size:1.5em}
+h2{color:#81c784;border-bottom:1px solid #333;padding-bottom:4px;margin:20px 0 10px;font-size:1.15em}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
+.card{background:#16213e;border-radius:8px;padding:12px;text-align:center}
+.card .v{font-size:1.4em;color:#4fc3f7;word-break:break-all}
+.card .l{font-size:.7em;color:#888;margin-top:2px}
+.ok .v{color:#81c784} .warn .v{color:#ffb74d} .bad .v{color:#ef5350}
+.bar-bg{background:#0d1117;border-radius:4px;height:22px;overflow:hidden;margin:6px 0}
+.bar-fill{height:100%;border-radius:4px;transition:width .5s}
+.bar-green{background:linear-gradient(90deg,#43a047,#81c784)}
+.bar-orange{background:linear-gradient(90deg,#f57c00,#ffb74d)}
+.bar-red{background:linear-gradient(90deg,#c62828,#ef5350)}
+.bar-blue{background:linear-gradient(90deg,#0288d1,#4fc3f7)}
+table{border-collapse:collapse;width:100%;font-size:.85em;margin-bottom:16px}
+th,td{border:1px solid #2a2a4a;padding:4px 8px;text-align:right}
+th{background:#16213e;color:#4fc3f7;position:sticky;top:0}
+td:first-child,th:first-child{text-align:left}
+.controls{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
+button{background:#4fc3f7;color:#000;border:none;padding:6px 14px;cursor:pointer;border-radius:4px;font-size:.85em;font-weight:600}
+button:hover{background:#81d4fa}
+.status{font-size:.8em;color:#666;margin-left:auto}
+a{color:#4fc3f7}
+.footer{margin-top:24px;font-size:.75em;color:#555;border-top:1px solid #222;padding-top:10px}
+</style></head><body>
+<h1>&#9201; Gap Scheduler Monitor</h1>
+<div class="controls">
+<button onclick="refresh()">&#8635; Refresh</button>
+<label style="font-size:.85em"><input type="checkbox" id="autoRef" checked onchange="toggleAuto()"> Auto (5s)</label>
+<span class="status" id="status">Loading...</span>
+</div>
+<div id="content"></div>
+<div class="footer"><a href="/view/modbus">&larr; Dashboard</a> | <a href="/view/modbus/patterns">Patterns</a></div>
+<script>
+let T=null;
+const $=s=>document.getElementById(s);
+function toggleAuto(){if($('autoRef').checked)startA();else stopA();}
+function startA(){stopA();T=setInterval(refresh,5000);}
+function stopA(){if(T){clearInterval(T);T=null;}}
+
+async function refresh(){
+  $('status').textContent='Fetching...';
+  try{
+    const d=await(await fetch('/api/modbus/gap-scheduler',{credentials:'include'})).json();
+    render(d);
+    $('status').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(e){$('status').textContent='Error: '+e.message;}}
+
+function fmt(n,d){return typeof n==='number'?n.toFixed(d===undefined?1:d):String(n);}
+function fms(ms){if(ms==null||ms===undefined)return'-';if(ms<1000)return fmt(ms,0)+'ms';if(ms<60000)return fmt(ms/1000,1)+'s';return fmt(ms/60000,1)+'m';}
+
+function pctBar(pct,cls){
+  return '<div class="bar-bg"><div class="bar-fill '+cls+'" style="width:'+Math.min(pct,100)+'%"></div></div>';
+}
+
+function cardClass(val,warnThresh,badThresh,invert){
+  if(invert){if(val>=warnThresh)return'ok';if(val>=badThresh)return'warn';return'bad';}
+  if(val<=warnThresh)return'ok';if(val<=badThresh)return'warn';return'bad';
+}
+
+function render(d){
+  const tx=d.txDecisions, pr=d.prediction, co=d.collisions, mg=d.margin, cg=d.currentGap;
+  let h='';
+
+  // TX Decision summary
+  h+='<h2>TX Decisions</h2><div class="cards">';
+  h+='<div class="card ok"><div class="v">'+tx.inGap+'</div><div class="l">In Gap</div></div>';
+  h+='<div class="card"><div class="v">'+tx.fallback+'</div><div class="l">Fallback</div></div>';
+  h+='<div class="card"><div class="v">'+tx.deferred+'</div><div class="l">Deferred</div></div>';
+  h+='<div class="card"><div class="v">'+tx.total+'</div><div class="l">Total TX</div></div>';
+  h+='</div>';
+
+  // Gap utilization bar
+  h+='<div style="font-size:.85em;margin-bottom:4px">Gap Utilization: <b>'+fmt(tx.gapPct,1)+'%</b> of TX used gap prediction</div>';
+  h+=pctBar(tx.gapPct,'bar-green');
+
+  // Prediction quality
+  h+='<h2>Prediction Quality</h2><div class="cards">';
+  let sr=pr.successRate;
+  let srCls=cardClass(sr,95,80,true);
+  h+='<div class="card '+srCls+'"><div class="v">'+fmt(sr,1)+'%</div><div class="l">Success Rate</div></div>';
+  h+='<div class="card ok"><div class="v">'+pr.sufficient+'</div><div class="l">Sufficient</div></div>';
+  h+='<div class="card '+(pr.insufficient>0?'bad':'ok')+'"><div class="v">'+pr.insufficient+'</div><div class="l">Insufficient</div></div>';
+  h+='<div class="card"><div class="v">'+pr.skippedSmall+'</div><div class="l">Skipped (small)</div></div>';
+  h+='</div>';
+  h+='<div style="font-size:.85em;margin-bottom:4px">Prediction Success</div>';
+  h+=pctBar(sr,'bar-blue');
+
+  // Collisions
+  h+='<h2>Collisions</h2><div class="cards">';
+  let coCls=cardClass(co.count,0,3,false);
+  h+='<div class="card '+coCls+'"><div class="v">'+co.count+'</div><div class="l">Total</div></div>';
+  h+='<div class="card '+cardClass(co.rate,1,5,false)+'"><div class="v">'+fmt(co.rate,2)+'%</div><div class="l">Rate</div></div>';
+  h+='<div class="card"><div class="v">'+(co.lastAgoMs!=null?fms(co.lastAgoMs):'-')+'</div><div class="l">Last Ago</div></div>';
+  h+='</div>';
+
+  // Safety Margin
+  h+='<h2>Safety Margin</h2><div class="cards">';
+  let mgPct=mg.current*100;
+  h+='<div class="card"><div class="v">'+fmt(mgPct,0)+'%</div><div class="l">Current</div></div>';
+  h+='<div class="card"><div class="v">'+fmt(mg.initial*100,0)+'%</div><div class="l">Initial</div></div>';
+  h+='<div class="card"><div class="v">'+fmt(mg.min*100,0)+'-'+fmt(mg.max*100,0)+'%</div><div class="l">Range</div></div>';
+  if(mg.lastAdjustAgoMs!=null)
+    h+='<div class="card"><div class="v">'+fms(mg.lastAdjustAgoMs)+'</div><div class="l">Last Adjust</div></div>';
+  h+='</div>';
+  // margin bar: show position within min..max range
+  let mgRange=mg.max-mg.min;
+  let mgPos=mgRange>0?((mg.current-mg.min)/mgRange*100):50;
+  h+='<div style="font-size:.85em;margin-bottom:4px">Margin position ('+fmt(mg.min*100,0)+'% .. '+fmt(mg.max*100,0)+'%)</div>';
+  h+=pctBar(mgPos, mgPct>40?'bar-red':mgPct>25?'bar-orange':'bar-green');
+
+  // Current Gap Prediction
+  h+='<h2>Current Gap Prediction</h2><div class="cards">';
+  if(cg.valid){
+    h+='<div class="card ok"><div class="v">'+cg.predictedMs+'ms</div><div class="l">Predicted</div></div>';
+    h+='<div class="card"><div class="v">'+cg.minObservedMs+'ms</div><div class="l">Min Observed</div></div>';
+    h+='<div class="card"><div class="v">'+cg.samples+'</div><div class="l">Samples</div></div>';
+  } else {
+    h+='<div class="card warn"><div class="v">N/A</div><div class="l">No valid prediction</div></div>';
+  }
+  h+='</div>';
+
+  // Wire time & timing
+  h+='<h2>Timing</h2><div class="cards">';
+  h+='<div class="card"><div class="v">'+fms(d.wireTime.totalMs)+'</div><div class="l">Total Wire Time</div></div>';
+  if(d.timing.lastTxAgoMs!=null)
+    h+='<div class="card"><div class="v">'+fms(d.timing.lastTxAgoMs)+'</div><div class="l">Last TX Ago</div></div>';
+  h+='</div>';
+
+  $('content').innerHTML=h;
+}
+
+refresh();
+if($('autoRef').checked)startA();
+</script>
+</body></html>)rawliteral";
+
+        webServer->on("/view/modbus/scheduler", HTTP_GET,
+            [&server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+                request->send(200, "text/html", SCHEDULER_PAGE);
+            });
+
         webServer->on("/view/modbus/patterns", HTTP_GET,
             [&server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
-                request->send_P(200, "text/html", PATTERNS_PAGE);
+                request->send(200, "text/html", PATTERNS_PAGE);
             });
 
         webServer->on("/view/modbus/raw", HTTP_GET,
@@ -1276,7 +1474,13 @@ refresh();startA();
                     "}"
                     "function fetchData(){fetch('/api/modbus/dashboard').then(r=>r.json()).then(render).catch(e=>console.error(e));}"
                     "fetchData();setInterval(fetchData,5000);"
-                    "</script></body></html>");
+                    "</script>"
+                    "<div style='margin-top:12px;font-size:13px'>"
+                    "<a href='/view/modbus/patterns' style='color:#4fc3f7'>Pattern Analysis</a> | "
+                    "<a href='/view/modbus/scheduler' style='color:#4fc3f7'>Gap Scheduler</a> | "
+                    "<a href='/view/modbus/raw' style='color:#4fc3f7'>Raw Tools</a>"
+                    "</div>"
+                    "</body></html>");
 
                 request->send(200, "text/html", html);
             });
