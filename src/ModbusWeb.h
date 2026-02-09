@@ -1062,64 +1062,9 @@ refresh();startA();
                 request->send(response);
             });
 
-        webServer->on("/view/modbus", HTTP_GET,
-            [&devices, &modbus, &server](AsyncWebServerRequest* request) {
-                if (!server.authenticate(request)) return request->requestAuthentication();
-
-                // Static HTML shell - data loaded via AJAX
-                String html = F("<!DOCTYPE html><html><head>"
-                    "<title>Modbus Dashboard</title>"
-                    "<meta charset='UTF-8'>"
-                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<style>"
-                    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
-                    ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
-                    ".device{border-left:4px solid #2196F3}"
-                    ".status{border-left:4px solid #4CAF50}"
-                    "table{width:100%;border-collapse:collapse;background:#16213e}"
-                    "th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #2a2a4a}"
-                    "th{background:#0f3460;color:#2196F3}"
-                    ".ok{color:#4CAF50}.err{color:#F44336}"
-                    ".outdated{opacity:0.4;color:#666}"
-                    "h1{color:#2196F3}h2{color:#eee;margin:0 0 10px 0}"
-                    ".update-info{font-size:12px;color:#666;margin-top:10px}"
-                    ".flash{animation:flash 0.3s}"
-                    "@keyframes flash{0%{background:#2a4a6a}100%{background:transparent}}"
-                    "</style></head><body>"
-                    "<h1>Modbus Dashboard</h1>"
-                    "<div id='content'>Loading...</div>"
-                    "<div class='update-info'>Auto-refresh every 5s | Last update: <span id='lastUpdate'>-</span></div>"
-                    "<script>"
-                    "let prev={};"
-                    "function render(d){"
-                    "let h='<div class=\"card status\"><h2>Bus Status</h2><p>';"
-                    "h+='Silent: <span class=\"'+(d.status.silent?'ok':'err')+'\">'+(d.status.silent?'Yes':'No')+'</span>';"
-                    "h+=' | Queue: '+d.status.queue+' | RX: '+d.status.rx+' | TX: '+d.status.tx+' | CRC Errors: '+d.status.crcErrors+'</p></div>';"
-                    "d.devices.forEach(dev=>{"
-                    "h+='<div class=\"card device\"><h2>Unit '+dev.unitId+' - '+dev.type+'</h2>';"
-                    "h+='<p>Success: '+dev.success+' | Errors: '+dev.errors+'</p>';"
-                    "h+='<table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>';"
-                    "dev.values.forEach(v=>{"
-                    "let key=dev.unitId+'_'+v.n;"
-                    "let changed=prev[key]!==undefined&&prev[key]!==v.v;"
-                    "prev[key]=v.v;"
-                    "h+='<tr'+(v.old?' class=\"outdated\" title=\"Outdated\"':'')+'>';"
-                    "h+='<td>'+v.n+'</td><td'+(changed?' class=\"flash\"':'')+'>'+v.v.toFixed(2)+'</td>';"
-                    "h+='<td>'+v.u+'</td><td class=\"'+(v.ok?'ok':'err')+'\">'+(v.ok?'\\u2713':'\\u2717')+'</td></tr>';"
-                    "});"
-                    "h+='</table></div>';"
-                    "});"
-                    "document.getElementById('content').innerHTML=h;"
-                    "document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();"
-                    "}"
-                    "function fetchData(){fetch('/api/modbus/dashboard').then(r=>r.json()).then(render).catch(e=>console.error(e));}"
-                    "fetchData();setInterval(fetchData,5000);"
-                    "</script></body></html>");
-
-                request->send(200, "text/html", html);
-            });
-
         // HTML tool page for tracked raw reads (shows request frame and waits for response)
+        // NOTE: Must be registered BEFORE /view/modbus to avoid prefix-match collision
+        //       in ESPAsyncWebServer.
         webServer->on("/view/modbus/raw", HTTP_GET,
             [&server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
@@ -1181,7 +1126,7 @@ refresh();startA();
                     "  const fcc  = parseInt(fc,10)||3;"
                     "  const req = [unit, fcc, (addr>>8)&0xFF, addr&0xFF, (cnt>>8)&0xFF, cnt&0xFF];"
                     "  const crc = crc16Modbus(req);"
-                    "  req.push(crc & 0xFF, (crc>>8)&0xFF);" // Modbus CRC is little-endian on the wire
+                    "  req.push(crc & 0xFF, (crc>>8)&0xFF);"
                     "  qs('req').textContent = toHex(req);"
                     "  qs('out').textContent='Queueing...';"
                     "  const url=`/api/modbus/raw/readTracked?unit=${encodeURIComponent(u)}&address=${encodeURIComponent(a)}&count=${encodeURIComponent(c)}&fc=${encodeURIComponent(fc)}`;"
@@ -1200,6 +1145,63 @@ refresh();startA();
                     "  if(j.completed) return;"
                     "  setTimeout(()=>pollResult(id,n+1), 250);"
                     "}"
+                    "</script></body></html>");
+
+                request->send(200, "text/html", html);
+            });
+
+        webServer->on("/view/modbus", HTTP_GET,
+            [&devices, &modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                // Static HTML shell - data loaded via AJAX
+                String html = F("<!DOCTYPE html><html><head>"
+                    "<title>Modbus Dashboard</title>"
+                    "<meta charset='UTF-8'>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<style>"
+                    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
+                    ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
+                    ".device{border-left:4px solid #2196F3}"
+                    ".status{border-left:4px solid #4CAF50}"
+                    "table{width:100%;border-collapse:collapse;background:#16213e}"
+                    "th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #2a2a4a}"
+                    "th{background:#0f3460;color:#2196F3}"
+                    ".ok{color:#4CAF50}.err{color:#F44336}"
+                    ".outdated{opacity:0.4;color:#666}"
+                    "h1{color:#2196F3}h2{color:#eee;margin:0 0 10px 0}"
+                    ".update-info{font-size:12px;color:#666;margin-top:10px}"
+                    ".flash{animation:flash 0.3s}"
+                    "@keyframes flash{0%{background:#2a4a6a}100%{background:transparent}}"
+                    "</style></head><body>"
+                    "<h1>Modbus Dashboard</h1>"
+                    "<div id='content'>Loading...</div>"
+                    "<div class='update-info'>Auto-refresh every 5s | Last update: <span id='lastUpdate'>-</span></div>"
+                    "<script>"
+                    "let prev={};"
+                    "function render(d){"
+                    "let h='<div class=\"card status\"><h2>Bus Status</h2><p>';"
+                    "h+='Silent: <span class=\"'+(d.status.silent?'ok':'err')+'\">'+(d.status.silent?'Yes':'No')+'</span>';"
+                    "h+=' | Queue: '+d.status.queue+' | RX: '+d.status.rx+' | TX: '+d.status.tx+' | CRC Errors: '+d.status.crcErrors+'</p></div>';"
+                    "d.devices.forEach(dev=>{"
+                    "h+='<div class=\"card device\"><h2>Unit '+dev.unitId+' - '+dev.type+'</h2>';"
+                    "h+='<p>Success: '+dev.success+' | Errors: '+dev.errors+'</p>';"
+                    "h+='<table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>';"
+                    "dev.values.forEach(v=>{"
+                    "let key=dev.unitId+'_'+v.n;"
+                    "let changed=prev[key]!==undefined&&prev[key]!==v.v;"
+                    "prev[key]=v.v;"
+                    "h+='<tr'+(v.old?' class=\"outdated\" title=\"Outdated\"':'')+'>';"
+                    "h+='<td>'+v.n+'</td><td'+(changed?' class=\"flash\"':'')+'>'+v.v.toFixed(2)+'</td>';"
+                    "h+='<td>'+v.u+'</td><td class=\"'+(v.ok?'ok':'err')+'\">'+(v.ok?'\\u2713':'\\u2717')+'</td></tr>';"
+                    "});"
+                    "h+='</table></div>';"
+                    "});"
+                    "document.getElementById('content').innerHTML=h;"
+                    "document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();"
+                    "}"
+                    "function fetchData(){fetch('/api/modbus/dashboard').then(r=>r.json()).then(render).catch(e=>console.error(e));}"
+                    "fetchData();setInterval(fetchData,5000);"
                     "</script></body></html>");
 
                 request->send(200, "text/html", html);
