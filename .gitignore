@@ -13,3 +13,4 @@ config.ini
 
 # Auto-generated build/FS version manifest (created by pre_build.py)
 data/build_info.json
+misc/gap_data.jsonl

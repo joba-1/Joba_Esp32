@@ -99,7 +99,55 @@ struct BusPatternEntry {
     double   intervalSumSq{0};
     uint32_t intervalMin{UINT32_MAX};
     uint32_t intervalMax{0};
+
+    // --- Successor gap stats ---
+    // Gap (ms) between this transaction's response and the NEXT request on the bus.
+    // This answers: "how long is the bus idle after this register is polled?"
+    uint32_t successorGapCount{0};
+    double   successorGapSum{0};
+    double   successorGapSumSq{0};
+    uint32_t successorGapMin{UINT32_MAX};
+    uint32_t successorGapMax{0};
+
+    void recordSuccessorGap(uint32_t gapMs) {
+        ++successorGapCount;
+        successorGapSum += gapMs;
+        successorGapSumSq += (double)gapMs * gapMs;
+        if (gapMs < successorGapMin) successorGapMin = gapMs;
+        if (gapMs > successorGapMax) successorGapMax = gapMs;
+    }
 };
+
+/**
+ * @brief Transition entry: from pattern A to pattern B, with gap statistics.
+ *
+ * Tracks both how often a transition occurs and the idle-bus gap (ms)
+ * between the predecessor's response and the successor's request.
+ * This enables per-transition TX window prediction.
+ */
+struct BusTransitionEntry {
+    uint32_t count{0};
+    double   gapSum{0};
+    double   gapSumSq{0};
+    uint32_t gapMin{UINT32_MAX};
+    uint32_t gapMax{0};
+
+    void record(uint32_t gapMs) {
+        ++count;
+        gapSum += gapMs;
+        gapSumSq += (double)gapMs * gapMs;
+        if (gapMs < gapMin) gapMin = gapMs;
+        if (gapMs > gapMax) gapMax = gapMs;
+    }
+};
+
+/**
+ * @brief Transition map: predecessor key -> (successor key -> transition entry).
+ *
+ * This creates a weighted Markov chain for the bus polling sequence,
+ * where each edge has gap statistics for TX window prediction.
+ */
+using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntry>>;
 
 /**
  * @brief Gap histogram: time between consecutive frame boundaries on the bus.
@@ -582,6 +630,11 @@ public:
     int getCycleTrackingPos() const { return _cycleTrackingPos; }
 
     /**
+     * @brief Get transition map (predecessor -> successor -> count)
+     */
+    const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
+
+    /**
      * @brief Reset bus pattern tracking data
      */
     void resetBusPatterns();
@@ -783,6 +836,11 @@ private:
     int _cycleTrackingPos{-1};                    // -1 = not synced to cycle
     unsigned long _lastTransactionEndMs{0};
     bool _hasLastTransactionEnd{false};
+
+    // Successor gap + transition tracking
+    BusTransitionMap _busTransitions;    // predecessor key -> successor key -> count
+    uint64_t _lastCompletedTxKey{0};     // pattern key of the last completed (request→response) transaction
+    bool _hasLastCompletedTx{false};     // true once first transaction is completed
 
 public:
     /**

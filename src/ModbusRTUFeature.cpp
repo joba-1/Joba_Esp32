@@ -954,6 +954,12 @@ void ModbusRTUFeature::processReceivedData() {
                                 // Record observed transaction time (request → response)
                                 uint32_t rtt = (uint32_t)(frame.timestamp - req.timestamp);
                                 _busTransactionStats.record(rtt);
+
+                                // Remember last completed transaction for successor gap tracking
+                                uint16_t startReg = (req.data[0] << 8) | req.data[1];
+                                uint16_t qty      = (req.data[2] << 8) | req.data[3];
+                                _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
+                                _hasLastCompletedTx = true;
                             }
                         }
                     }
@@ -1726,6 +1732,18 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
         e.lastSeenMs = frame.timestamp;
     }
 
+    // Record successor gap on the PREVIOUS completed transaction
+    // "After transaction X finished, the bus was idle for Y ms before this request"
+    if (_hasLastCompletedTx && _hasLastTransactionEnd && frame.timestamp > _lastTransactionEndMs) {
+        uint32_t gapMs = (uint32_t)(frame.timestamp - _lastTransactionEndMs);
+        auto predIt = _busPatterns.find(_lastCompletedTxKey);
+        if (predIt != _busPatterns.end()) {
+            predIt->second.recordSuccessorGap(gapMs);
+        }
+        // Record transition with gap: predecessor -> this request
+        _busTransitions[_lastCompletedTxKey][key].record(gapMs);
+    }
+
     // Record into cycle sequence ring buffer
     _cycleSeq[_cycleSeqIndex] = key;
     _cycleSeqIndex = (_cycleSeqIndex + 1) % CYCLE_SEQ_SIZE;
@@ -1792,6 +1810,9 @@ void ModbusRTUFeature::resetBusPatterns() {
     _cycleTrackingPos = -1;
     _lastTransactionEndMs = 0;
     _hasLastTransactionEnd = false;
+    _lastCompletedTxKey = 0;
+    _hasLastCompletedTx = false;
+    _busTransitions.clear();
     _cycleSeqIndex = 0;
     _cycleSeqCount = 0;
     memset(_cycleSeq, 0, sizeof(_cycleSeq));

@@ -699,6 +699,18 @@ public:
                                          e.intervalCount, e.intervalMin, e.intervalMax,
                                          mean, stddev);
                     }
+                    // Successor gap: idle time after this transaction's response
+                    if (e.successorGapCount > 0) {
+                        double sgMean = e.successorGapSum / e.successorGapCount;
+                        double sgVar = (e.successorGapCount > 1)
+                            ? (e.successorGapSumSq - e.successorGapSum * e.successorGapSum / e.successorGapCount) / (e.successorGapCount - 1)
+                            : 0.0;
+                        double sgStd = (sgVar > 0) ? sqrt(sgVar) : 0.0;
+                        response->printf(",\"successorGap\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,"
+                                         "\"meanMs\":%.1f,\"stddevMs\":%.1f}",
+                                         e.successorGapCount, e.successorGapMin, e.successorGapMax,
+                                         sgMean, sgStd);
+                    }
                     response->print('}');
                 }
                 response->print(']');
@@ -754,7 +766,70 @@ public:
                     }
                     response->print('}');
                 }
-                response->print(F("]}"));
+                response->print(F("]"));
+
+                // ---- Transitions: which request follows which? ----
+                {
+                    const BusTransitionMap& transitions = modbus.getBusTransitions();
+                    const auto& patterns = modbus.getBusPatterns();
+                    response->print(F(",\"transitions\":["));
+                    bool firstTx = true;
+                    for (const auto& pred : transitions) {
+                        // Find predecessor pattern info
+                        auto predPat = patterns.find(pred.first);
+                        if (predPat == patterns.end()) continue;
+                        const BusPatternEntry& pe = predPat->second;
+
+                        // Find top successors by count (limit to top 4 to save bandwidth)
+                        struct SuccEntry { uint64_t key; const BusTransitionEntry* te; };
+                        SuccEntry top[4] = {};
+                        size_t topN = 0;
+                        for (const auto& succ : pred.second) {
+                            if (topN < 4) {
+                                top[topN++] = {succ.first, &succ.second};
+                            } else {
+                                // Replace smallest
+                                size_t minIdx = 0;
+                                for (size_t j = 1; j < 4; j++) {
+                                    if (top[j].te->count < top[minIdx].te->count) minIdx = j;
+                                }
+                                if (succ.second.count > top[minIdx].te->count) {
+                                    top[minIdx] = {succ.first, &succ.second};
+                                }
+                            }
+                        }
+
+                        if (!firstTx) response->print(',');
+                        firstTx = false;
+                        response->printf("{\"from\":{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u},\"to\":[",
+                                         pe.unitId, pe.functionCode, pe.startRegister, pe.quantity);
+                        bool firstSucc = true;
+                        for (size_t i = 0; i < topN; i++) {
+                            auto succPat = patterns.find(top[i].key);
+                            if (succPat == patterns.end()) continue;
+                            const BusPatternEntry& se = succPat->second;
+                            const BusTransitionEntry& te = *top[i].te;
+                            if (!firstSucc) response->print(',');
+                            firstSucc = false;
+                            response->printf("{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u,\"count\":%u",
+                                             se.unitId, se.functionCode, se.startRegister, se.quantity, te.count);
+                            if (te.count > 0) {
+                                double gMean = te.gapSum / te.count;
+                                double gVar = (te.count > 1)
+                                    ? (te.gapSumSq - te.gapSum * te.gapSum / te.count) / (te.count - 1)
+                                    : 0.0;
+                                double gStd = (gVar > 0) ? sqrt(gVar) : 0.0;
+                                response->printf(",\"gap\":{\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f}",
+                                                 te.gapMin, te.gapMax, gMean, gStd);
+                            }
+                            response->print('}');
+                        }
+                        response->print("]}");
+                    }
+                    response->print(']');
+                }
+
+                response->print('}');
                 request->send(response);
             });
 
