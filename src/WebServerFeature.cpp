@@ -401,15 +401,16 @@ void WebServerFeature::setupDefaultRoutes() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Storage - Files</title>
     <style>
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:20px;background:#1a1a2e;color:#eee}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}
         .container{max-width:1200px;margin:0 auto}
-        h1{color:#00d4ff}
-        .table-container{background:#16213e;border-radius:12px;padding:10px;width:max-content;min-width:100%}
+        h1{color:#4CAF50}
+        .table-container{background:#16213e;border-radius:8px;padding:10px;width:max-content;min-width:100%;box-shadow:0 2px 4px rgba(0,0,0,0.3)}
         table{width:100%;border-collapse:collapse;font-size:0.95em;background:#16213e}
-        th,td{padding:10px;border-bottom:1px solid #2a2a4a}
-        th{background:#0f3460;color:#00d4ff;text-align:left}
-        a.btn{background:#00d4ff;color:#1a1a2e;padding:6px 10px;border-radius:6px;text-decoration:none;font-weight:600}
-        .path{margin-bottom:10px;color:#ccc}
+        th,td{padding:8px 10px;border-bottom:1px solid #2a2a4a}
+        th{background:#0f3460;color:#4CAF50;text-align:left}
+        .btn{background:#4CAF50;color:#1a1a2e;padding:6px 10px;border-radius:6px;text-decoration:none;font-weight:600;border:none;cursor:pointer}
+        .btn:hover{background:#388E3C}
+        a.btn{display:inline-block}
         .controls{margin-bottom:10px}
     </style>
 </head>
@@ -419,7 +420,7 @@ void WebServerFeature::setupDefaultRoutes() {
         <div class="controls">
             <button class="btn" onclick="goUp()">Up</button>
             <span style="margin-left:10px;color:#ccc">Current: <span id="currentPath">/</span></span>
-            <span style="margin-left:20px;font-size:0.9em;color:#999" id="statusMsg"></span>
+            <span style="margin-left:20px;font-size:0.9em;color:#888" id="statusMsg"></span>
         </div>
         <div class="table-container">
             <table id="filesTable">
