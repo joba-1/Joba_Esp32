@@ -362,11 +362,16 @@ void ModbusRTUFeature::loop() {
         _activeStartTimeUs = nowUs;
     }
     
-    // Read available data, using per-byte timestamps to detect inter-character gaps.
-    // IMPORTANT: Do not drain indefinitely. On a busy bus the UART can remain non-empty
-    // continuously, which would starve the rest of the firmware and prevent TX arbitration.
-    // Also: when we have queued requests to send, favor draining RX so we can find
-    // an inter-frame gap and transmit.
+    // Read available data from UART FIFO into the RX buffer.
+    // IMPORTANT: Do NOT use per-byte micros() timestamps to detect inter-character
+    // gaps (1.5 char times). The UART hardware buffers bytes and we read them in
+    // bursts when loop() runs.  The read-time gap between the last byte of the
+    // previous loop() call and the first byte of this one includes loop processing
+    // time—NOT actual bus silence.  At 9600 baud the 1.5 char threshold is ~1.56ms,
+    // but a typical ESP32 loop() period is 2-5ms, so every loop with bytes would
+    // falsely trigger processReceivedData(), tearing valid frames into 2-3 byte
+    // chunks.  Instead we rely SOLELY on the 3.5 char silence check below, plus
+    // the scanning parser in processReceivedData() to handle concatenated frames.
     const bool wantsToTransmitSoon = (!_waitingForResponse && !_requestQueue.empty());
     const size_t maxRxBytesThisLoop = wantsToTransmitSoon ? 1024 : 256;
     size_t rxBytesThisLoop = 0;
@@ -374,12 +379,6 @@ void ModbusRTUFeature::loop() {
         unsigned long byteTimeUs = micros();
         uint8_t byte = _serial.read();
         rxBytesThisLoop++;
-
-        // Check for inter-character timeout (1.5 char times = new frame start)
-        if (_rxBuffer.size() > 0 && (byteTimeUs - _lastByteTime) > (_charTimeUs * 15 / 10)) {
-            // Process previous frame before starting new one
-            processReceivedData();
-        }
 
         if (_rxBuffer.empty()) {
             _rxBufferStartUs = (uint32_t)byteTimeUs;
@@ -556,9 +555,9 @@ void ModbusRTUFeature::loop() {
                     lastRxUs = (uint32_t)byteTimeUs;
                     _serialWasEmpty = false;
 
-                    // Frame boundary detection while arbitrating.
-                    if (_rxBuffer.size() > 0 && (byteTimeUs - _lastByteTime) > (_charTimeUs * 15 / 10)) {
-                        processReceivedData();
+                    if (_rxBuffer.empty()) {
+                        _rxBufferStartUs = (uint32_t)byteTimeUs;
+                        _rxBufferStartMs = (uint32_t)millis();
                     }
                     _rxBuffer.push_back(byte);
                     _lastByteTime = byteTimeUs;
