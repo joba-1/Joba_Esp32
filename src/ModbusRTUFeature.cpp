@@ -1299,9 +1299,10 @@ void ModbusRTUFeature::sendFrame(const std::vector<uint8_t>& frame) {
 
 bool ModbusRTUFeature::sendRawFrame(const uint8_t* data, size_t length) {
     if (!_busSilent) return false;
-    
-    std::vector<uint8_t> frame(data, data + length);
-    sendFrame(frame);
+    // Copy directly to static TX buffer (avoids heap-allocating a vector)
+    _txFrameLen = (length < TX_FRAME_BUFFER_SIZE - 2) ? length : TX_FRAME_BUFFER_SIZE - 2;
+    memcpy(_txFrameBuffer, data, _txFrameLen);
+    sendFrameFromBuffer();
     return true;
 }
 
@@ -1652,6 +1653,7 @@ void ModbusRTUFeature::checkAndLogWarnings() {
 
 String ModbusRTUFeature::formatHex(const uint8_t* data, size_t length) const {
     String result;
+    result.reserve(length * 3);  // "XX " per byte, avoids per-byte reallocation
     for (size_t i = 0; i < length; i++) {
         if (i > 0) result += ' ';
         char buf[4];
@@ -1803,32 +1805,31 @@ void ModbusRTUFeature::detectCycle() {
     size_t available = (_cycleSeqCount < CYCLE_SEQ_SIZE) ? _cycleSeqCount : CYCLE_SEQ_SIZE;
     if (available < 4) return;
 
-    // Build the sequence in chronological order
-    std::vector<uint64_t> seq;
-    seq.reserve(available);
+    // Build the sequence in chronological order (stack array, avoids heap allocation)
+    uint64_t seq[CYCLE_SEQ_SIZE];
     if (_cycleSeqCount >= CYCLE_SEQ_SIZE) {
         // Ring buffer wrapped — oldest is at _cycleSeqIndex
         for (size_t i = 0; i < CYCLE_SEQ_SIZE; ++i) {
-            seq.push_back(_cycleSeq[(_cycleSeqIndex + i) % CYCLE_SEQ_SIZE]);
+            seq[i] = _cycleSeq[(_cycleSeqIndex + i) % CYCLE_SEQ_SIZE];
         }
     } else {
         for (size_t i = 0; i < _cycleSeqCount; ++i) {
-            seq.push_back(_cycleSeq[i]);
+            seq[i] = _cycleSeq[i];
         }
     }
 
-    // Try cycle lengths from 1 to seq.size()/2
+    // Try cycle lengths from 1 to available/2
     size_t bestLen = 0;
     size_t bestMatches = 0;
-    for (size_t tryLen = 1; tryLen <= seq.size() / 2 && tryLen <= 64; ++tryLen) {
+    for (size_t tryLen = 1; tryLen <= available / 2 && tryLen <= 64; ++tryLen) {
         size_t matches = 0;
-        for (size_t i = tryLen; i < seq.size(); ++i) {
+        for (size_t i = tryLen; i < available; ++i) {
             if (seq[i] == seq[i % tryLen]) {
                 matches++;
             }
         }
         // Require >80% match rate for a valid cycle
-        size_t compared = seq.size() - tryLen;
+        size_t compared = available - tryLen;
         if (compared > 0 && matches * 100 / compared > 80) {
             if (matches > bestMatches || (matches == bestMatches && tryLen < bestLen)) {
                 bestLen = tryLen;
@@ -1848,7 +1849,7 @@ void ModbusRTUFeature::detectCycle() {
             ce.quantity      = (uint16_t)(k & 0xFFFF);
             _detectedCycle.push_back(ce);
         }
-        size_t compared = seq.size() - bestLen;
+        size_t compared = available - bestLen;
         size_t matchPct = (compared > 0) ? (bestMatches * 100 / compared) : 0;
         LOG_I("Bus cycle detected: length=%u, match=%u%% (%u/%u)",
               (unsigned)bestLen, (unsigned)matchPct,

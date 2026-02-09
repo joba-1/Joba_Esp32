@@ -282,14 +282,21 @@ void setup() {
             JsonDocument doc;
             DeserializationError err = deserializeJson(doc, payload);
 
-            String id = doc["id"].is<const char*>() ? String((const char*)doc["id"]) : String((uint32_t)millis());
+            // Use fixed buffer for id to avoid heap-allocating a String in the lambda capture
+            char idBuf[32];
+            if (doc["id"].is<const char*>()) {
+                strncpy(idBuf, doc["id"].as<const char*>(), sizeof(idBuf) - 1);
+                idBuf[sizeof(idBuf) - 1] = '\0';
+            } else {
+                snprintf(idBuf, sizeof(idBuf), "%u", (uint32_t)millis());
+            }
             uint8_t unitId = doc["unit"] | 0;
             uint16_t address = doc["address"] | 0;
             uint16_t count = doc["count"] | 0;
             uint8_t fc = doc["fc"] | 3;
 
             JsonDocument ack;
-            ack["id"] = id;
+            ack["id"] = idBuf;
             ack["topic"] = (const char*)modbusRawReadTopic.c_str();
 
             if (err || unitId == 0 || count == 0) {
@@ -313,9 +320,9 @@ void setup() {
 
             bool queued = modbus.queueReadRegisters(
                 unitId, fc, address, count,
-                [id](bool success, const ModbusFrame& response) {
+                [idBuf](bool success, const ModbusFrame& response) {
                     JsonDocument resp;
-                    resp["id"] = id;
+                    resp["id"] = idBuf;
                     resp["unitId"] = response.unitId;
                     resp["functionCode"] = response.functionCode;
                     resp["success"] = success;

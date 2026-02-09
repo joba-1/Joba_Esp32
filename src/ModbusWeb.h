@@ -1228,8 +1228,7 @@ refresh();startA();
                 }
 
                 JsonArray frames = doc["recentFrames"].to<JsonArray>();
-                // need to implement using the frame history buffer in ModbusRTUFeature
-                for (const auto& frame : modbus.getRecentFrames()) {
+                modbus.forEachRecentFrame([&](const ModbusFrame& frame) {
                     JsonObject f = frames.add<JsonObject>();
 
                     JsonObject updated = f["updated"].to<JsonObject>();
@@ -1291,7 +1290,7 @@ refresh();startA();
                             }
                         }
                     }
-                }
+                });
 
                 String output;
                 serializeJson(doc, output);

@@ -733,7 +733,6 @@ private:
     static const size_t FRAME_HISTORY_SIZE = 20;
     ModbusFrame _frameHistory[FRAME_HISTORY_SIZE];
     size_t _frameHistoryIndex = 0;
-    mutable std::vector<ModbusFrame> _recentFramesCache;
 
     // RX buffer timing (best-effort start-of-buffer timestamps)
     uint32_t _rxBufferStartUs{0};
@@ -789,16 +788,18 @@ public:
     /**
      * @brief Get recent RX frames for debugging (valid and invalid, last FRAME_HISTORY_SIZE)
      */
-    const std::vector<ModbusFrame>& getRecentFrames() const {
-        _recentFramesCache.clear();
-        _recentFramesCache.reserve(FRAME_HISTORY_SIZE);
+    /**
+     * @brief Iterate recent RX frames in chronological order (zero-copy, no heap allocation).
+     * Calls fn(const ModbusFrame&) for each valid frame in the ring buffer.
+     */
+    template<typename Fn>
+    void forEachRecentFrame(Fn&& fn) const {
         for (size_t i = 0; i < FRAME_HISTORY_SIZE; i++) {
             size_t idx = (_frameHistoryIndex + i) % FRAME_HISTORY_SIZE;
             const ModbusFrame& f = _frameHistory[idx];
             if (f.timestamp == 0) continue;
-            _recentFramesCache.push_back(f);
+            fn(f);
         }
-        return _recentFramesCache;
     }
     
     /**
