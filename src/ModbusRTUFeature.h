@@ -464,7 +464,7 @@ private:
 
     struct TimeoutBackoffState {
         uint32_t consecutiveTimeouts{0};
-        uint32_t backoffMs{2000};
+        uint32_t backoffMs{1000};  // Initial backoff: 1 second (will double on subsequent timeouts)
         uint32_t pausedUntilMs{0};
         uint32_t lastProbeAttemptMs{0};  // Track last probe attempt when bus was silent
     };

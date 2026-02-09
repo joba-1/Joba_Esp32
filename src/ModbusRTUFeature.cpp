@@ -1088,10 +1088,10 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
     }
     
     // If bus is silent and we have no non-paused requests, allow ONE probe per unit
-    // to check if the bus condition has improved. Limit probes to once per 500ms per unit
-    // to avoid hammering an unresponsive device while still recovering quickly.
+    // to check if the bus condition has improved. Limit probes to once per 250ms per unit
+    // to detect recovery quickly while still protecting against hammering.
     if (sendIndex == (size_t)-1 && busSilent && !_requestQueue.empty()) {
-        static constexpr uint32_t PROBE_INTERVAL_MS = 500;
+        static constexpr uint32_t PROBE_INTERVAL_MS = 250;  // Probe every 250ms when bus is silent
         uint32_t now = millis();
         
         // Find first paused request whose unit hasn't been probed recently
