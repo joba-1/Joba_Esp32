@@ -653,6 +653,30 @@ public:
                                      elapsedMs, bytesPerSec);
                 }
 
+                // ---- Transaction time stats (request → response duration) ----
+                {
+                    const BusTransactionStats& t = modbus.getTransactionStats();
+                    response->printf(",\"transactionTimes\":{\"count\":%u", t.count);
+                    if (t.count > 0) {
+                        double mean = t.sumMs / t.count;
+                        double variance = (t.count > 1)
+                            ? (t.sumSqMs - t.sumMs * t.sumMs / t.count) / (t.count - 1)
+                            : 0.0;
+                        double stddev = (variance > 0) ? sqrt(variance) : 0.0;
+                        response->printf(",\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f",
+                                         t.minMs, t.maxMs, mean, stddev);
+                    }
+                    static const char* txnLabels[] = {
+                        "<10ms","10-20ms","20-50ms","50-100ms","100-200ms","200-500ms","500ms-1s",">=1s"
+                    };
+                    response->print(F(",\"histogram\":["));
+                    for (size_t i = 0; i < BusTransactionStats::NUM_BUCKETS; ++i) {
+                        if (i > 0) response->print(',');
+                        response->printf("{\"label\":\"%s\",\"count\":%u}", txnLabels[i], t.buckets[i]);
+                    }
+                    response->print(F("]}"));
+                }
+
                 // ---- Per-register-range entries ----
                 response->print(F(",\"entries\":["));
                 bool first = true;
@@ -707,14 +731,28 @@ public:
                 }
                 response->print(F("]}"));
 
-                // ---- Detected cycle ----
+                // ---- Detected cycle with per-step gap stats ----
                 const auto& cycle = modbus.getDetectedCycle();
+                const auto& stepGaps = modbus.getCycleStepGaps();
+                response->printf(",\"cyclePosition\":%d", modbus.getCycleTrackingPos());
                 response->print(F(",\"cycle\":["));
                 for (size_t i = 0; i < cycle.size(); ++i) {
                     if (i > 0) response->print(',');
                     const BusCycleEntry& c = cycle[i];
-                    response->printf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u}",
+                    response->printf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u",
                                      c.unitId, c.functionCode, c.startRegister, c.quantity);
+                    if (i < stepGaps.size() && stepGaps[i].count > 0) {
+                        const CycleStepStats& sg = stepGaps[i];
+                        double sgMean = sg.sumMs / sg.count;
+                        double sgVar = (sg.count > 1)
+                            ? (sg.sumSqMs - sg.sumMs * sg.sumMs / sg.count) / (sg.count - 1)
+                            : 0.0;
+                        double sgStddev = (sgVar > 0) ? sqrt(sgVar) : 0.0;
+                        response->printf(",\"gap\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,"
+                                         "\"meanMs\":%.1f,\"stddevMs\":%.1f}",
+                                         sg.count, sg.minMs, sg.maxMs, sgMean, sgStddev);
+                    }
+                    response->print('}');
                 }
                 response->print(F("]}"));
                 request->send(response);
@@ -726,7 +764,193 @@ public:
                 modbus.resetBusPatterns();
                 request->send(200, "application/json", "{\"reset\":true}");
             });
-        
+
+        // ---- Human-friendly bus pattern analysis page ----
+        static const char PATTERNS_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bus Pattern Analysis</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,system-ui,sans-serif;padding:16px;max-width:1200px;margin:0 auto}
+h1{color:#4fc3f7;margin-bottom:16px;font-size:1.5em}
+h2{color:#81c784;border-bottom:1px solid #333;padding-bottom:4px;margin:24px 0 10px;font-size:1.15em}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.card{background:#16213e;border-radius:8px;padding:12px;text-align:center}
+.card .v{font-size:1.4em;color:#4fc3f7;word-break:break-all}
+.card .l{font-size:.7em;color:#888;margin-top:2px}
+table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:.85em}
+th,td{border:1px solid #2a2a4a;padding:4px 8px;text-align:right}
+th{background:#16213e;color:#4fc3f7;position:sticky;top:0}
+td:first-child,th:first-child{text-align:left}
+tr:nth-child(even){background:rgba(255,255,255,.02)}
+.histo{margin:8px 0 16px}
+.bar-row{display:flex;align-items:center;gap:6px;margin:2px 0}
+.bar{background:linear-gradient(90deg,#4fc3f7,#0288d1);height:18px;border-radius:2px;min-width:1px;transition:width .3s}
+.bar-label{min-width:72px;font-size:.8em;text-align:right;color:#aaa}
+.bar-count{font-size:.8em;min-width:36px}
+.bar-pct{font-size:.72em;color:#666;min-width:40px}
+.controls{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
+button{background:#4fc3f7;color:#000;border:none;padding:6px 14px;cursor:pointer;border-radius:4px;font-size:.85em;font-weight:600}
+button:hover{background:#81d4fa}
+button.danger{background:#ef5350;color:#fff}
+button.danger:hover{background:#e53935}
+.status{font-size:.8em;color:#666;margin-left:auto}
+.note{background:#16213e;border-left:3px solid #4fc3f7;padding:10px 14px;margin:10px 0;font-size:.85em;border-radius:0 6px 6px 0}
+.cycle-step{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid #1a1a2e}
+.cycle-step:nth-child(even){background:rgba(255,255,255,.02)}
+.cycle-step.current{background:#1a3a2a;border-left:3px solid #81c784}
+.cycle-num{min-width:28px;color:#666;font-size:.8em;text-align:right}
+.cycle-desc{flex:1;font-size:.9em}
+.cycle-gap{min-width:90px;text-align:right;font-size:.85em;font-weight:500}
+.gap-ok{color:#81c784}.gap-tight{color:#ffb74d}.gap-no{color:#ef5350}
+a{color:#4fc3f7}
+.footer{margin-top:24px;font-size:.75em;color:#555;border-top:1px solid #222;padding-top:10px}
+</style></head><body>
+<h1>&#128268; Bus Pattern Analysis</h1>
+<div class="controls">
+<button onclick="refresh()">&#8635; Refresh</button>
+<button class="danger" onclick="resetData()">&#9249; Reset</button>
+<label style="font-size:.85em"><input type="checkbox" id="autoRef" checked onchange="toggleAuto()"> Auto (10s)</label>
+<span class="status" id="status">Loading...</span>
+</div>
+<div id="content"></div>
+<script>
+let T=null;
+const $=s=>document.getElementById(s);
+function toggleAuto(){if($('autoRef').checked)startA();else stopA();}
+function startA(){stopA();T=setInterval(refresh,10000);}
+function stopA(){if(T){clearInterval(T);T=null;}}
+
+async function api(p,m='GET'){
+  const r=await fetch(p,{method:m,credentials:'include'});
+  if(!r.ok)throw new Error(r.status);return r.json();}
+
+async function refresh(){
+  $('status').textContent='Fetching...';
+  try{const d=await api('/api/modbus/patterns');render(d);
+  $('status').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(e){$('status').textContent='Error: '+e.message;}}
+
+async function resetData(){
+  if(!confirm('Reset all collected pattern data?'))return;
+  await api('/api/modbus/patterns/reset','POST');refresh();}
+
+function fmt(n,d){return typeof n==='number'?n.toFixed(d===undefined?1:d):String(n);}
+function fms(ms){if(ms==null)return'-';if(ms<1000)return fmt(ms,0)+'ms';return fmt(ms/1000,1)+'s';}
+
+function histo(buckets){
+  if(!buckets||!buckets.length)return'';
+  const mx=Math.max(...buckets.map(b=>b.count),1);
+  const tot=buckets.reduce((s,b)=>s+b.count,0)||1;
+  return'<div class="histo">'+buckets.map(b=>{
+    const w=Math.max(b.count/mx*100,0.3);
+    const p=(b.count/tot*100).toFixed(1);
+    return`<div class="bar-row"><span class="bar-label">${b.label}</span>`+
+      `<div class="bar" style="width:${w}%"></div>`+
+      `<span class="bar-count">${b.count}</span>`+
+      `<span class="bar-pct">${b.count?p+'%':''}</span></div>`;
+  }).join('')+'</div>';
+}
+
+function render(d){
+  const bs=d.byteStats||{};
+  const vf=bs.validFrames||0,iv=bs.invalidFrames||0;
+  const vpct=(vf+iv)>0?(vf/(vf+iv)*100).toFixed(1):'?';
+  let h=`<div class="cards">
+    <div class="card"><div class="v">${fms(d.uptimeMs)}</div><div class="l">Uptime</div></div>
+    <div class="card"><div class="v">${bs.totalBytes||0}</div><div class="l">Total Bytes</div></div>
+    <div class="card"><div class="v">${vpct}%</div><div class="l">Valid Frames</div></div>
+    <div class="card"><div class="v">${fmt(bs.bytesPerSec||0,1)}</div><div class="l">Bytes/sec</div></div>
+    <div class="card"><div class="v">${vf} / ${iv}</div><div class="l">Valid / Invalid</div></div>
+    <div class="card"><div class="v">${bs.frameBoundaries||0}</div><div class="l">Frame Boundaries</div></div>
+  </div>`;
+
+  // Transaction times
+  const t=d.transactionTimes;
+  h+=`<h2>&#9201; Transaction Times (Request &#8594; Response)</h2>`;
+  if(t&&t.count>0){
+    h+=`<div class="cards">
+      <div class="card"><div class="v">${t.count}</div><div class="l">Transactions</div></div>
+      <div class="card"><div class="v">${fms(t.minMs)}</div><div class="l">Min RTT</div></div>
+      <div class="card"><div class="v">${fms(t.meanMs)}</div><div class="l">Mean RTT</div></div>
+      <div class="card"><div class="v">${fms(t.maxMs)}</div><div class="l">Max RTT</div></div>
+    </div>`+histo(t.histogram);
+    const needed=Math.ceil(t.meanMs*1.5);
+    h+=`<div class="note">&#128161; To fit one own request you need at least <b>~${fms(needed)}</b> gap (mean RTT + 50% margin).</div>`;
+  }else h+=`<p style="color:#666">No paired request&#8594;response transactions observed yet.</p>`;
+
+  // Polling register map
+  h+=`<h2>&#128203; Polling Register Map</h2>`;
+  if(d.entries&&d.entries.length>0){
+    h+=`<table><tr><th>Unit</th><th>FC</th><th>Start Reg</th><th>Qty</th><th>Count</th><th>Interval</th><th>&#963;</th></tr>`;
+    for(const e of d.entries){
+      const iv=e.interval;
+      h+=`<tr><td>${e.unitId}</td><td>FC${e.fc}</td><td>${e.startReg}</td><td>${e.qty}</td><td>${e.count}</td>`+
+        `<td>${iv?fms(iv.meanMs):'-'}</td><td>${iv?'\u00b1'+fms(iv.stddevMs):''}</td></tr>`;
+    }
+    h+=`</table>`;
+  }else h+=`<p style="color:#666">No register patterns detected yet.</p>`;
+
+  // Inter-frame gaps
+  h+=`<h2>&#8596; Inter-Frame Gaps</h2>`;
+  const g=d.gaps;
+  if(g&&g.count>0){
+    h+=`<div class="cards">
+      <div class="card"><div class="v">${g.count}</div><div class="l">Gaps</div></div>
+      <div class="card"><div class="v">${fms(g.minMs)}</div><div class="l">Min</div></div>
+      <div class="card"><div class="v">${fms(g.meanMs)}</div><div class="l">Mean</div></div>
+      <div class="card"><div class="v">${fms(g.maxMs)}</div><div class="l">Max</div></div>
+    </div>`+histo(g.histogram);
+    if(t&&t.count>0){
+      const need=t.meanMs*1.5;const needUs=need*1000;
+      const bounds=[1000,3000,5000,10000,20000,50000,100000,200000,500000,1000000,5000000,1e15];
+      let ok=0;for(let i=0;i<g.histogram.length;i++){
+        const lo=i>0?bounds[i-1]:0;if(lo>=needUs)ok+=g.histogram[i].count;}
+      const pct=(ok/g.count*100).toFixed(1);
+      h+=`<div class="note">&#128640; ${pct}% of gaps (${ok}/${g.count}) are large enough for one request (~${fms(need)}).</div>`;
+    }
+  }else h+=`<p style="color:#666">No gap data yet.</p>`;
+
+  // Detected cycle
+  h+=`<h2>&#128260; Detected Polling Cycle</h2>`;
+  const cy=d.cycle;
+  if(cy&&cy.length>0){
+    const pos=d.cyclePosition!=null?d.cyclePosition:-1;
+    const need=t&&t.count>0?t.meanMs*1.5:50;
+    h+=`<div style="background:#16213e;border-radius:8px;padding:8px;margin-bottom:10px">`;
+    for(let i=0;i<cy.length;i++){
+      const c=cy[i];const cur=i===pos;
+      let gc='',gt='';
+      if(c.gap&&c.gap.count>0){
+        const mg=c.gap.meanMs;
+        if(mg>=need*2){gc='gap-ok';gt=fms(mg)+' \u2714';}
+        else if(mg>=need){gc='gap-tight';gt=fms(mg)+' \u2248';}
+        else{gc='gap-no';gt=fms(mg)+' \u2718';}
+        gt+=` (\u00b1${fms(c.gap.stddevMs)})`;
+      }
+      h+=`<div class="cycle-step${cur?' current':''}">
+        <span class="cycle-num">${i+1}.</span>
+        <span class="cycle-desc">Unit ${c.unitId} FC${c.fc} reg ${c.startReg}\u00d7${c.qty}</span>
+        <span class="cycle-gap ${gc}">${gt}</span></div>`;
+    }
+    h+=`</div>`;
+    if(pos>=0)h+=`<div class="note">Currently tracking at step <b>${pos+1}</b> of ${cy.length}. Gap colors: <span class="gap-ok">\u2714 safe</span> / <span class="gap-tight">\u2248 tight</span> / <span class="gap-no">\u2718 too short</span></div>`;
+    else h+=`<div class="note">Cycle detected (${cy.length} steps). Gap tracking will sync on next matching request.</div>`;
+  }else h+=`<p style="color:#666">No repeating cycle detected yet. Collect more data (2+ minutes).</p>`;
+
+  h+=`<div class="footer"><a href="/">\u2190 Home</a> &middot; <a href="/api/modbus/patterns">Raw JSON</a></div>`;
+  $('content').innerHTML=h;
+}
+
+refresh();startA();
+</script></body></html>)rawliteral";
+
+        webServer->on("/modbus/patterns", HTTP_GET,
+            [&server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+                request->send_P(200, "text/html", PATTERNS_PAGE);
+            });
+
         // Device types list
         webServer->on("/api/modbus/types", HTTP_GET,
             [&devices, &server](AsyncWebServerRequest* request) {

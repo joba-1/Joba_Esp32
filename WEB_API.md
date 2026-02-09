@@ -237,9 +237,9 @@ curl -u admin:<password> http://<device-ip>/api/modbus/monitor
 
 ### GET `/api/modbus/patterns`
 
-Bus pattern analysis. Reports byte-level bus statistics, inter-frame gap histogram
-(measured at the raw byte/silence-boundary level in microseconds), per-register-range
-polling intervals, and detected polling cycles of the other master(s).
+Bus pattern analysis. Reports byte-level bus statistics, transaction round-trip times,
+inter-frame gap histogram (measured at the raw byte/silence-boundary level in microseconds),
+per-register-range polling intervals, and detected polling cycles of the other master(s).
 
 ```bash
 curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | python3 -m json.tool
@@ -254,17 +254,22 @@ curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | pytho
 | `byteStats.frameBoundaries` | Number of frame boundaries detected (3.5 char-time silences) |
 | `byteStats.validFrames` | Frames that passed CRC |
 | `byteStats.invalidFrames` | Frames that failed CRC (first-hit only, not resync attempts) |
+| `transactionTimes.count` | Number of paired request→response transactions observed |
+| `transactionTimes.{minMs,maxMs,meanMs,stddevMs}` | Round-trip time statistics |
+| `transactionTimes.histogram[]` | RTT distribution: `<10ms` to `>=1s` (8 buckets) |
 | `entries[]` | Per register-range timing: `unitId`, `fc`, `startReg`, `qty`, `count`, `interval.{minMs,maxMs,meanMs,stddevMs}` |
 | `gaps.histogram[]` | Inter-frame gap distribution, buckets from `<1ms` to `>=5s`. Measured at the byte level between the last byte of one frame chunk and the first byte of the next |
 | `gaps.{minUs,maxUs,meanUs}` | Gap summary statistics in microseconds |
+| `cyclePosition` | Current tracking position in detected cycle (-1 = not synced) |
 | `cycle[]` | Detected repeating polling sequence (if >80% match rate) |
+| `cycle[].gap` | Per-step gap stats: time from end of previous response to start of this request (only after cycle detection + tracking sync) |
 
 **Gathering data:**
 
 1. Switch to listen-only mode: set `modbus_listen_only = 1` in `config.ini`, rebuild + uploadfs
 2. Reset stats for a clean collection window:
    ```bash
-   curl --digest -u admin:<password> -X POST http://<device-ip>/api/modbus/stats/reset
+   curl --digest -u admin:<password> -X POST http://<device-ip>/api/modbus/patterns/reset
    ```
 3. Wait at least 5-10 minutes for representative data
 4. Fetch results:
@@ -274,11 +279,18 @@ curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | pytho
 
 **Interpreting results:**
 
+- `transactionTimes.meanMs` tells you how long a typical request→response takes; multiply by ~1.5 for the minimum gap needed to fit one of your own requests
 - `byteStats.bytesPerSec` shows real bus throughput; at 9600-8N1 (~960 B/s max), high values mean a busy bus
 - Compare `validFrames` vs `invalidFrames` to assess signal quality; a high invalid ratio suggests electrical/wiring issues
 - The gap histogram shows available windows for inserting your own Modbus requests. Look at which bucket sizes have the most counts — those are the typical inter-frame silences
 - `entries[].interval.meanMs` for each register range shows how often the other master polls each register block
-- If a `cycle` is detected, it shows the exact polling order the other master follows
+- If a `cycle` is detected, each step shows its `gap` (time available before that step). Steps with gaps larger than your RTT are safe insertion points
+
+### GET `/modbus/patterns`
+
+Human-friendly HTML page for the bus pattern analysis data. Auto-refreshes every 10 seconds.
+Shows summary cards, transaction time histogram, register polling table, gap histogram,
+and detected cycle with per-step gap analysis (color-coded: green=safe, yellow=tight, red=too short).
 
 ### POST `/api/modbus/patterns/reset`
 

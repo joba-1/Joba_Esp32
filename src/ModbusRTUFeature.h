@@ -155,6 +155,41 @@ struct BusByteStats {
 };
 
 /**
+ * @brief Transaction duration stats: time from request to response (measured in ms).
+ *
+ * Tracks round-trip times for paired request→response transactions on the bus.
+ * This answers "how long does a transaction take?" which determines the minimum
+ * inter-frame gap needed to fit our own requests.
+ */
+struct BusTransactionStats {
+    static constexpr size_t NUM_BUCKETS = 8;
+    // Bucket boundaries in milliseconds:
+    //  <10ms, 10-20ms, 20-50ms, 50-100ms, 100-200ms, 200-500ms, 500ms-1s, >=1s
+    static constexpr uint32_t kBoundariesMs[NUM_BUCKETS] = {
+        10, 20, 50, 100, 200, 500, 1000, UINT32_MAX
+    };
+    uint32_t buckets[NUM_BUCKETS]{};
+    uint32_t count{0};
+    double   sumMs{0};
+    double   sumSqMs{0};
+    uint32_t minMs{UINT32_MAX};
+    uint32_t maxMs{0};
+
+    void record(uint32_t durationMs) {
+        ++count;
+        sumMs += durationMs;
+        sumSqMs += (double)durationMs * durationMs;
+        if (durationMs < minMs) minMs = durationMs;
+        if (durationMs > maxMs) maxMs = durationMs;
+        for (size_t i = 0; i < NUM_BUCKETS; ++i) {
+            if (durationMs < kBoundariesMs[i]) { ++buckets[i]; break; }
+        }
+    }
+
+    void reset() { *this = BusTransactionStats{}; }
+};
+
+/**
  * @brief Cycle entry for detected register polling sequence.
  */
 struct BusCycleEntry {
@@ -162,6 +197,29 @@ struct BusCycleEntry {
     uint8_t  functionCode;
     uint16_t startRegister;
     uint16_t quantity;
+};
+
+/**
+ * @brief Per-step gap statistics for the detected polling cycle.
+ *
+ * For each step in the detected cycle, tracks the gap (idle time)
+ * between the previous transaction ending and this step's request starting.
+ * This enables predicting when large gaps will occur.
+ */
+struct CycleStepStats {
+    uint32_t count{0};
+    double   sumMs{0};
+    double   sumSqMs{0};
+    uint32_t minMs{UINT32_MAX};
+    uint32_t maxMs{0};
+
+    void record(uint32_t gapMs) {
+        ++count;
+        sumMs += gapMs;
+        sumSqMs += (double)gapMs * gapMs;
+        if (gapMs < minMs) minMs = gapMs;
+        if (gapMs > maxMs) maxMs = gapMs;
+    }
 };
 
 /**
@@ -509,6 +567,21 @@ public:
     const std::vector<BusCycleEntry>& getDetectedCycle() const { return _detectedCycle; }
 
     /**
+     * @brief Get transaction time statistics (request→response duration)
+     */
+    const BusTransactionStats& getTransactionStats() const { return _busTransactionStats; }
+
+    /**
+     * @brief Get per-step gap statistics for the detected cycle
+     */
+    const std::vector<CycleStepStats>& getCycleStepGaps() const { return _cycleStepGaps; }
+
+    /**
+     * @brief Get current position in detected cycle (-1 = not synced)
+     */
+    int getCycleTrackingPos() const { return _cycleTrackingPos; }
+
+    /**
      * @brief Reset bus pattern tracking data
      */
     void resetBusPatterns();
@@ -706,6 +779,11 @@ private:
     uint64_t _cycleSeq[CYCLE_SEQ_SIZE]{};
     size_t _cycleSeqIndex{0};
     size_t _cycleSeqCount{0};              // total entries written (capped display)
+    BusTransactionStats _busTransactionStats;  // request→response round-trip times
+    std::vector<CycleStepStats> _cycleStepGaps;  // parallel to _detectedCycle
+    int _cycleTrackingPos{-1};                    // -1 = not synced to cycle
+    unsigned long _lastTransactionEndMs{0};
+    bool _hasLastTransactionEnd{false};
 
 public:
     /**

@@ -798,6 +798,12 @@ void ModbusRTUFeature::processReceivedData() {
             isOurResponse = true;
             _waitingForResponse = false;
 
+            // Record our own round-trip time
+            {
+                uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
+                _busTransactionStats.record(rtt);
+            }
+
             // Reset backoff for this unit only
             _backoffByUnit.erase(frame.unitId);
             _lastSuccessTime = millis();
@@ -829,6 +835,10 @@ void ModbusRTUFeature::processReceivedData() {
             }
 
             endActiveTime();
+
+            // Track end of our transaction for cycle gap measurement
+            _lastTransactionEndMs = millis();
+            _hasLastTransactionEnd = true;
 
         } else if (_waitingForResponse && _hasPendingRequest && frame.isValid && !frame.isRequest) {
             // Debug: why didn't this match our request?
@@ -941,6 +951,9 @@ void ModbusRTUFeature::processReceivedData() {
                             if ((frame.timestamp - req.timestamp) < 2000) {
                                 updateRegisterMap(req, frame);
                                 updated = true;
+                                // Record observed transaction time (request → response)
+                                uint32_t rtt = (uint32_t)(frame.timestamp - req.timestamp);
+                                _busTransactionStats.record(rtt);
                             }
                         }
                     }
@@ -965,6 +978,10 @@ void ModbusRTUFeature::processReceivedData() {
                         }
                     }
                 }
+
+                // Track end of foreign transaction for cycle gap measurement
+                _lastTransactionEndMs = frame.timestamp;
+                _hasLastTransactionEnd = true;
             }
         }
 
@@ -1711,6 +1728,50 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
     _cycleSeq[_cycleSeqIndex] = key;
     _cycleSeqIndex = (_cycleSeqIndex + 1) % CYCLE_SEQ_SIZE;
     _cycleSeqCount++;
+
+    // Cycle position tracking for gap prediction
+    if (!_detectedCycle.empty()) {
+        if (_cycleTrackingPos < 0) {
+            // Try to sync: find this request in the cycle
+            for (size_t ci = 0; ci < _detectedCycle.size(); ci++) {
+                const BusCycleEntry& ce = _detectedCycle[ci];
+                if (ce.unitId == frame.unitId && ce.functionCode == fc &&
+                    ce.startRegister == startReg && ce.quantity == qty) {
+                    _cycleTrackingPos = (int)((ci + 1) % _detectedCycle.size());
+                    break;
+                }
+            }
+        } else {
+            size_t pos = (size_t)_cycleTrackingPos;
+            const BusCycleEntry& expected = _detectedCycle[pos];
+            uint64_t expectedKey = makeBusPatternKey(expected.unitId, expected.functionCode,
+                                                      expected.startRegister, expected.quantity);
+            if (expectedKey == key) {
+                // Match! Record gap since last transaction ended
+                if (_hasLastTransactionEnd && frame.timestamp > _lastTransactionEndMs) {
+                    uint32_t gapMs = (uint32_t)(frame.timestamp - _lastTransactionEndMs);
+                    if (pos < _cycleStepGaps.size()) {
+                        _cycleStepGaps[pos].record(gapMs);
+                    }
+                }
+                _cycleTrackingPos = (int)((pos + 1) % _detectedCycle.size());
+            } else {
+                // Mismatch — try to find in cycle and resync
+                bool found = false;
+                for (size_t search = 1; search < _detectedCycle.size(); search++) {
+                    size_t tryPos = (pos + search) % _detectedCycle.size();
+                    const BusCycleEntry& ce = _detectedCycle[tryPos];
+                    if (ce.unitId == frame.unitId && ce.functionCode == fc &&
+                        ce.startRegister == startReg && ce.quantity == qty) {
+                        _cycleTrackingPos = (int)((tryPos + 1) % _detectedCycle.size());
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) _cycleTrackingPos = -1;  // Lost sync
+            }
+        }
+    }
 }
 
 void ModbusRTUFeature::recordBusGap(uint32_t gapUs) {
@@ -1721,9 +1782,14 @@ void ModbusRTUFeature::resetBusPatterns() {
     _busPatterns.clear();
     _busGapStats.reset();
     _busByteStats.reset();
+    _busTransactionStats.reset();
     _hasLastFrameBoundary = false;
     _lastFrameBoundaryUs = 0;
     _detectedCycle.clear();
+    _cycleStepGaps.clear();
+    _cycleTrackingPos = -1;
+    _lastTransactionEndMs = 0;
+    _hasLastTransactionEnd = false;
     _cycleSeqIndex = 0;
     _cycleSeqCount = 0;
     memset(_cycleSeq, 0, sizeof(_cycleSeq));
@@ -1787,5 +1853,9 @@ void ModbusRTUFeature::detectCycle() {
         LOG_I("Bus cycle detected: length=%u, match=%u%% (%u/%u)",
               (unsigned)bestLen, (unsigned)matchPct,
               (unsigned)bestMatches, (unsigned)compared);
+
+        // Allocate per-step gap tracking and reset tracking position
+        _cycleStepGaps.assign(_detectedCycle.size(), CycleStepStats{});
+        _cycleTrackingPos = -1;  // Will sync on next matching request
     }
 }

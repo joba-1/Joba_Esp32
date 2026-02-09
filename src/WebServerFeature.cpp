@@ -131,7 +131,7 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "<p><a href='/api/modbus/maps'>/api/modbus/maps</a></p>";
         html += "<p><a href='/api/modbus/types'>/api/modbus/types</a></p>";
         html += "<p><a href='/api/modbus/monitor'>/api/modbus/monitor</a></p>";
-        html += "<p><a href='/api/modbus/patterns'>/api/modbus/patterns</a> <small>(bus pattern analysis)</small></p>";
+        html += "<p><a href='/modbus/patterns'>Bus Pattern Analysis</a> <small>(<a href='/api/modbus/patterns'>JSON</a>)</small></p>";
         html += "<p><a href='/view/modbus'>/view/modbus</a> <small>(HTML dashboard)</small></p>";
         html += "<p><a href='/view/modbus/raw'>/view/modbus/raw</a> <small>(raw request tool)</small></p>";
 
