@@ -5,13 +5,13 @@
             "unitId": 1,
             "type": "SDM72",
             "name": "Grid Meter",
-            "pollIntervalFactor": 12.0
+            "pollIntervalFactor": 16.0
         },
         {
             "unitId": 3,
             "type": "SolplanetASWHybridV213",
             "name": "Inverter",
-            "pollIntervalFactor": 12.0
+            "pollIntervalFactor": 16.0
         }
     ]
 }
