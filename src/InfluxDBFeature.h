@@ -102,6 +102,8 @@ private:
         uint32_t failCount;
         uint32_t totalPointsWritten;
         uint32_t lastUploadMs;
+        uint32_t lastUploadDurationMs;  // How long the last upload blocked loop()
+        uint32_t maxUploadDurationMs;   // Worst-case upload duration
     };
     const Stats& getStats() const { return _stats; }
 

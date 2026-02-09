@@ -163,20 +163,31 @@ bool InfluxDBFeature::upload() {
     
     LOG_V("InfluxDB uploading %u lines (%u bytes)", lineCount, payload.length());
     
-    if (sendData(payload)) {
+    // NOTE: sendData() blocks loop() during the HTTP POST (up to HTTP_TIMEOUT_MS).
+    // We track the duration so the impact is observable via /api/buildinfo stats.
+    const uint32_t uploadStartMs = (uint32_t)millis();
+    const bool ok = sendData(payload);
+    const uint32_t durationMs = (uint32_t)millis() - uploadStartMs;
+    _stats.lastUploadDurationMs = durationMs;
+    if (durationMs > _stats.maxUploadDurationMs) _stats.maxUploadDurationMs = durationMs;
+    if (durationMs > 500) {
+        LOG_W("InfluxDB upload blocked loop for %ums", durationMs);
+    }
+    
+    if (ok) {
         _stats.successCount++;
         _stats.totalPointsWritten += lineCount;
         _stats.lastUploadMs = millis();
         _connected = true;
         _buffer.clear();
         _lastUploadTime = millis();
-        LOG_D("InfluxDB upload successful");
+        LOG_D("InfluxDB upload successful (%ums)", durationMs);
         return true;
     } else {
         _stats.failCount++;
         _connected = false;
         if (millis() - _lastErrorLog >= _errorLogIntervalMs) {
-            LOG_W("InfluxDB upload failed, keeping %u lines in buffer", _buffer.size());
+            LOG_W("InfluxDB upload failed (%ums), keeping %u lines in buffer", durationMs, _buffer.size());
             _lastErrorLog = millis();
         } else {
             LOG_V("InfluxDB upload failed (throttled), buffer=%u", _buffer.size());
@@ -210,7 +221,10 @@ bool InfluxDBFeature::sendData(const String& data) {
     
     http.begin(url);
     http.addHeader("Content-Type", "text/plain; charset=utf-8");
-    http.setTimeout(10000);  // 10 second timeout
+    // Keep timeout short to limit loop() blocking. The ESP32 HTTPClient
+    // POST is synchronous, so this directly stalls Modbus RX, MQTT, etc.
+    static constexpr int HTTP_TIMEOUT_MS = 2000;
+    http.setTimeout(HTTP_TIMEOUT_MS);
     
     // Add authentication header
     if (_isV1) {
