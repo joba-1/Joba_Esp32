@@ -235,6 +235,59 @@ Returns recent Modbus frames and monitoring data.
 curl -u admin:<password> http://<device-ip>/api/modbus/monitor
 ```
 
+### GET `/api/modbus/patterns`
+
+Bus pattern analysis. Reports byte-level bus statistics, inter-frame gap histogram
+(measured at the raw byte/silence-boundary level in microseconds), per-register-range
+polling intervals, and detected polling cycles of the other master(s).
+
+```bash
+curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | python3 -m json.tool
+```
+
+**Response fields:**
+
+| Field | Description |
+|-------|-------------|
+| `byteStats.totalBytes` | Total bytes received on the bus since last reset |
+| `byteStats.bytesPerSec` | Average bytes/second throughput |
+| `byteStats.frameBoundaries` | Number of frame boundaries detected (3.5 char-time silences) |
+| `byteStats.validFrames` | Frames that passed CRC |
+| `byteStats.invalidFrames` | Frames that failed CRC (first-hit only, not resync attempts) |
+| `entries[]` | Per register-range timing: `unitId`, `fc`, `startReg`, `qty`, `count`, `interval.{minMs,maxMs,meanMs,stddevMs}` |
+| `gaps.histogram[]` | Inter-frame gap distribution, buckets from `<1ms` to `>=5s`. Measured at the byte level between the last byte of one frame chunk and the first byte of the next |
+| `gaps.{minUs,maxUs,meanUs}` | Gap summary statistics in microseconds |
+| `cycle[]` | Detected repeating polling sequence (if >80% match rate) |
+
+**Gathering data:**
+
+1. Switch to listen-only mode: set `modbus_listen_only = 1` in `config.ini`, rebuild + uploadfs
+2. Reset stats for a clean collection window:
+   ```bash
+   curl --digest -u admin:<password> -X POST http://<device-ip>/api/modbus/stats/reset
+   ```
+3. Wait at least 5-10 minutes for representative data
+4. Fetch results:
+   ```bash
+   curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | python3 -m json.tool
+   ```
+
+**Interpreting results:**
+
+- `byteStats.bytesPerSec` shows real bus throughput; at 9600-8N1 (~960 B/s max), high values mean a busy bus
+- Compare `validFrames` vs `invalidFrames` to assess signal quality; a high invalid ratio suggests electrical/wiring issues
+- The gap histogram shows available windows for inserting your own Modbus requests. Look at which bucket sizes have the most counts — those are the typical inter-frame silences
+- `entries[].interval.meanMs` for each register range shows how often the other master polls each register block
+- If a `cycle` is detected, it shows the exact polling order the other master follows
+
+### POST `/api/modbus/patterns/reset`
+
+Clears all bus pattern tracking data for a fresh collection window.
+
+```bash
+curl --digest -u admin:<password> -X POST http://<device-ip>/api/modbus/patterns/reset
+```
+
 ---
 
 # MQTT Commands

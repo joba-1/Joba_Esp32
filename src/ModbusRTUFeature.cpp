@@ -341,6 +341,7 @@ void ModbusRTUFeature::setup() {
         LOG_I("  RS485 DE pin: %d", _dePin);
     }
     
+    _busByteStats.reset();
     _ready = true;
 }
 
@@ -590,10 +591,16 @@ void ModbusRTUFeature::loop() {
 
 void ModbusRTUFeature::processReceivedData() {
     if (_rxBuffer.size() < 4) {
+        // Still record byte-level stats even for short/incomplete frames
+        if (_rxBuffer.size() > 0) {
+            onFrameBoundary(_rxBuffer.size());
+        }
         // Incomplete frames are common on noisy buses; don't spam logs
         _rxBuffer.clear();
         return;
     }
+
+    onFrameBoundary(_rxBuffer.size());
 
     // Spec-based extraction for Modbus RTU (focus: FC3/FC4).
     // For FC3/FC4 we can deduce the exact frame length from the function code and (for responses) byteCount.
@@ -740,6 +747,7 @@ void ModbusRTUFeature::processReceivedData() {
             // Only count CRC error if this is the first bad frame (not during resync scanning)
             if (!_inResync) {
                 _stats.crcErrors++;
+                _busByteStats.invalidFrames++;
                 LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
                     frame.unitId, frame.functionCode,
                     formatFrameHex(frame).c_str());
@@ -761,6 +769,7 @@ void ModbusRTUFeature::processReceivedData() {
           // CRC-valid frame - exit resync mode
           _inResync = false;
           _stats.framesReceived++;
+          _busByteStats.validFrames++;
 
           // Frame details available via /api/modbus/monitor; don't spam logs
           recordFrameToHistory(frame);
@@ -865,6 +874,9 @@ void ModbusRTUFeature::processReceivedData() {
 
                 _lastRequestPerUnit[frame.unitId] = frame;
                 _stats.otherRequestsSeen++;
+
+                // Bus pattern tracking: record request timing
+                recordBusPattern(frame);
                 
                 // Multi-master arbitration: mark that we saw a foreign request, 
                 // so we wait for its response before transmitting
@@ -1536,6 +1548,7 @@ float ModbusRTUFeature::getBusIdlePercent() const {
 void ModbusRTUFeature::resetStats() {
     memset(&_stats, 0, sizeof(_stats));
     _stats.lastStatsReset = millis();
+    resetBusPatterns();
 }
 
 void ModbusRTUFeature::resetIntervalStats() {
@@ -1630,4 +1643,150 @@ String ModbusRTUFeature::formatHex(const uint8_t* data, size_t length) const {
         result += buf;
     }
     return result;
+}
+
+// ===== Bus Pattern Analysis =====
+
+constexpr uint32_t BusGapStats::kBoundariesUs[BusGapStats::NUM_BUCKETS];
+
+void ModbusRTUFeature::onFrameBoundary(size_t bytesInBuffer) {
+    // Called every time processReceivedData() fires (3.5 char-time or 1.5 char-time gap).
+    // `_rxBufferStartUs` is the micros() timestamp of the first byte in the current buffer.
+    
+    _busByteStats.totalBytes += (uint32_t)bytesInBuffer;
+    _busByteStats.totalFrameBoundaries++;
+    _busByteStats.lastUpdateMs = millis();
+
+    // Record inter-frame gap: silence between end of previous frame chunk and start of this one.
+    // Previous frame ended at _lastFrameBoundaryUs (last byte).
+    // This frame started at _rxBufferStartUs (first byte).
+    if (_hasLastFrameBoundary && _rxBufferStartUs > _lastFrameBoundaryUs) {
+        uint32_t gapUs = (uint32_t)(_rxBufferStartUs - _lastFrameBoundaryUs);
+        recordBusGap(gapUs);
+    }
+
+    // Store end-of-current-chunk for next gap calculation.
+    // The last byte of this chunk was received at _lastByteTime (micros).
+    _lastFrameBoundaryUs = (unsigned long)_lastByteTime;
+    _hasLastFrameBoundary = true;
+}
+
+void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
+    if (!frame.isRequest || !frame.isValid) return;
+
+    uint8_t fc = frame.functionCode & 0x7F;
+    // Only track read requests (FC3/FC4) — they have standard 4-byte payload
+    if (fc != ModbusFC::READ_HOLDING_REGISTERS && fc != ModbusFC::READ_INPUT_REGISTERS) return;
+    if (frame.dataLen < 4) return;
+
+    uint16_t startReg = frame.getStartRegister();
+    uint16_t qty      = frame.getQuantity();
+    uint64_t key      = makeBusPatternKey(frame.unitId, fc, startReg, qty);
+
+    auto it = _busPatterns.find(key);
+    if (it == _busPatterns.end()) {
+        BusPatternEntry entry;
+        entry.unitId        = frame.unitId;
+        entry.functionCode  = fc;
+        entry.startRegister = startReg;
+        entry.quantity      = qty;
+        entry.count         = 1;
+        entry.firstSeenMs   = frame.timestamp;
+        entry.lastSeenMs    = frame.timestamp;
+        _busPatterns[key] = entry;
+    } else {
+        BusPatternEntry& e = it->second;
+        if (e.lastSeenMs != 0 && frame.timestamp > e.lastSeenMs) {
+            uint32_t interval = (uint32_t)(frame.timestamp - e.lastSeenMs);
+            e.intervalCount++;
+            e.intervalSum   += interval;
+            e.intervalSumSq += (double)interval * interval;
+            if (interval < e.intervalMin) e.intervalMin = interval;
+            if (interval > e.intervalMax) e.intervalMax = interval;
+        }
+        e.count++;
+        e.lastSeenMs = frame.timestamp;
+    }
+
+    // Record into cycle sequence ring buffer
+    _cycleSeq[_cycleSeqIndex] = key;
+    _cycleSeqIndex = (_cycleSeqIndex + 1) % CYCLE_SEQ_SIZE;
+    _cycleSeqCount++;
+}
+
+void ModbusRTUFeature::recordBusGap(uint32_t gapUs) {
+    _busGapStats.record(gapUs);
+}
+
+void ModbusRTUFeature::resetBusPatterns() {
+    _busPatterns.clear();
+    _busGapStats.reset();
+    _busByteStats.reset();
+    _hasLastFrameBoundary = false;
+    _lastFrameBoundaryUs = 0;
+    _detectedCycle.clear();
+    _cycleSeqIndex = 0;
+    _cycleSeqCount = 0;
+    memset(_cycleSeq, 0, sizeof(_cycleSeq));
+    LOG_I("Bus pattern tracking reset");
+}
+
+void ModbusRTUFeature::detectCycle() {
+    _detectedCycle.clear();
+
+    // Need at least some data
+    size_t available = (_cycleSeqCount < CYCLE_SEQ_SIZE) ? _cycleSeqCount : CYCLE_SEQ_SIZE;
+    if (available < 4) return;
+
+    // Build the sequence in chronological order
+    std::vector<uint64_t> seq;
+    seq.reserve(available);
+    if (_cycleSeqCount >= CYCLE_SEQ_SIZE) {
+        // Ring buffer wrapped — oldest is at _cycleSeqIndex
+        for (size_t i = 0; i < CYCLE_SEQ_SIZE; ++i) {
+            seq.push_back(_cycleSeq[(_cycleSeqIndex + i) % CYCLE_SEQ_SIZE]);
+        }
+    } else {
+        for (size_t i = 0; i < _cycleSeqCount; ++i) {
+            seq.push_back(_cycleSeq[i]);
+        }
+    }
+
+    // Try cycle lengths from 1 to seq.size()/2
+    size_t bestLen = 0;
+    size_t bestMatches = 0;
+    for (size_t tryLen = 1; tryLen <= seq.size() / 2 && tryLen <= 64; ++tryLen) {
+        size_t matches = 0;
+        for (size_t i = tryLen; i < seq.size(); ++i) {
+            if (seq[i] == seq[i % tryLen]) {
+                matches++;
+            }
+        }
+        // Require >80% match rate for a valid cycle
+        size_t compared = seq.size() - tryLen;
+        if (compared > 0 && matches * 100 / compared > 80) {
+            if (matches > bestMatches || (matches == bestMatches && tryLen < bestLen)) {
+                bestLen = tryLen;
+                bestMatches = matches;
+            }
+        }
+    }
+
+    if (bestLen > 0) {
+        _detectedCycle.reserve(bestLen);
+        for (size_t i = 0; i < bestLen; ++i) {
+            uint64_t k = seq[i];
+            BusCycleEntry ce;
+            ce.unitId        = (uint8_t)(k >> 40);
+            ce.functionCode  = (uint8_t)(k >> 32);
+            ce.startRegister = (uint16_t)(k >> 16);
+            ce.quantity      = (uint16_t)(k & 0xFFFF);
+            _detectedCycle.push_back(ce);
+        }
+        size_t compared = seq.size() - bestLen;
+        size_t matchPct = (compared > 0) ? (bestMatches * 100 / compared) : 0;
+        LOG_I("Bus cycle detected: length=%u, match=%u%% (%u/%u)",
+              (unsigned)bestLen, (unsigned)matchPct,
+              (unsigned)bestMatches, (unsigned)compared);
+    }
 }

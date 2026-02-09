@@ -6,6 +6,7 @@
 #include "WebServerFeature.h"
 #include <ArduinoJson.h>
 #include <map>
+#include <cmath>
 #include "TimeUtils.h"
 
 /**
@@ -620,6 +621,110 @@ public:
                 String output;
                 serializeJson(doc, output);
                 request->send(200, "application/json", output);
+            });
+
+        // Bus pattern analysis: per-register-range timing, gaps, cycle detection
+        // GET /api/modbus/patterns         — full pattern report
+        // POST /api/modbus/patterns/reset  — clear collected data
+        webServer->on("/api/modbus/patterns", HTTP_GET,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                // Run cycle detection before responding
+                modbus.detectCycle();
+
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+
+                const unsigned long nowMs = millis();
+
+                response->print(F("{\"uptimeMs\":"));
+                response->print((uint32_t)nowMs);
+
+                // ---- Byte-level bus stats ----
+                const BusByteStats& bs = modbus.getBusByteStats();
+                {
+                    uint32_t elapsedMs = (bs.lastUpdateMs > bs.startMs) ? (uint32_t)(bs.lastUpdateMs - bs.startMs) : 0;
+                    float bytesPerSec = (elapsedMs > 0) ? ((float)bs.totalBytes * 1000.0f / (float)elapsedMs) : 0.0f;
+                    response->printf(",\"byteStats\":{\"totalBytes\":%u,\"frameBoundaries\":%u,"
+                                     "\"validFrames\":%u,\"invalidFrames\":%u,"
+                                     "\"elapsedMs\":%u,\"bytesPerSec\":%.1f}",
+                                     bs.totalBytes, bs.totalFrameBoundaries,
+                                     bs.validFrames, bs.invalidFrames,
+                                     elapsedMs, bytesPerSec);
+                }
+
+                // ---- Per-register-range entries ----
+                response->print(F(",\"entries\":["));
+                bool first = true;
+                for (const auto& kv : modbus.getBusPatterns()) {
+                    const BusPatternEntry& e = kv.second;
+                    if (!first) response->print(',');
+                    first = false;
+                    response->printf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u,"
+                                     "\"count\":%u,\"firstSeenMs\":%lu,\"lastSeenMs\":%lu",
+                                     e.unitId, e.functionCode, e.startRegister, e.quantity,
+                                     e.count, e.firstSeenMs, e.lastSeenMs);
+                    if (e.intervalCount > 0) {
+                        double mean = e.intervalSum / e.intervalCount;
+                        double variance = (e.intervalCount > 1)
+                            ? (e.intervalSumSq - e.intervalSum * e.intervalSum / e.intervalCount) / (e.intervalCount - 1)
+                            : 0.0;
+                        double stddev = (variance > 0) ? sqrt(variance) : 0.0;
+                        response->printf(",\"interval\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,"
+                                         "\"meanMs\":%.1f,\"stddevMs\":%.1f}",
+                                         e.intervalCount, e.intervalMin, e.intervalMax,
+                                         mean, stddev);
+                    }
+                    response->print('}');
+                }
+                response->print(']');
+
+                // ---- Inter-frame gap histogram (measured at byte level, in microseconds) ----
+                const BusGapStats& g = modbus.getBusGapStats();
+                response->print(F(",\"gaps\":{"));
+                response->printf("\"count\":%u", g.count);
+                if (g.count > 0) {
+                    double meanUs = g.sumUs / g.count;
+                    double variance = (g.count > 1)
+                        ? (g.sumSqUs - g.sumUs * g.sumUs / g.count) / (g.count - 1)
+                        : 0.0;
+                    double stddevUs = (variance > 0) ? sqrt(variance) : 0.0;
+                    response->printf(",\"minUs\":%u,\"maxUs\":%u,\"meanUs\":%.0f,\"stddevUs\":%.0f,"
+                                     "\"minMs\":%.2f,\"maxMs\":%.2f,\"meanMs\":%.2f",
+                                     g.minUs, g.maxUs, meanUs, stddevUs,
+                                     (float)g.minUs / 1000.0f, (float)g.maxUs / 1000.0f,
+                                     (float)meanUs / 1000.0f);
+                }
+                // Buckets with readable labels
+                response->print(F(",\"histogram\":["));
+                static const char* gapLabels[] = {
+                    "<1ms","1-3ms","3-5ms","5-10ms","10-20ms","20-50ms",
+                    "50-100ms","100-200ms","200-500ms","500ms-1s","1-5s",">=5s"
+                };
+                for (size_t i = 0; i < BusGapStats::NUM_BUCKETS; ++i) {
+                    if (i > 0) response->print(',');
+                    response->printf("{\"label\":\"%s\",\"count\":%u}", gapLabels[i], g.buckets[i]);
+                }
+                response->print(F("]}"));
+
+                // ---- Detected cycle ----
+                const auto& cycle = modbus.getDetectedCycle();
+                response->print(F(",\"cycle\":["));
+                for (size_t i = 0; i < cycle.size(); ++i) {
+                    if (i > 0) response->print(',');
+                    const BusCycleEntry& c = cycle[i];
+                    response->printf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u}",
+                                     c.unitId, c.functionCode, c.startRegister, c.quantity);
+                }
+                response->print(F("]}"));
+                request->send(response);
+            });
+
+        webServer->on("/api/modbus/patterns/reset", HTTP_POST,
+            [&modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+                modbus.resetBusPatterns();
+                request->send(200, "application/json", "{\"reset\":true}");
             });
         
         // Device types list

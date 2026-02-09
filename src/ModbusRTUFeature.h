@@ -79,6 +79,92 @@ struct ModbusRegisterMap {
 };
 
 /**
+ * @brief Tracking entry for a specific register request pattern on the bus.
+ *
+ * Identified by unit+FC+startRegister+quantity.  Stores running statistics
+ * (count, min/max/mean interval) without keeping individual timestamps, so
+ * memory is O(distinct register ranges) regardless of collection duration.
+ */
+struct BusPatternEntry {
+    uint8_t  unitId;
+    uint8_t  functionCode;
+    uint16_t startRegister;
+    uint16_t quantity;
+    uint32_t count{0};               // total requests seen
+    unsigned long firstSeenMs{0};
+    unsigned long lastSeenMs{0};
+    // Running interval statistics (between consecutive requests for same range)
+    uint32_t intervalCount{0};
+    double   intervalSum{0};
+    double   intervalSumSq{0};
+    uint32_t intervalMin{UINT32_MAX};
+    uint32_t intervalMax{0};
+};
+
+/**
+ * @brief Gap histogram: time between consecutive frame boundaries on the bus.
+ *
+ * A "gap" = silence between the last byte of frame N and the first byte of frame N+1,
+ * measured in microseconds at the byte-receive level.  This captures ALL inter-frame
+ * silences regardless of whether the flanking frames passed CRC.
+ */
+struct BusGapStats {
+    static constexpr size_t NUM_BUCKETS = 12;
+    // Bucket boundaries in microseconds (us):
+    //  <1ms, 1-3ms, 3-5ms, 5-10ms, 10-20ms, 20-50ms, 50-100ms, 100-200ms, 200-500ms, 500ms-1s, 1-5s, >=5s
+    static constexpr uint32_t kBoundariesUs[NUM_BUCKETS] = {
+        1000, 3000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000, 5000000, UINT32_MAX
+    };
+    uint32_t buckets[NUM_BUCKETS]{};
+    uint32_t count{0};
+    double   sumUs{0};
+    double   sumSqUs{0};
+    uint32_t minUs{UINT32_MAX};
+    uint32_t maxUs{0};
+
+    void record(uint32_t gapUs) {
+        ++count;
+        sumUs += gapUs;
+        sumSqUs += (double)gapUs * gapUs;
+        if (gapUs < minUs) minUs = gapUs;
+        if (gapUs > maxUs) maxUs = gapUs;
+        for (size_t i = 0; i < NUM_BUCKETS; ++i) {
+            if (gapUs < kBoundariesUs[i]) { ++buckets[i]; break; }
+        }
+    }
+
+    void reset() { *this = BusGapStats{}; }
+};
+
+/**
+ * @brief Raw byte-level bus statistics.
+ */
+struct BusByteStats {
+    uint32_t totalBytes{0};
+    uint32_t totalFrameBoundaries{0};  // how many times processReceivedData() was called with data
+    uint32_t validFrames{0};
+    uint32_t invalidFrames{0};         // CRC or parse failures
+    unsigned long startMs{0};
+    unsigned long lastUpdateMs{0};
+
+    void reset() {
+        *this = BusByteStats{};
+        startMs = millis();
+        lastUpdateMs = startMs;
+    }
+};
+
+/**
+ * @brief Cycle entry for detected register polling sequence.
+ */
+struct BusCycleEntry {
+    uint8_t  unitId;
+    uint8_t  functionCode;
+    uint16_t startRegister;
+    uint16_t quantity;
+};
+
+/**
  * @brief Pending Modbus request
  */
 struct ModbusPendingRequest {
@@ -398,6 +484,55 @@ public:
      */
     const CrcErrorContext* getRecentCrcErrorContexts(size_t& outCount) const;
 
+    // ========================================
+    // Bus Pattern Analysis
+    // ========================================
+
+    /**
+     * @brief Get bus pattern entries (per register-range timing stats)
+     */
+    const std::map<uint64_t, BusPatternEntry>& getBusPatterns() const { return _busPatterns; }
+
+    /**
+     * @brief Get inter-frame gap statistics (measured at byte level)
+     */
+    const BusGapStats& getBusGapStats() const { return _busGapStats; }
+
+    /**
+     * @brief Get raw byte-level bus stats
+     */
+    const BusByteStats& getBusByteStats() const { return _busByteStats; }
+
+    /**
+     * @brief Get detected polling cycle (ordered register sequence)
+     */
+    const std::vector<BusCycleEntry>& getDetectedCycle() const { return _detectedCycle; }
+
+    /**
+     * @brief Reset bus pattern tracking data
+     */
+    void resetBusPatterns();
+
+    /**
+     * @brief Record a request frame into bus pattern tracking
+     */
+    void recordBusPattern(const ModbusFrame& frame);
+
+    /**
+     * @brief Record an inter-frame gap (in microseconds)
+     */
+    void recordBusGap(uint32_t gapUs);
+
+    /**
+     * @brief Called at frame boundary (processReceivedData entry) to track byte stats and gaps
+     */
+    void onFrameBoundary(size_t bytesInBuffer);
+
+    /**
+     * @brief Force cycle detection from current pattern data
+     */
+    void detectCycle();
+
 private:
     void processReceivedData();
     bool parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame);
@@ -555,6 +690,22 @@ private:
     ResponseMismatch _mismatchHistory[MISMATCH_HISTORY_SIZE];
     size_t _mismatchIndex{0};
     uint32_t _mismatchCount{0};
+
+    // ---- Bus pattern analysis ----
+    static uint64_t makeBusPatternKey(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty) {
+        return ((uint64_t)unitId << 40) | ((uint64_t)fc << 32) | ((uint64_t)startReg << 16) | qty;
+    }
+    std::map<uint64_t, BusPatternEntry> _busPatterns;  // key -> entry
+    BusGapStats _busGapStats;               // inter-frame gaps measured at byte level
+    BusByteStats _busByteStats;             // raw byte-level diagnostics
+    unsigned long _lastFrameBoundaryUs{0};  // micros() of last byte of previous frame chunk
+    bool _hasLastFrameBoundary{false};
+    std::vector<BusCycleEntry> _detectedCycle;
+    // Cycle detection ring buffer: last N request keys in order
+    static constexpr size_t CYCLE_SEQ_SIZE = 128;
+    uint64_t _cycleSeq[CYCLE_SEQ_SIZE]{};
+    size_t _cycleSeqIndex{0};
+    size_t _cycleSeqCount{0};              // total entries written (capped display)
 
 public:
     /**
