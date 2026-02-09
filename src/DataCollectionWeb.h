@@ -232,10 +232,11 @@ private:
             50% { opacity: 0.5; }
         }
         .table-container {
-            overflow-x: auto;
             background: #16213e;
             border-radius: 12px;
-            padding: 15px;
+            padding: 10px;
+            width: max-content;
+            min-width: 100%;
         }
         table {
             width: 100%;

@@ -683,96 +683,110 @@ public:
             });
         
         // HTML dashboard
-        webServer->on("/view/modbus", HTTP_GET,
+        // JSON endpoint for AJAX updates
+        webServer->on("/api/modbus/dashboard", HTTP_GET,
             [&devices, &modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
-                String html = F("<!DOCTYPE html><html><head>"
-                    "<title>Modbus Dashboard</title>"
-                    "<meta charset='UTF-8'>"
-                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<style>"
-                    "body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}"
-                    ".card{background:white;border-radius:8px;padding:15px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
-                    ".device{border-left:4px solid #2196F3}"
-                    ".status{border-left:4px solid #4CAF50}"
-                    "table{width:100%;border-collapse:collapse}"
-                    "th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}"
-                    "th{background:#f9f9f9}"
-                    ".ok{color:#4CAF50}.err{color:#F44336}"
-                    ".outdated{opacity:0.4;color:#999}"
-                    "h1{color:#333}h2{color:#666;margin:0 0 10px 0}"
-                    "</style></head><body>"
-                    "<h1>Modbus Dashboard</h1>");
-                
-                // Bus status
-                html += F("<div class='card status'><h2>Bus Status</h2>");
-                html += F("<p>Silent: ");
-                html += modbus.isBusSilent() ? F("<span class='ok'>Yes</span>") : F("<span class='err'>No</span>");
-                html += F(" | Queue: ");
-                html += String(modbus.getPendingRequestCount());
-                html += F(" | RX: ");
-                html += String(modbus.getStats().framesReceived);
-                html += F(" | TX: ");
-                html += String(modbus.getStats().framesSent);
-                html += F(" | CRC Errors: ");
-                html += String(modbus.getStats().crcErrors);
-                html += F("</p></div>");
-                
-                // Devices
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                response->print(F("{\"status\":{"));
+                response->printf("\"silent\":%s,", modbus.isBusSilent() ? "true" : "false");
+                response->printf("\"queue\":%u,", modbus.getPendingRequestCount());
+                response->printf("\"rx\":%lu,", modbus.getStats().framesReceived);
+                response->printf("\"tx\":%lu,", modbus.getStats().framesSent);
+                response->printf("\"crcErrors\":%lu", modbus.getStats().crcErrors);
+                response->print(F("},\"devices\":["));
+
+                bool firstDev = true;
+                unsigned long now = millis();
                 for (const auto& kv : devices.getDevices()) {
                     const auto& dev = kv.second;
-                    html += F("<div class='card device'><h2>Unit ");
-                    html += String(dev.unitId);
-                    html += F(" - ");
-                    html += dev.deviceTypeName;
-                    html += F("</h2>");
-                    html += F("<p>Success: ");
-                    html += String(dev.successCount);
-                    html += F(" | Errors: ");
-                    html += String(dev.errorCount);
-                    html += F("</p><table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>");
-                    
-                    unsigned long now = millis();
+                    if (!firstDev) response->print(',');
+                    firstDev = false;
+
+                    response->printf("{\"unitId\":%u,\"type\":\"%s\",\"success\":%lu,\"errors\":%lu,\"values\":[",
+                        dev.unitId, dev.deviceTypeName.c_str(), dev.successCount, dev.errorCount);
+
+                    bool firstVal = true;
                     for (const auto& val : dev.currentValues) {
-                        // Find the register definition to get poll interval
                         uint32_t pollIntervalMs = 0;
                         if (dev.deviceType) {
                             for (const auto& reg : dev.deviceType->registers) {
                                 if (strcmp(reg.name, val.second.name) == 0) {
-                                    // Apply device's poll interval factor
                                     pollIntervalMs = (uint32_t)(reg.pollIntervalMs * dev.pollIntervalFactor);
                                     break;
                                 }
                             }
                         }
-                        
-                        // Check if value is outdated (>3 poll cycles old)
-                        bool isOutdated = false;
-                        if (pollIntervalMs > 0) {
-                            uint32_t age = (uint32_t)(now - val.second.updatedAtMs);
-                            isOutdated = age > (pollIntervalMs * 3);
-                        }
-                        
-                        html += F("<tr");
-                        if (isOutdated) html += F(" class='outdated' title='Outdated (>3 poll cycles)'");
-                        html += F("><td>");
-                        html += val.second.name;
-                        html += F("</td><td>");
-                        html += String(val.second.value, 2);
-                        html += F("</td><td>");
-                        html += val.second.unit;
-                        html += F("</td><td class='");
-                        html += val.second.valid ? F("ok'>✓") : F("err'>✗");
-                        html += F("</td></tr>");
+                        bool isOutdated = pollIntervalMs > 0 && (now - val.second.updatedAtMs) > (pollIntervalMs * 3);
+
+                        if (!firstVal) response->print(',');
+                        firstVal = false;
+                        response->printf("{\"n\":\"%s\",\"v\":%.2f,\"u\":\"%s\",\"ok\":%s,\"old\":%s}",
+                            val.second.name, val.second.value, val.second.unit,
+                            val.second.valid ? "true" : "false",
+                            isOutdated ? "true" : "false");
                     }
-                    
-                    html += F("</table></div>");
+                    response->print(F("]}"));
                 }
-                
-                html += F("<script>setTimeout(()=>location.reload(),5000)</script>");
-                html += F("</body></html>");
-                
+                response->print(F("]}")); 
+                request->send(response);
+            });
+
+        webServer->on("/view/modbus", HTTP_GET,
+            [&devices, &modbus, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                // Static HTML shell - data loaded via AJAX
+                String html = F("<!DOCTYPE html><html><head>"
+                    "<title>Modbus Dashboard</title>"
+                    "<meta charset='UTF-8'>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<style>"
+                    "body{font-family:Arial,sans-serif;margin:10px;background:#f5f5f5}"
+                    ".card{background:white;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.1);width:max-content;min-width:100%}"
+                    ".device{border-left:4px solid #2196F3}"
+                    ".status{border-left:4px solid #4CAF50}"
+                    "table{width:100%;border-collapse:collapse;background:white}"
+                    "th,td{padding:4px 6px;text-align:left;border-bottom:1px solid #ddd}"
+                    "th{background:#f9f9f9}"
+                    ".ok{color:#4CAF50}.err{color:#F44336}"
+                    ".outdated{opacity:0.4;color:#999}"
+                    "h1{color:#333}h2{color:#666;margin:0 0 10px 0}"
+                    ".update-info{font-size:12px;color:#999;margin-top:10px}"
+                    ".flash{animation:flash 0.3s}"
+                    "@keyframes flash{0%{background:#ffffcc}100%{background:transparent}}"
+                    "</style></head><body>"
+                    "<h1>Modbus Dashboard</h1>"
+                    "<div id='content'>Loading...</div>"
+                    "<div class='update-info'>Auto-refresh every 2s | Last update: <span id='lastUpdate'>-</span></div>"
+                    "<script>"
+                    "let prev={};"
+                    "function render(d){"
+                    "let h='<div class=\"card status\"><h2>Bus Status</h2><p>';"
+                    "h+='Silent: <span class=\"'+(d.status.silent?'ok':'err')+'\">'+(d.status.silent?'Yes':'No')+'</span>';"
+                    "h+=' | Queue: '+d.status.queue+' | RX: '+d.status.rx+' | TX: '+d.status.tx+' | CRC Errors: '+d.status.crcErrors+'</p></div>';"
+                    "d.devices.forEach(dev=>{"
+                    "h+='<div class=\"card device\"><h2>Unit '+dev.unitId+' - '+dev.type+'</h2>';"
+                    "h+='<p>Success: '+dev.success+' | Errors: '+dev.errors+'</p>';"
+                    "h+='<table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>';"
+                    "dev.values.forEach(v=>{"
+                    "let key=dev.unitId+'_'+v.n;"
+                    "let changed=prev[key]!==undefined&&prev[key]!==v.v;"
+                    "prev[key]=v.v;"
+                    "h+='<tr'+(v.old?' class=\"outdated\" title=\"Outdated\"':'')+'>';"
+                    "h+='<td>'+v.n+'</td><td'+(changed?' class=\"flash\"':'')+'>'+v.v.toFixed(2)+'</td>';"
+                    "h+='<td>'+v.u+'</td><td class=\"'+(v.ok?'ok':'err')+'\">'+(v.ok?'\\u2713':'\\u2717')+'</td></tr>';"
+                    "});"
+                    "h+='</table></div>';"
+                    "});"
+                    "document.getElementById('content').innerHTML=h;"
+                    "document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();"
+                    "}"
+                    "function fetchData(){fetch('/api/modbus/dashboard').then(r=>r.json()).then(render).catch(e=>console.error(e));}"
+                    "fetchData();setInterval(fetchData,2000);"
+                    "</script></body></html>");
+
                 request->send(200, "text/html", html);
             });
 
@@ -786,8 +800,8 @@ public:
                     "<meta charset='UTF-8'>"
                     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                     "<style>"
-                    "body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}"
-                    ".card{background:#fff;border-radius:8px;padding:15px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+                    "body{font-family:Arial,sans-serif;margin:10px;background:#f5f5f5}"
+                    ".card{background:#fff;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.1);width:max-content;min-width:100%}"
                     "label{display:inline-block;margin:6px 10px 6px 0}"
                     "input,select{padding:6px}button{padding:6px 12px}"
                     "pre{background:#111;color:#eee;padding:10px;border-radius:6px;overflow:auto}"
