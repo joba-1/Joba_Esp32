@@ -405,7 +405,7 @@ private:
     void recordCrcErrorContext(const ModbusFrame& badFrame);
     ModbusRegisterMap& ensureRegisterMap(uint8_t unitId, uint8_t functionCode);
     void updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response);
-    void processQueue();
+    void processQueue(bool busSilent = false);
     bool sendRequest(const ModbusPendingRequest& request);
     void sendFrameFromBuffer();  // Uses static _txFrameBuffer
     void sendFrame(const std::vector<uint8_t>& frame);  // Legacy wrapper for sendRawFrame
@@ -466,6 +466,7 @@ private:
         uint32_t consecutiveTimeouts{0};
         uint32_t backoffMs{2000};
         uint32_t pausedUntilMs{0};
+        uint32_t lastProbeAttemptMs{0};  // Track last probe attempt when bus was silent
     };
     std::map<uint8_t, TimeoutBackoffState> _backoffByUnit;
 

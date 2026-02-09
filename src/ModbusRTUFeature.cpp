@@ -535,7 +535,7 @@ void ModbusRTUFeature::loop() {
         _dbgLastLoopSnapshotMs = millis();
 
         if (gapEnoughForTx) {
-            processQueue();
+            processQueue(true);  // Bus is silent, allow probing backoff units
         } else if (!_requestQueue.empty()) {
             // Try to find a quiet window, bounded to keep the firmware responsive.
             static constexpr uint32_t TX_ARBITRATION_WINDOW_US = 8000;
@@ -571,7 +571,7 @@ void ModbusRTUFeature::loop() {
                 if ((uint32_t)(nowArbUs - lastRxUs) >= requiredIdleUs) {
                     _serialWasEmpty = true;
                     _serialEmptySinceUs = nowArbUs;
-                    processQueue();
+                    processQueue(true);  // Bus is silent, allow probing backoff units
                     break;
                 }
 
@@ -1075,7 +1075,7 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
     }
 }
 
-void ModbusRTUFeature::processQueue() {
+void ModbusRTUFeature::processQueue(bool busSilent) {
     if (_requestQueue.empty()) return;
 
     // Pick the first request whose unit isn't paused.
@@ -1086,6 +1086,32 @@ void ModbusRTUFeature::processQueue() {
             break;
         }
     }
+    
+    // If bus is silent and we have no non-paused requests, allow ONE probe per unit
+    // to check if the bus condition has improved. Limit probes to once per 500ms per unit
+    // to avoid hammering an unresponsive device while still recovering quickly.
+    if (sendIndex == (size_t)-1 && busSilent && !_requestQueue.empty()) {
+        static constexpr uint32_t PROBE_INTERVAL_MS = 500;
+        uint32_t now = millis();
+        
+        // Find first paused request whose unit hasn't been probed recently
+        for (size_t i = 0; i < _requestQueue.size(); i++) {
+            uint8_t unitId = _requestQueue[i].unitId;
+            auto it = _backoffByUnit.find(unitId);
+            if (it != _backoffByUnit.end()) {
+                uint32_t timeSinceProbe = now - it->second.lastProbeAttemptMs;
+                if (timeSinceProbe >= PROBE_INTERVAL_MS) {
+                    sendIndex = i;
+                    // Mark that we're probing this unit
+                    it->second.lastProbeAttemptMs = now;
+                    LOG_V("Probing paused unit %u (bus is silent, %ums since last probe)",
+                          unitId, timeSinceProbe);
+                    break;
+                }
+            }
+        }
+    }
+    
     if (sendIndex == (size_t)-1) return;
 
     _processQueueCounter++;
