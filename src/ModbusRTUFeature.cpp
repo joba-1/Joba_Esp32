@@ -464,12 +464,28 @@ void ModbusRTUFeature::loop() {
             }
         }
         
-        // DO NOT invoke callback on timeout - callbacks can block and trigger watchdog
-        // The timeout is already logged, which provides visibility
+        // Invoke callback on timeout so callers (e.g. tracked raw reads) know the request failed.
+        // Copy callback before clearing state to avoid use-after-clear.
+        std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
+        if (_currentRequest.callback) {
+            callbackCopy = _currentRequest.callback;
+        }
         
         _waitingForResponse = false;
         _hasPendingRequest = false;
         endActiveTime();
+        
+        // Call callback outside critical section with an empty frame indicating timeout
+        if (callbackCopy) {
+            ModbusFrame emptyFrame;
+            emptyFrame.isValid = false;
+            emptyFrame.isException = false;
+            try {
+                callbackCopy(false, emptyFrame);
+            } catch (...) {
+                LOG_E("Exception in Modbus timeout callback");
+            }
+        }
         
         // If the queue is building up, drop requests for the timed-out unit only.
         // This prevents one unresponsive unit from starving other devices.
