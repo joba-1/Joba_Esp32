@@ -369,7 +369,7 @@ void setup() {
 
             if (!queued) {
                 JsonDocument nack;
-                nack["id"] = id;
+                nack["id"] = idBuf;
                 nack["queued"] = false;
                 nack["error"] = "queue_failed";
                 String out;

@@ -1099,16 +1099,21 @@ time before the next foreign request:
 1. Look up the last completed transaction key in the transition map.
 2. Sum observation counts across all successor edges (those with ≥ 2 samples).
    Require ≥ `GAP_MIN_SAMPLES` (10) total samples before trusting the prediction.
-3. For each successor edge with ≥ 2 samples, compute a conservative gap estimate:
+3. Find the **most-likely successor** — the edge with the highest transition
+   count — and compute its conservative gap for display/monitoring.
+4. Compute a conservative gap estimate for that edge:
    `conservative = max(mean − 1σ, observed_min)`.
-4. Compute a **probability-weighted** prediction across all successor edges:
-   `predicted = Σ(p_i × conservative_i)` where `p_i = count_i / totalSamples`.
-   This predicts the *expected* gap rather than the worst-case, giving much
-   better bus utilisation for predecessors whose dominant successor has a large
-   gap but a rare alternate successor is fast.
-5. Apply the dynamic safety margin: `predicted = weighted × (1 − safetyMargin)`.
-6. Return a `GapPrediction` struct with `valid`, `predictedGapMs`,
-   `minObservedMs` (hard minimum across all edges), and `sampleCount`.
+5. Apply the dynamic safety margin: `predicted = conservative × (1 − safetyMargin)`.
+6. Also compute `confirmationMs` = min conservative across ALL successor edges
+   + 2ms jitter buffer. This is the time the scheduler must wait before any
+   short-gap successor is ruled out. Exposed in the API for monitoring.
+7. Return a `GapPrediction` struct with `valid`, `predictedGapMs`,
+   `confirmationMs`, `minObservedMs` (hard min across all edges), and
+   `sampleCount`.
+
+**Note:** The actual send decision is made by `canSafelyTransmitInGap()` (see
+TX Decision Flow below), which checks ALL successor edges dynamically — not
+just the most-likely one.
 
 ##### Wire Time Estimation (`estimateWireTimeMs`)
 
@@ -1126,13 +1131,18 @@ At 9600 baud 8N1 this gives ~1.146 ms per byte. A single-register read takes
 
 When a request is ready to send:
 
-1. Call `predictCurrentGap()` to get the current prediction.
+1. Call `predictCurrentGap()` to get a prediction for display/monitoring.
 2. Estimate wire time for the selected request.
-3. Compute remaining gap: `remaining = predictedGapMs − elapsed` (time since
-   the gap window opened when the foreign response completed).
-4. **If `wireTime > remaining`**: defer the request (`txDeferred++`,
-   `gapSkippedSmall++`). The request stays in the queue for the next gap.
-5. **If gap is sufficient or no prediction available**: send the request.
+3. Call `canSafelyTransmitInGap(wireMs)` — this checks ALL successor edges
+   for the current predecessor, not just the most-likely one:
+   - For each successor edge, compute its conservative gap.
+   - Edges where `elapsed ≥ conservative` are "ruled out" — if that successor
+     were going to follow, its request would have already arrived.
+   - Among remaining (non-ruled-out) edges, verify that
+     `elapsed + wireMs + safetyMargin ≤ conservative` — i.e., our TX would
+     complete before ANY still-possible successor's request arrives.
+4. **If any non-ruled-out successor would collide**: defer (`txDeferred++`).
+5. **If safe for all remaining successors, or no prediction available**: send.
 6. Track whether the TX used gap prediction (`txInGap`) or silence-based
    fallback (`txFallback`).
 

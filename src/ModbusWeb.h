@@ -873,13 +873,20 @@ public:
                 }
                 response->print(F("},\"wireTime\":{"));
                 response->printf("\"totalMs\":%u", gs.totalWireTimeMs);
+                response->print(F("},\"registers\":{"));
+                response->printf("\"total\":%u", gs.registersRead);
+                uint32_t elapsedSec = (millis() - gs.startMs) / 1000;
+                float regsPerSec = elapsedSec > 0 ? (float)gs.registersRead / elapsedSec : 0;
+                response->printf(",\"perSecond\":%.2f,\"elapsedSec\":%u", regsPerSec, elapsedSec);
                 response->print(F("},\"currentGap\":{"));
                 response->printf("\"valid\":%s", gap.valid ? "true" : "false");
                 if (gap.valid) {
-                    response->printf(",\"predictedMs\":%u,\"minObservedMs\":%u,\"samples\":%u",
-                        gap.predictedGapMs, gap.minObservedMs, gap.sampleCount);
+                    response->printf(",\"predictedMs\":%u,\"confirmationMs\":%u,\"minObservedMs\":%u,\"samples\":%u",
+                        gap.predictedGapMs, gap.confirmationMs, gap.minObservedMs, gap.sampleCount);
                 }
-                response->print(F("},\"timing\":{"));
+                uint32_t gmin = modbus.getGlobalMinGapMs();
+                response->printf("},\"globalMinGapMs\":%u", gmin != UINT32_MAX ? gmin : 0);
+                response->print(F(",\"timing\":{"));
                 if (gs.lastTxMs > 0) {
                     response->printf("\"lastTxAgoMs\":%lu", (unsigned long)(millis() - gs.lastTxMs));
                 }
@@ -1303,6 +1310,7 @@ function render(d){
   h+='<h2>Current Gap Prediction</h2><div class="cards">';
   if(cg.valid){
     h+='<div class="card ok"><div class="v">'+cg.predictedMs+'ms</div><div class="l">Predicted</div></div>';
+    h+='<div class="card"><div class="v">'+cg.confirmationMs+'ms</div><div class="l">Confirmation Wait</div></div>';
     h+='<div class="card"><div class="v">'+cg.minObservedMs+'ms</div><div class="l">Min Observed</div></div>';
     h+='<div class="card"><div class="v">'+cg.samples+'</div><div class="l">Samples</div></div>';
   } else {
@@ -1315,6 +1323,12 @@ function render(d){
   h+='<div class="card"><div class="v">'+fms(d.wireTime.totalMs)+'</div><div class="l">Total Wire Time</div></div>';
   if(d.timing.lastTxAgoMs!=null)
     h+='<div class="card"><div class="v">'+fms(d.timing.lastTxAgoMs)+'</div><div class="l">Last TX Ago</div></div>';
+  if(d.registers){
+    let rps=d.registers.perSecond;
+    let rpsCls=rps>=1?'ok':rps>0?'warn':'bad';
+    h+='<div class="card '+rpsCls+'"><div class="v">'+fmt(rps,2)+'</div><div class="l">Registers/sec</div></div>';
+    h+='<div class="card"><div class="v">'+d.registers.total+'</div><div class="l">Registers Read</div></div>';
+  }
   h+='</div>';
 
   $('content').innerHTML=h;

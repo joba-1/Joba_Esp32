@@ -161,7 +161,8 @@ using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntr
  */
 struct GapPrediction {
     bool    valid{false};          // true if we have enough data to predict
-    uint32_t predictedGapMs{0};   // probability-weighted gap: Σ(p_i * conservative_i) * (1 - margin)
+    uint32_t predictedGapMs{0};   // most-likely successor gap: conservative(best_edge) * (1 - margin)
+    uint32_t confirmationMs{0};   // wait at least this long before transmitting to rule out short-gap successors
     uint32_t minObservedMs{0};    // hard minimum ever observed across all successor edges
     uint32_t sampleCount{0};      // total successor observations for this predecessor
 };
@@ -196,10 +197,14 @@ struct GapSchedulerStats {
     // Wire time budget
     uint32_t totalWireTimeMs{0};  // cumulative wire time of our TX
 
+    // Registers read successfully via our own requests
+    uint32_t registersRead{0};
+
     // Timing
     unsigned long lastTxMs{0};
     unsigned long lastCollisionMs{0};
     unsigned long lastMarginAdjustMs{0};
+    unsigned long startMs{0};           // millis() when stats began (for regs/sec)
 
     void reset() {
         txInGap = txFallback = txDeferred = 0;
@@ -207,7 +212,9 @@ struct GapSchedulerStats {
         collisions = 0;
         safetyMargin = initialMargin;
         totalWireTimeMs = 0;
+        registersRead = 0;
         lastTxMs = lastCollisionMs = lastMarginAdjustMs = 0;
+        startMs = millis();
     }
 };
 
@@ -695,6 +702,7 @@ public:
      * @brief Get transition map (predecessor -> successor -> count)
      */
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
+    uint32_t getGlobalMinGapMs() const { return _globalMinGapMs; }
 
     /**
      * @brief Get gap scheduler stats for monitoring
@@ -705,9 +713,23 @@ public:
      * @brief Predict the available gap after the most recently completed foreign transaction.
      *
      * Looks up the last completed transaction key in the transition map and returns
-     * the conservative predicted gap (minimum across all successors, with safety margin).
+     * the conservative predicted gap (most-likely successor, with safety margin).
      */
     GapPrediction predictCurrentGap() const;
+
+    /**
+     * @brief Check whether a TX of the given wire time can safely fit in the current gap.
+     *
+     * Unlike predictCurrentGap() (which returns one number), this method checks
+     * ALL successor edges.  A successor is "ruled out" when enough silence has
+     * elapsed that its request would have already arrived.  Among the remaining
+     * (non-ruled-out) successors, the TX is safe only if all of their
+     * conservative gaps still leave room for the full wire time.
+     *
+     * @param wireMs  Estimated wire time of the request + response
+     * @return true if it's safe to transmit now, false if we should defer
+     */
+    bool canSafelyTransmitInGap(uint32_t wireMs) const;
 
     /**
      * @brief Estimate wire time for a Modbus read request+response.
@@ -759,7 +781,7 @@ private:
     void updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response);
     void processQueue(bool busSilent = false);
     bool sendRequest(const ModbusPendingRequest& request);
-    void sendFrameFromBuffer();  // Uses static _txFrameBuffer
+    bool sendFrameFromBuffer();  // Uses static _txFrameBuffer; returns false if aborted
     void sendFrame(const std::vector<uint8_t>& frame);  // Legacy wrapper for sendRawFrame
     uint16_t calculateCRC(const uint8_t* data, size_t length) const;
     void setDE(bool transmit);
@@ -932,6 +954,7 @@ private:
     BusTransitionMap _busTransitions;    // predecessor key -> successor key -> count
     uint64_t _lastCompletedTxKey{0};     // pattern key of the last completed (request→response) transaction
     bool _hasLastCompletedTx{false};     // true once first transaction is completed
+    uint32_t _globalMinGapMs{UINT32_MAX}; // minimum gap observed across ALL transitions
 
     // Gap-aware TX scheduler state
     GapSchedulerStats _gapSchedulerStats;
@@ -940,6 +963,8 @@ private:
     uint32_t _gapWindowBudgetMs{0};      // predicted available ms in this window
     uint32_t _gapWindowUsedMs{0};        // wire time already consumed in this window
     bool _sentDuringGapWindow{false};     // true if current pending request was sent using gap prediction
+    uint32_t _lastTxElapsedMs{0};         // gap elapsed at TX time (for collision diagnostics)
+    uint32_t _lastTxWireMs{0};            // estimated wire time at TX time
     static constexpr uint32_t GAP_MIN_SAMPLES = 10;  // minimum transition samples before trusting prediction
     static constexpr uint32_t GAP_MIN_USABLE_MS = 20; // minimum usable gap to attempt TX
     static constexpr uint32_t GAP_RELAX_INTERVAL = 50; // relax margin after this many successful gap TXes
