@@ -15,6 +15,9 @@
 #include "ModbusDevice.h"
 #include "ModbusWeb.h"
 #include "ModbusIntegration.h"
+#include "MQTTIntegrationFeature.h"
+#include "SensorCollectionFeature.h"
+#include "ModbusDeviceFeature.h"
 #include "ResetManager.h"
 #include "ResetDiagnostics.h"
 #include "CpuMonitor.h"
@@ -155,58 +158,50 @@ const HASensorConfig sensorHAConfig[] = {
 // Modbus device manager (declared here, initialized after storage is ready)
 ModbusDeviceManager* modbusDevices = nullptr;
 
-// Array of all features for easy iteration
+// Wrap ModbusDeviceManager as a Feature for CPU tracking
+ModbusDeviceFeature modbusDeviceFeature(modbusDevices);
+
+// Forward-declare sensor reading callback (defined below)
+static void fillSensorReading(SensorData& reading);
+
+// Sensor data collection feature (periodic collect + persistence loop)
+SensorCollectionFeature<SensorData, 100> sensorCollectionFeature(
+    sensorData, influxDB, mqtt, led,
+    fillSensorReading, "sensors", 60000
+);
+
+// MQTT integration feature (HA discovery, cmd subscriptions, state publishing)
+// Configured in setup() via configure() once dynamic values are available
+MQTTIntegrationFeature mqttIntegration(
+    mqtt,
+    sensorHAConfig, sizeof(sensorHAConfig) / sizeof(sensorHAConfig[0]),
+    30000
+);
+
+// Array of all features for easy iteration — order matters
 Feature* features[] = {
-    &logging,      // Must be first for early logging
-    &led,          // LED setup early to indicate boot
-    &wifiManager,  // Must be before network-dependent features
+    &logging,               // Must be first for early logging
+    &led,                   // LED setup early to indicate boot
+    &wifiManager,           // Must be before network-dependent features
     &timeSync,
-    &storage,      // Filesystem before features that need it
+    &storage,               // Filesystem before features that need it
     &webServer,
     &influxDB,
-    &mqtt,         // MQTT after network is ready
-    &modbus        // Modbus RTU bus monitor
+    &mqtt,                  // MQTT after network is ready
+    &modbus,                // Modbus RTU bus monitor
+    &modbusDeviceFeature,   // Modbus device polling
+    &sensorCollectionFeature, // Periodic sensor collection + persistence
+    &mqttIntegration        // HA discovery, MQTT subscriptions, state publish
 };
 const size_t featureCount = sizeof(features) / sizeof(features[0]);
 
-// ============================================
-// Data Collection Timer
-// ============================================
-unsigned long lastDataCollection = 0;
-const unsigned long DATA_COLLECTION_INTERVAL = 60000;  // Collect every 60 seconds
-bool haDiscoveryPublished = false;
-bool modbusHADiscoveryPublished = false;
-
-// MQTT command subscriptions are lost on reconnect; track and re-subscribe.
-bool mqttResetCmdSubscribed = false;
-unsigned long lastModbusStatePublish = 0;
-const unsigned long MODBUS_STATE_PUBLISH_INTERVAL = 30000;  // Publish state every 30s
-
-void collectSensorData() {
-    SensorData reading;
-    memset(&reading, 0, sizeof(reading));
-    
-    // Set location tag using device ID
+// Callback for SensorCollectionFeature — fills a reading with sensor values
+static void fillSensorReading(SensorData& reading) {
     strncpy(reading.location, deviceId.c_str(), sizeof(reading.location) - 1);
-    
-    // Collect sensor values (replace with actual sensor readings)
     reading.temperature = 22.5 + (random(-20, 20) / 10.0f);  // Simulated
     reading.humidity = 55.0 + (random(-100, 100) / 10.0f);   // Simulated
     reading.rssi = WiFi.RSSI();
-    
-    // Add to collection (timestamp auto-filled)
-    sensorData.add(reading);
-    
-    // Queue for InfluxDB upload
-    influxDB.queue(sensorData.latestToLineProtocol());
-    
-    // Publish to MQTT for Home Assistant
-    DataCollectionMQTT::publishLatest(&mqtt, sensorData, "sensors");
-    
-    // Pulse LED to indicate data collection
-    led.pulse();
-    
-    LOG_D("Collected: temp=%.1f, humidity=%.1f, rssi=%d", 
+    LOG_D("Collected: temp=%.1f, humidity=%.1f, rssi=%d",
           reading.temperature, reading.humidity, reading.rssi);
 }
 
@@ -466,6 +461,13 @@ void setup() {
     LOG_I("All features initialized");
     LOG_I("Free heap: %d bytes", ESP.getFreeHeap());
     
+    // Configure MQTTIntegrationFeature with dynamic values now available
+    mqttIntegration.configure(
+        mqttBaseTopic.c_str(),
+        deviceId.c_str(),
+        modbusDevices
+    );
+
     // Enable periodic CPU stats logging (every 60 seconds)
     CpuMonitor::setLogInterval(60000);
 
@@ -477,97 +479,13 @@ void setup() {
 void loop() {
     CpuMonitor::markLoopStart();
 
-    // Run all feature loop handlers
+    // Run all feature loop handlers — each gets automatic CPU timing
     for (size_t i = 0; i < featureCount; i++) {
         ResetDiagnostics::setBreadcrumb("loop", features[i]->getName());
         const uint32_t startUs = (uint32_t)micros();
         features[i]->loop();
         const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
         ResetDiagnostics::recordLoopDurationUs(features[i]->getName(), durUs);
-    }
-    
-    // Publish Home Assistant autodiscovery once MQTT is connected
-    if (mqtt.isConnected() && !haDiscoveryPublished) {
-        ResetDiagnostics::setBreadcrumb("job", "haDiscovery");
-        String deviceName = String(DeviceInfo::getFirmwareName()) + " " + deviceId;
-        DataCollectionMQTT::publishDiscovery(
-            &mqtt,
-            "sensors",
-            sensorHAConfig,
-            sizeof(sensorHAConfig) / sizeof(sensorHAConfig[0]),
-            deviceName.c_str(),                   // Device name in HA
-            deviceId.c_str(),                     // Device unique ID
-            "joba-1",                             // Manufacturer
-            DeviceInfo::getFirmwareName(),        // Model
-            DeviceInfo::getFirmwareVersion()      // Software version
-        );
-        haDiscoveryPublished = true;
-        LOG_I("Home Assistant autodiscovery published");
-    }
-
-    // Subscribe to MQTT reset commands after connect (and after reconnect)
-    if (mqtt.isConnected()) {
-        if (!mqttResetCmdSubscribed) {
-            ResetDiagnostics::setBreadcrumb("job", "mqttSubscribeCmd");
-            bool ok1 = mqtt.subscribeToBase("cmd/reset");
-            bool ok2 = mqtt.subscribeToBase("cmd/restart");
-            bool ok3 = mqtt.subscribeToBase("modbus/cmd/raw/read");
-            mqttResetCmdSubscribed = (ok1 && ok2 && ok3);
-            LOG_I("MQTT reset cmd subscribed: %s", mqttResetCmdSubscribed ? "yes" : "no");
-        }
-    } else {
-        mqttResetCmdSubscribed = false;
-    }
-    
-    // Publish Modbus Home Assistant autodiscovery once MQTT is connected
-    if (mqtt.isConnected() && !modbusHADiscoveryPublished && modbusDevices) {
-        ResetDiagnostics::setBreadcrumb("job", "modbusHADiscovery");
-        String modbusTopic = mqttBaseTopic + "/modbus";
-        ModbusIntegration::publishDiscovery(
-            &mqtt,
-            *modbusDevices,
-            modbusTopic.c_str(),
-            "joba-1",              // Manufacturer
-            DeviceInfo::getFirmwareName(), // Model
-            DeviceInfo::getFirmwareVersion() // Software version
-        );
-        modbusHADiscoveryPublished = true;
-        LOG_I("Modbus Home Assistant autodiscovery published");
-    }
-    
-    // Periodic Modbus state publishing to MQTT
-    if (mqtt.isConnected() && modbusDevices &&
-        millis() - lastModbusStatePublish >= MODBUS_STATE_PUBLISH_INTERVAL) {
-        lastModbusStatePublish = millis();
-        ResetDiagnostics::setBreadcrumb("job", "modbusStatePublish");
-        String modbusTopic = mqttBaseTopic + "/modbus";
-        ModbusIntegration::publishAllDeviceStates(&mqtt, *modbusDevices,
-                                                   modbusTopic.c_str());
-    }
-    
-    // Periodic data collection
-    if (millis() - lastDataCollection >= DATA_COLLECTION_INTERVAL) {
-        lastDataCollection = millis();
-        ResetDiagnostics::setBreadcrumb("job", "collectSensorData");
-        collectSensorData();
-    }
-    
-    // Handle data collection persistence
-    ResetDiagnostics::setBreadcrumb("loop", "sensorData");
-    {
-        const uint32_t startUs = (uint32_t)micros();
-    sensorData.loop();
-        const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
-        ResetDiagnostics::recordLoopDurationUs("sensorData", durUs);
-    }
-    
-    // Run Modbus device polling
-    if (modbusDevices) {
-        ResetDiagnostics::setBreadcrumb("loop", "modbusDevices");
-        const uint32_t startUs = (uint32_t)micros();
-        modbusDevices->loop();
-        const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
-        ResetDiagnostics::recordLoopDurationUs("modbusDevices", durUs);
     }
 
     CpuMonitor::markLoopEnd();
