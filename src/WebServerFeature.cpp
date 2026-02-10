@@ -97,34 +97,12 @@ void WebServerFeature::setupDefaultRoutes() {
         html += "</div>";
 
         html += "<div class='card'>";
-        html += "<h2>Storage</h2>";
-        html += "<p><a href='/api/storage'>Storage Status</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/view/storage'>File Browser</a> <small>(interactive)</small></p>";
-        html += "<form action='/api/storage/list' method='get'>"
-            "<strong>/api/storage/list</strong> "
-            "<label>path <input name='path' type='text' value='/' size='30'></label>"
-            "<button type='submit'>GET</button>"
-            "</form>";
-        html += "<form action='/api/storage/file' method='get'>"
-            "<strong>/api/storage/file</strong> "
-            "<label>path <input name='path' type='text' value='/data/sensors.json' size='30'></label>"
-            "<button type='submit'>GET</button>"
-            "</form>";
-        html += "</div>";
-
-        html += "<div class='card'>";
-        html += "<h2>Data Collection</h2>";
-        html += "<p><a href='/view/sensors'>Sensors Dashboard</a> <small>(live table)</small></p>";
-        html += "<p><a href='/api/sensors'>All Sensor Data</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/sensors/latest'>Latest Sensor Values</a> <small>(JSON)</small></p>";
-        html += "</div>";
-
-        html += "<div class='card'>";
         html += "<h2>Modbus</h2>";
         html += "<p><a href='/view/modbus'>Modbus Dashboard</a> <small>(live dashboard)</small></p>";
         html += "<p><a href='/view/modbus/decoded'>Decoded Register Viewer</a> <small>(interactive)</small></p>";
         html += "<p><a href='/view/modbus/raw'>Raw Request Tool</a> <small>(low-level debugging)</small></p>";
         html += "<p><a href='/view/modbus/patterns'>Bus Pattern Analysis</a> <small>(traffic analysis)</small></p>";
+        html += "<p><a href='/view/modbus/scheduler'>Gap Scheduler Monitor</a> <small>(TX scheduling)</small></p>";
         html += "<p><a href='/api/modbus/status'>Bus Status</a> <small>(JSON)</small></p>";
         html += "<p><a href='/api/modbus/devices'>Device List</a> <small>(JSON)</small></p>";
         html += "<p><a href='/api/modbus/maps'>Register Maps</a> <small>(JSON)</small></p>";
@@ -163,6 +141,30 @@ void WebServerFeature::setupDefaultRoutes() {
             "</form>";
 
         html += "</div>";
+
+        html += "<div class='card'>";
+        html += "<h2>Storage</h2>";
+        html += "<p><a href='/api/storage'>Storage Status</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/view/storage'>File Browser</a> <small>(interactive)</small></p>";
+        html += "<form action='/api/storage/list' method='get'>"
+            "<strong>/api/storage/list</strong> "
+            "<label>path <input name='path' type='text' value='/' size='30'></label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+        html += "<form action='/api/storage/file' method='get'>"
+            "<strong>/api/storage/file</strong> "
+            "<label>path <input name='path' type='text' value='/data/sensors.json' size='30'></label>"
+            "<button type='submit'>GET</button>"
+            "</form>";
+        html += "</div>";
+
+        html += "<div class='card'>";
+        html += "<h2>Data Collection</h2>";
+        html += "<p><a href='/view/sensors'>Sensors Dashboard</a> <small>(live table)</small></p>";
+        html += "<p><a href='/api/sensors'>All Sensor Data</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/sensors/latest'>Latest Sensor Values</a> <small>(JSON)</small></p>";
+        html += "</div>";
+
         html += "</div></body></html>";
         
         request->send(200, "text/html", html);
