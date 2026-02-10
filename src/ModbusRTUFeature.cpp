@@ -1884,6 +1884,10 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
 
     auto it = _busPatterns.find(key);
     if (it == _busPatterns.end()) {
+        // Cap the number of patterns to prevent unbounded growth
+        if (_busPatterns.size() >= MAX_BUS_PATTERNS) {
+            return;  // Silently drop new patterns once at capacity
+        }
         BusPatternEntry entry;
         entry.unitId        = frame.unitId;
         entry.functionCode  = fc;
@@ -1927,7 +1931,16 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
                 predIt->second.recordSuccessorGap(gapMs);
             }
             // Record transition with gap: predecessor -> this request
-            _busTransitions[_lastCompletedTxKey][key].record(gapMs);
+            // Cap outer map to MAX_BUS_PATTERNS predecessors
+            auto txIt = _busTransitions.find(_lastCompletedTxKey);
+            if (txIt != _busTransitions.end()) {
+                // Predecessor already tracked — cap inner map to MAX_BUS_PATTERNS successors
+                if (txIt->second.size() < MAX_BUS_PATTERNS || txIt->second.count(key)) {
+                    txIt->second[key].record(gapMs);
+                }
+            } else if (_busTransitions.size() < MAX_BUS_PATTERNS) {
+                _busTransitions[_lastCompletedTxKey][key].record(gapMs);
+            }
 
             // Track global minimum gap across ALL transitions.
             // Used as a floor in canSafelyTransmitInGap to protect against

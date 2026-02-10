@@ -896,7 +896,7 @@ private:
 #define MODBUS_LISTEN_ONLY 0
 #endif
     
-    static const size_t FRAME_HISTORY_SIZE = 20;
+    static const size_t FRAME_HISTORY_SIZE = 10;
     ModbusFrame _frameHistory[FRAME_HISTORY_SIZE];
     size_t _frameHistoryIndex = 0;
 
@@ -905,7 +905,7 @@ private:
     uint32_t _rxBufferStartMs{0};
 
     // CRC error contexts (before/bad/after)
-    static const size_t CRC_CONTEXT_SIZE = 10;
+    static const size_t CRC_CONTEXT_SIZE = 4;
     CrcErrorContext _crcContexts[CRC_CONTEXT_SIZE];
     size_t _crcContextIndex{0};
     uint32_t _crcContextNextId{1};
@@ -933,6 +933,7 @@ private:
     static uint64_t makeBusPatternKey(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty) {
         return ((uint64_t)unitId << 40) | ((uint64_t)fc << 32) | ((uint64_t)startReg << 16) | qty;
     }
+    static constexpr size_t MAX_BUS_PATTERNS = 64;
     std::map<uint64_t, BusPatternEntry> _busPatterns;  // key -> entry
     BusGapStats _busGapStats;               // inter-frame gaps measured at byte level
     BusByteStats _busByteStats;             // raw byte-level diagnostics
@@ -950,7 +951,7 @@ private:
     unsigned long _lastTransactionEndMs{0};
     bool _hasLastTransactionEnd{false};
 
-    // Successor gap + transition tracking
+    // Successor gap + transition tracking (capped: MAX_BUS_PATTERNS outer keys)
     BusTransitionMap _busTransitions;    // predecessor key -> successor key -> count
     uint64_t _lastCompletedTxKey{0};     // pattern key of the last completed (request→response) transaction
     bool _hasLastCompletedTx{false};     // true once first transaction is completed

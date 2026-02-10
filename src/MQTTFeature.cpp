@@ -100,13 +100,13 @@ void MQTTFeature::onMessage(MessageCallback callback) {
 
 void MQTTFeature::mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (_instance && _instance->_messageCallback) {
-        // Null-terminate the payload
-        char* msg = new char[length + 1];
-        memcpy(msg, payload, length);
-        msg[length] = '\0';
+        // Use static buffer to avoid heap alloc per message
+        // PubSubClient buffer is 1024 bytes, so payload fits
+        static char msgBuf[1025];
+        size_t copyLen = (length < sizeof(msgBuf) - 1) ? length : sizeof(msgBuf) - 1;
+        memcpy(msgBuf, payload, copyLen);
+        msgBuf[copyLen] = '\0';
         
-        _instance->_messageCallback(topic, msg);
-        
-        delete[] msg;
+        _instance->_messageCallback(topic, msgBuf);
     }
 }

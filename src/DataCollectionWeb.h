@@ -59,8 +59,7 @@ public:
         
         // HTML view endpoint
         server->on(viewPathStr, HTTP_GET, [basePath, apiPathStr, getSchemaCallback, refreshIntervalMs](AsyncWebServerRequest* request) {
-            String html = generateHtmlView(basePath, apiPathStr, getSchemaCallback(), refreshIntervalMs);
-            request->send(200, "text/html", html);
+            streamHtmlView(request, basePath, apiPathStr, refreshIntervalMs);
         });
     }
 
@@ -102,8 +101,7 @@ public:
         // HTML view endpoint
         server->on(viewPathStr, HTTP_GET, [basePath, apiPathStr, getSchemaCallback, refreshIntervalMs, &serverFeature](AsyncWebServerRequest* request) {
             if (!serverFeature.authenticate(request)) return request->requestAuthentication();
-            String html = generateHtmlView(basePath, apiPathStr, getSchemaCallback(), refreshIntervalMs);
-            request->send(200, "text/html", html);
+            streamHtmlView(request, basePath, apiPathStr, refreshIntervalMs);
         });
     }
     
@@ -169,150 +167,138 @@ private:
         return "[]";
     }
     
-    static String generateHtmlView(const char* name, const char* apiPath, const String& schema, uint32_t refreshIntervalMs) {
-        String html = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>)rawliteral";
-        html += name;
-        html += R"rawliteral( - Data View</title>
-    <link rel="stylesheet" href="/style.css">
-    <style>
-        h1, a, .btn, button, th {color:#66BB6A!important}
-        .btn, button {background:#66BB6A!important}
-        .btn:hover, button:hover {background:#4CAF50!important}
-        .status{display:flex;gap:15px;margin-bottom:15px;flex-wrap:wrap}
-        .status-item{background:#16213e;padding:8px 12px;border-radius:6px;font-size:0.9em}
-        .status-item span{color:#66BB6A;font-weight:bold}
-        .status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;animation:pulse 2s infinite}
-        .status-dot.connected{background:#00ff88}
-        .status-dot.disconnected{background:#ff4444}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-        .latest{background:#1f4a3f!important}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <a href="/" class="home-link">Home</a>
-        <h1>)rawliteral";
-        html += name;
-        html += R"rawliteral(</h1>
-        <div class="status">
-            <div class="status-item">
-                <span class="status-dot connected" id="statusDot"></span>
-                <span id="statusText">Connected</span>
-            </div>
-            <div class="status-item">Entries: <span id="entryCount">0</span></div>
-            <div class="status-item">Last Update: <span id="lastUpdate">-</span></div>
-            <button class="btn" onclick="fetchData()">Refresh Now</button>
-        </div>
-        <div class="table-container">
-            <table id="dataTable">
-                <thead id="tableHead"></thead>
-                <tbody id="tableBody"></tbody>
-            </table>
-            <div class="no-data" id="noData" style="display:none;">No data available</div>
-        </div>
-        <div class="status-info">Auto-refresh every )rawliteral";
-        html += String(refreshIntervalMs / 1000);
-        html += R"rawliteral( seconds</div>
-    </div>
-
-    <script>
-        const API_URL = ')rawliteral";
-        html += apiPath;
-        html += R"rawliteral(';
-        const REFRESH_INTERVAL = )rawliteral";
-        html += String(refreshIntervalMs);
-        html += R"rawliteral(;
-        
-        let columns = [];
-        let lastData = null;
-        
-        function formatValue(key, value) {
-            if (value === null || value === undefined) return '-';
-            if (key === 'timestamp' || key.includes('time')) {
-                if (typeof value === 'number' && value > 1000000000) {
-                    const date = new Date(value * 1000);
-                    return date.toLocaleString();
-                }
-            }
-            if (typeof value === 'number') {
-                if (Number.isInteger(value)) return value.toString();
-                return value.toFixed(2);
-            }
-            if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-            return String(value);
-        }
-        
-        function updateTable(data) {
-            const thead = document.getElementById('tableHead');
-            const tbody = document.getElementById('tableBody');
-            const noData = document.getElementById('noData');
-            const entryCount = document.getElementById('entryCount');
-            
-            if (!data || data.length === 0) {
-                thead.innerHTML = '';
-                tbody.innerHTML = '';
-                noData.style.display = 'block';
-                entryCount.textContent = '0';
-                return;
-            }
-            
-            noData.style.display = 'none';
-            entryCount.textContent = data.length;
-            
-            // Get columns from first entry
-            if (columns.length === 0 && data.length > 0) {
-                columns = Object.keys(data[0]);
-            }
-            
-            // Build header
-            thead.innerHTML = '<tr>' + columns.map(col => 
-                `<th>${col}</th>`
-            ).join('') + '</tr>';
-            
-            // Build rows (newest first)
-            const reversedData = [...data].reverse();
-            tbody.innerHTML = reversedData.map((row, idx) => 
-                `<tr class="${idx === 0 ? 'latest' : ''}">${columns.map(col => 
-                    `<td>${formatValue(col, row[col])}</td>`
-                ).join('')}</tr>`
-            ).join('');
-        }
-        
-        async function fetchData() {
-            try {
-                const response = await fetch(API_URL);
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                
-                const data = await response.json();
-                lastData = data;
-                updateTable(data);
-                
-                document.getElementById('statusDot').className = 'status-dot connected';
-                document.getElementById('statusText').textContent = 'Connected';
-                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
-            } catch (error) {
-                console.error('Fetch error:', error);
-                document.getElementById('statusDot').className = 'status-dot disconnected';
-                document.getElementById('statusText').textContent = 'Disconnected';
-            }
-        }
-        
-        // Initial fetch
-        fetchData();
-        
-        // Auto-refresh
-        setInterval(fetchData, REFRESH_INTERVAL);
-    </script>
-</body>
-</html>
-)rawliteral";
-        return html;
+    static void streamHtmlView(AsyncWebServerRequest* request, const char* name, const char* apiPath, uint32_t refreshIntervalMs) {
+        AsyncResponseStream *response = request->beginResponseStream(F("text/html"));
+        response->print(F("<!DOCTYPE html>\n<html>\n<head>\n"
+            "    <meta charset=\"UTF-8\">\n"
+            "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+            "    <title>"));
+        response->print(name);
+        response->print(F(" - Data View</title>\n"
+            "    <link rel=\"stylesheet\" href=\"/style.css\">\n"
+            "    <style>\n"
+            "        h1, a, .btn, button, th {color:#66BB6A!important}\n"
+            "        .btn, button {background:#66BB6A!important}\n"
+            "        .btn:hover, button:hover {background:#4CAF50!important}\n"
+            "        .status{display:flex;gap:15px;margin-bottom:15px;flex-wrap:wrap}\n"
+            "        .status-item{background:#16213e;padding:8px 12px;border-radius:6px;font-size:0.9em}\n"
+            "        .status-item span{color:#66BB6A;font-weight:bold}\n"
+            "        .status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;animation:pulse 2s infinite}\n"
+            "        .status-dot.connected{background:#00ff88}\n"
+            "        .status-dot.disconnected{background:#ff4444}\n"
+            "        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}\n"
+            "        .latest{background:#1f4a3f!important}\n"
+            "    </style>\n"
+            "</head>\n<body>\n"
+            "    <div class=\"container\">\n"
+            "        <a href=\"/\" class=\"home-link\">Home</a>\n"
+            "        <h1>"));
+        response->print(name);
+        response->print(F("</h1>\n"
+            "        <div class=\"status\">\n"
+            "            <div class=\"status-item\">\n"
+            "                <span class=\"status-dot connected\" id=\"statusDot\"></span>\n"
+            "                <span id=\"statusText\">Connected</span>\n"
+            "            </div>\n"
+            "            <div class=\"status-item\">Entries: <span id=\"entryCount\">0</span></div>\n"
+            "            <div class=\"status-item\">Last Update: <span id=\"lastUpdate\">-</span></div>\n"
+            "            <button class=\"btn\" onclick=\"fetchData()\">Refresh Now</button>\n"
+            "        </div>\n"
+            "        <div class=\"table-container\">\n"
+            "            <table id=\"dataTable\">\n"
+            "                <thead id=\"tableHead\"></thead>\n"
+            "                <tbody id=\"tableBody\"></tbody>\n"
+            "            </table>\n"
+            "            <div class=\"no-data\" id=\"noData\" style=\"display:none;\">No data available</div>\n"
+            "        </div>\n"
+            "        <div class=\"status-info\">Auto-refresh every "));
+        response->print(refreshIntervalMs / 1000);
+        response->print(F(" seconds</div>\n"
+            "    </div>\n\n"
+            "    <script>\n"
+            "        const API_URL = '"));
+        response->print(apiPath);
+        response->print(F("';\n"
+            "        const REFRESH_INTERVAL = "));
+        response->print(refreshIntervalMs);
+        response->print(F(";\n"
+            "        \n"
+            "        let columns = [];\n"
+            "        let lastData = null;\n"
+            "        \n"
+            "        function formatValue(key, value) {\n"
+            "            if (value === null || value === undefined) return '-';\n"
+            "            if (key === 'timestamp' || key.includes('time')) {\n"
+            "                if (typeof value === 'number' && value > 1000000000) {\n"
+            "                    const date = new Date(value * 1000);\n"
+            "                    return date.toLocaleString();\n"
+            "                }\n"
+            "            }\n"
+            "            if (typeof value === 'number') {\n"
+            "                if (Number.isInteger(value)) return value.toString();\n"
+            "                return value.toFixed(2);\n"
+            "            }\n"
+            "            if (typeof value === 'boolean') return value ? 'Yes' : 'No';\n"
+            "            return String(value);\n"
+            "        }\n"
+            "        \n"
+            "        function updateTable(data) {\n"
+            "            const thead = document.getElementById('tableHead');\n"
+            "            const tbody = document.getElementById('tableBody');\n"
+            "            const noData = document.getElementById('noData');\n"
+            "            const entryCount = document.getElementById('entryCount');\n"
+            "            \n"
+            "            if (!data || data.length === 0) {\n"
+            "                thead.innerHTML = '';\n"
+            "                tbody.innerHTML = '';\n"
+            "                noData.style.display = 'block';\n"
+            "                entryCount.textContent = '0';\n"
+            "                return;\n"
+            "            }\n"
+            "            \n"
+            "            noData.style.display = 'none';\n"
+            "            entryCount.textContent = data.length;\n"
+            "            \n"
+            "            if (columns.length === 0 && data.length > 0) {\n"
+            "                columns = Object.keys(data[0]);\n"
+            "            }\n"
+            "            \n"
+            "            thead.innerHTML = '<tr>' + columns.map(col => \n"
+            "                `<th>${col}</th>`\n"
+            "            ).join('') + '</tr>';\n"
+            "            \n"
+            "            const reversedData = [...data].reverse();\n"
+            "            tbody.innerHTML = reversedData.map((row, idx) => \n"
+            "                `<tr class=\"${idx === 0 ? 'latest' : ''}\">${columns.map(col => \n"
+            "                    `<td>${formatValue(col, row[col])}</td>`\n"
+            "                ).join('')}</tr>`\n"
+            "            ).join('');\n"
+            "        }\n"
+            "        \n"
+            "        async function fetchData() {\n"
+            "            try {\n"
+            "                const response = await fetch(API_URL);\n"
+            "                if (!response.ok) throw new Error('HTTP ' + response.status);\n"
+            "                \n"
+            "                const data = await response.json();\n"
+            "                lastData = data;\n"
+            "                updateTable(data);\n"
+            "                \n"
+            "                document.getElementById('statusDot').className = 'status-dot connected';\n"
+            "                document.getElementById('statusText').textContent = 'Connected';\n"
+            "                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();\n"
+            "            } catch (error) {\n"
+            "                console.error('Fetch error:', error);\n"
+            "                document.getElementById('statusDot').className = 'status-dot disconnected';\n"
+            "                document.getElementById('statusText').textContent = 'Disconnected';\n"
+            "            }\n"
+            "        }\n"
+            "        \n"
+            "        fetchData();\n"
+            "        setInterval(fetchData, REFRESH_INTERVAL);\n"
+            "    </script>\n"
+            "</body>\n</html>"));
+        request->send(response);
     }
 };
 

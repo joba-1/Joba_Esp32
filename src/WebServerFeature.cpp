@@ -81,103 +81,114 @@ void WebServerFeature::setupDefaultRoutes() {
             title = firmwareName + " " + deviceId;
         }
         
-        String html = "<!DOCTYPE html><html><head><title>" + title + "</title>";
-        html += "<meta charset='UTF-8'>";
-        html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-        html += "<link rel='stylesheet' href='/style.css'>";
-        html += "</head>";
-        html += "<body><div class='container'>";
-        html += "<h1>" + title + "</h1>";
-        html += "<p style='color:#888'>IP: " + WiFi.localIP().toString() + " | Uptime: " + String(millis() / 1000) + "s | Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
-        html += "<div class='card'>";
-        html += "<h2>System</h2>";
-        html += "<p><a href='/health?json'>Health Check</a> <small>(no auth, JSON)</small></p>";
-        html += "<p><a href='/api/status'>Device Status</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/buildinfo'>Build Information</a> <small>(JSON)</small></p>";
-        html += "<form action='/api/reset' method='post' onsubmit=\"return confirm('Restart device now?')\">"
+        AsyncResponseStream *response = request->beginResponseStream(F("text/html"));
+        response->print(F("<!DOCTYPE html><html><head><title>"));
+        response->print(title);
+        response->print(F("</title>"
+            "<meta charset='UTF-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<link rel='stylesheet' href='/style.css'>"
+            "</head>"
+            "<body><div class='container'>"
+            "<h1>"));
+        response->print(title);
+        response->print(F("</h1>"
+            "<p style='color:#888'>IP: "));
+        response->print(WiFi.localIP().toString());
+        response->print(F(" | Uptime: "));
+        response->print(millis() / 1000);
+        response->print(F("s | Heap: "));
+        response->print(ESP.getFreeHeap());
+        response->print(F(" bytes</p>"
+
+            "<div class='card'>"
+            "<h2>System</h2>"
+            "<p><a href='/health?json'>Health Check</a> <small>(no auth, JSON)</small></p>"
+            "<p><a href='/api/status'>Device Status</a> <small>(JSON)</small></p>"
+            "<p><a href='/api/buildinfo'>Build Information</a> <small>(JSON)</small></p>"
+            "<form action='/api/reset' method='post' onsubmit=\"return confirm('Restart device now?')\">"
             "<strong>/api/reset</strong> <small>(POST)</small> "
             "<label>delayMs <input name='delayMs' type='number' value='250' min='50' max='10000'></label>"
             "<button type='submit'>Restart</button>"
-            "</form>";
-        html += "<form action='/api/update' method='post' enctype='multipart/form-data' onsubmit=\"return confirm('Upload firmware and reboot?')\">"
+            "</form>"
+            "<form action='/api/update' method='post' enctype='multipart/form-data' onsubmit=\"return confirm('Upload firmware and reboot?')\">"
             "<strong>/api/update</strong> <small>(HTTP OTA)</small> "
             "<input type='file' name='firmware' accept='.bin'> "
             "<button type='submit'>Upload</button>"
-            "</form>";
-        html += "</div>";
+            "</form>"
+            "</div>"
 
-        html += "<div class='card'>";
-        html += "<h2>Modbus</h2>";
-        html += "<p><a href='/view/modbus'>Modbus Dashboard</a> <small>(live dashboard)</small></p>";
-        html += "<p><a href='/view/modbus/decoded'>Decoded Register Viewer</a> <small>(interactive)</small></p>";
-        html += "<p><a href='/view/modbus/raw'>Raw Request Tool</a> <small>(low-level debugging)</small></p>";
-        html += "<p><a href='/view/modbus/patterns'>Bus Pattern Analysis</a> <small>(traffic analysis)</small></p>";
-        html += "<p><a href='/view/modbus/scheduler'>Gap Scheduler Monitor</a> <small>(TX scheduling)</small></p>";
-        html += "<p><a href='/api/modbus/status'>Bus Status</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/modbus/devices'>Device List</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/modbus/maps'>Register Maps</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/modbus/types'>Device Types</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/modbus/monitor'>Frame Monitor</a> <small>(JSON)</small></p>";
+            "<div class='card'>"
+            "<h2>Modbus</h2>"
+            "<p><a href='/view/modbus'>Modbus Dashboard</a> <small>(live dashboard)</small></p>"
+            "<p><a href='/view/modbus/decoded'>Decoded Register Viewer</a> <small>(interactive)</small></p>"
+            "<p><a href='/view/modbus/raw'>Raw Request Tool</a> <small>(low-level debugging)</small></p>"
+            "<p><a href='/view/modbus/patterns'>Bus Pattern Analysis</a> <small>(traffic analysis)</small></p>"
+            "<p><a href='/view/modbus/scheduler'>Gap Scheduler Monitor</a> <small>(TX scheduling)</small></p>"
+            "<p><a href='/api/modbus/status'>Bus Status</a> <small>(JSON)</small></p>"
+            "<p><a href='/api/modbus/devices'>Device List</a> <small>(JSON)</small></p>"
+            "<p><a href='/api/modbus/maps'>Register Maps</a> <small>(JSON)</small></p>"
+            "<p><a href='/api/modbus/types'>Device Types</a> <small>(JSON)</small></p>"
+            "<p><a href='/api/modbus/monitor'>Frame Monitor</a> <small>(JSON)</small></p>"
 
-        html += "<form action='/api/modbus/device' method='get'>"
+            "<form action='/api/modbus/device' method='get'>"
             "<strong>/api/modbus/device</strong> "
             "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
             "<label><input name='meta' type='checkbox' value='1'> meta</label>"
             "<button type='submit'>GET</button>"
-            "</form>";
+            "</form>"
 
-        html += "<form action='/api/modbus/read' method='get'>"
+            "<form action='/api/modbus/read' method='get'>"
             "<strong>/api/modbus/read</strong> "
             "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
             "<label>register <input name='register' type='text' value='' placeholder='e.g. grid_voltage' size='20'></label>"
             "<button type='submit'>GET</button>"
-            "</form>";
+            "</form>"
 
-        html += "<form action='/api/modbus/raw/read' method='get'>"
+            "<form action='/api/modbus/raw/read' method='get'>"
             "<strong>/api/modbus/raw/read</strong> "
             "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
             "<label>address <input name='address' type='number' value='0' min='0' max='65535'></label>"
             "<label>count <input name='count' type='number' value='2' min='1' max='125'></label>"
             "<label>fc <select name='fc'><option value='3'>3</option><option value='4'>4</option></select></label>"
             "<button type='submit'>GET</button>"
-            "</form>";
+            "</form>"
 
-        html += "<form action='/api/modbus/write' method='post'>"
+            "<form action='/api/modbus/write' method='post'>"
             "<strong>/api/modbus/write</strong> <small>(POST)</small> "
             "<label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>"
             "<label>register <input name='register' type='text' value='' placeholder='e.g. inverter_enable' size='20'></label>"
             "<label>value <input name='value' type='number' value='0' step='0.01'></label>"
             "<button type='submit'>POST</button>"
-            "</form>";
+            "</form>"
+            "</div>"
 
-        html += "</div>";
-
-        html += "<div class='card'>";
-        html += "<h2>Storage</h2>";
-        html += "<p><a href='/api/storage'>Storage Status</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/view/storage'>File Browser</a> <small>(interactive)</small></p>";
-        html += "<form action='/api/storage/list' method='get'>"
+            "<div class='card'>"
+            "<h2>Storage</h2>"
+            "<p><a href='/api/storage'>Storage Status</a> <small>(JSON)</small></p>"
+            "<p><a href='/view/storage'>File Browser</a> <small>(interactive)</small></p>"
+            "<form action='/api/storage/list' method='get'>"
             "<strong>/api/storage/list</strong> "
             "<label>path <input name='path' type='text' value='/' size='30'></label>"
             "<button type='submit'>GET</button>"
-            "</form>";
-        html += "<form action='/api/storage/file' method='get'>"
+            "</form>"
+            "<form action='/api/storage/file' method='get'>"
             "<strong>/api/storage/file</strong> "
             "<label>path <input name='path' type='text' value='/data/sensors.json' size='30'></label>"
             "<button type='submit'>GET</button>"
-            "</form>";
-        html += "</div>";
+            "</form>"
+            "</div>"
 
-        html += "<div class='card'>";
-        html += "<h2>Data Collection</h2>";
-        html += "<p><a href='/view/sensors'>Sensors Dashboard</a> <small>(live table)</small></p>";
-        html += "<p><a href='/api/sensors'>All Sensor Data</a> <small>(JSON)</small></p>";
-        html += "<p><a href='/api/sensors/latest'>Latest Sensor Values</a> <small>(JSON)</small></p>";
-        html += "</div>";
+            "<div class='card'>"
+            "<h2>Data Collection</h2>"
+            "<p><a href='/view/sensors'>Sensors Dashboard</a> <small>(live table)</small></p>"
+            "<p><a href='/api/sensors'>All Sensor Data</a> <small>(JSON)</small></p>"
+            "<p><a href='/api/sensors/latest'>Latest Sensor Values</a> <small>(JSON)</small></p>"
+            "</div>"
 
-        html += "</div></body></html>";
+            "</div></body></html>"));
         
-        request->send(200, "text/html", html);
+        request->send(response);
     });
 
     // Restart endpoint
@@ -402,7 +413,7 @@ void WebServerFeature::setupDefaultRoutes() {
             return request->requestAuthentication();
         }
 
-        String html = R"rawliteral(
+        static const char STORAGE_PAGE[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
@@ -493,7 +504,7 @@ void WebServerFeature::setupDefaultRoutes() {
 </body>
 </html>
 )rawliteral";
-        request->send(200, "text/html", html);
+        request->send(200, "text/html", STORAGE_PAGE);
     });
     
     // Health check endpoint (no auth required)
