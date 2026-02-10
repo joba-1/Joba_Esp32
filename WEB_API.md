@@ -330,6 +330,34 @@ curl --digest -u admin:<password> http://<device-ip>/api/modbus/gap-scheduler | 
 
 Human-readable monitoring dashboard for the gap-aware TX scheduler. Auto-refreshes every 5 seconds.
 
+### GET `/api/modbus/registers`
+
+Returns register definitions for all configured devices.
+
+```bash
+curl -u admin:<password> http://<device-ip>/api/modbus/registers
+```
+
+Response is an array of device objects, each containing:
+- `unitId` (integer): Modbus unit ID
+- `deviceName` (string): friendly device name
+- `deviceType` (string): device type name
+- `registers` (array): array of register definitions with:
+  - `name` (string): register name
+  - `address` (integer): Modbus address
+  - `length` (integer): number of registers
+  - `unit` (string): unit string (V, W, kWh, etc.)
+  - `dataType` (integer): data type code
+
+### GET `/view/modbus/decoded`
+
+Interactive web page for reading decoded register values. Provides dropdown selectors for:
+- Device selection (by unit ID)
+- Register selection (filtered by selected device)
+- Unit multiplier (for converting to kW, MW, mV, etc.)
+
+Displays the decoded value from cache with metadata (validity, queuing status, original value).
+
 ---
 
 # MQTT Commands

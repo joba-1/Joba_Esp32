@@ -146,15 +146,31 @@ public:
                 bool queued = devices.readRegister(unitId, regName.c_str(), nullptr);
                 
                 // Return current cached value (or stale)
-                float value = 0;
-                bool valid = devices.getValue(unitId, regName.c_str(), value);
+                ModbusRegisterValue regValue;
+                bool hasValue = devices.getRegisterValue(unitId, regName.c_str(), regValue);
                 
                 JsonDocument doc;
                 doc["unitId"] = unitId;
                 doc["register"] = regName;
-                doc["value"] = value;
-                doc["valid"] = valid;
                 doc["queued"] = queued;
+                
+                if (hasValue) {
+                    doc["value"] = regValue.value;
+                    doc["valid"] = regValue.valid;
+                    doc["unit"] = regValue.unit;
+                    doc["timestamp"] = regValue.timestamp;
+                    doc["updatedAtMs"] = regValue.updatedAtMs;
+                    if (regValue.unixTimestamp != 0) {
+                        doc["unixTimestamp"] = regValue.unixTimestamp;
+                    }
+                    // Calculate age in seconds
+                    uint32_t nowMs = (uint32_t)millis();
+                    uint32_t ageMs = nowMs - regValue.updatedAtMs;
+                    doc["ageSeconds"] = ageMs / 1000;
+                } else {
+                    doc["value"] = 0;
+                    doc["valid"] = false;
+                }
                 
                 String output;
                 serializeJson(doc, output);
@@ -1437,6 +1453,195 @@ if($('autoRef').checked)startA();
                 request->send(200, "text/html", html);
             });
 
+        // Decoded value viewer page
+        webServer->on("/view/modbus/decoded", HTTP_GET,
+            [&server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                String html = F("<!DOCTYPE html><html><head>"
+                    "<title>Modbus Decoded Register Viewer</title>"
+                    "<meta charset='UTF-8'>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<style>"
+                    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
+                    ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
+                    "h1{color:#4CAF50}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}"
+                    "a{color:#4CAF50}"
+                    "label{display:inline-block;margin:6px 10px 6px 0;font-weight:600}"
+                    "select,input{padding:8px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px;min-width:200px}"
+                    "button{padding:8px 16px;background:#4CAF50;color:#1a1a2e;border:none;border-radius:4px;font-weight:600;cursor:pointer;margin-top:10px}"
+                    "button:hover{background:#45a049}"
+                    ".result-box{background:#0a0a1a;border:2px solid #4CAF50;border-radius:6px;padding:15px;margin-top:15px}"
+                    ".value{font-size:32px;font-weight:bold;color:#4CAF50;margin:10px 0}"
+                    ".meta{color:#888;font-size:12px;margin-top:5px}"
+                    "small{color:#888}"
+                    ".error{color:#F44336}"
+                    ".warning{color:#FF9800}"
+                    "</style></head><body>"
+                    "<h1>Decoded Register Viewer</h1>"
+                    "<p><a href='/view/modbus'>&larr; Back to dashboard</a></p>"
+                    "<div class='card'>"
+                    "<h2>Read Decoded Value</h2>"
+                    "<p><small>Select device and register to view decoded value from cache</small></p>"
+                    "<div>"
+                    "<div><label>Device<br><select id='device' onchange='updateRegisters()' style='width:100%'>"
+                    "<option value=''>-- Select Device --</option>"
+                    "</select></label></div>"
+                    "<div><label>Register<br><select id='register' style='width:100%'>"
+                    "<option value=''>-- Select Register --</option>"
+                    "</select></label></div>"
+                    "<div><label>Unit Multiplier<br><select id='unitMult' style='width:100%'>"
+                    "<option value='1' selected>1 (original unit)</option>"
+                    "<option value='0.001'>0.001 (k-unit, e.g. kW, kWh)</option>"
+                    "<option value='1000'>1000 (m-unit, e.g. mV, mA)</option>"
+                    "<option value='0.000001'>0.000001 (M-unit, e.g. MW)</option>"
+                    "</select></label></div>"
+                    "<div style='margin-top:10px'>"
+                    "<label><input type='checkbox' id='autoRefresh' checked onchange='toggleAutoRefresh()'> Auto-refresh (5s)</label>"
+                    "</div>"
+                    "<button onclick='readValue()'>Read Value</button>"
+                    "</div>"
+                    "<div id='result' style='display:none'></div>"
+                    "<div style='margin-top:8px;font-size:12px;color:#666'>"
+                    "Last update: <span id='lastUpdate'>-</span>"
+                    "</div>"
+                    "</div>"
+                    "<script>"
+                    "let devicesData = [];"
+                    "let currentRegisters = [];"
+                    "let autoRefreshTimer = null;"
+                    "function qs(id){return document.getElementById(id);}"
+                    "function formatAge(sec){"
+                    "  if(sec < 60) return sec+'s';"
+                    "  const m = Math.floor(sec/60);"
+                    "  if(m < 60) return m+'m '+(sec%60)+'s';"
+                    "  const h = Math.floor(m/60);"
+                    "  if(h < 24) return h+'h '+(m%60)+'m';"
+                    "  const d = Math.floor(h/24);"
+                    "  return d+'d '+(h%24)+'h';"
+                    "}"
+                    "async function init(){"
+                    "  try{"
+                    "    const r = await fetch('/api/modbus/registers');"
+                    "    devicesData = await r.json();"
+                    "    const devSel = qs('device');"
+                    "    devSel.innerHTML = '<option value=\"\">-- Select Device --</option>';"
+                    "    devicesData.forEach(d=>{"
+                    "      const opt = document.createElement('option');"
+                    "      opt.value = d.unitId;"
+                    "      opt.textContent = `Unit ${d.unitId} - ${d.deviceName || d.deviceType}`;"
+                    "      devSel.appendChild(opt);"
+                    "    });"
+                    "  }catch(e){"
+                    "    alert('Failed to load devices: '+e.message);"
+                    "  }"
+                    "}"
+                    "function updateRegisters(){"
+                    "  stopAutoRefresh();"
+                    "  const unitId = parseInt(qs('device').value);"
+                    "  const regSel = qs('register');"
+                    "  regSel.innerHTML = '<option value=\"\">-- Select Register --</option>';"
+                    "  qs('result').style.display = 'none';"
+                    "  if(!unitId) return;"
+                    "  const dev = devicesData.find(d=>d.unitId===unitId);"
+                    "  if(!dev || !dev.registers) return;"
+                    "  currentRegisters = dev.registers;"
+                    "  dev.registers.forEach(r=>{"
+                    "    const opt = document.createElement('option');"
+                    "    opt.value = r.name;"
+                    "    opt.textContent = `${r.name} (${r.unit || 'no unit'}) @ ${r.address}`;"
+                    "    regSel.appendChild(opt);"
+                    "  });"
+                    "}"
+                    "async function readValue(){"
+                    "  const unitId = qs('device').value;"
+                    "  const regName = qs('register').value;"
+                    "  const multStr = qs('unitMult').value;"
+                    "  if(!unitId || !regName){"
+                    "    alert('Please select device and register');"
+                    "    return;"
+                    "  }"
+                    "  const mult = parseFloat(multStr) || 1.0;"
+                    "  try{"
+                    "    const r = await fetch(`/api/modbus/read?unit=${encodeURIComponent(unitId)}&register=${encodeURIComponent(regName)}`);"
+                    "    const j = await r.json();"
+                    "    const reg = currentRegisters.find(x=>x.name===regName);"
+                    "    let unitStr = reg ? reg.unit : '';"
+                    "    if(mult !== 1.0){"
+                    "      if(mult === 0.001) unitStr = 'k'+unitStr;"
+                    "      else if(mult === 1000) unitStr = 'm'+unitStr;"
+                    "      else if(mult === 0.000001) unitStr = 'M'+unitStr;"
+                    "      else unitStr = unitStr + ' × ' + mult;"
+                    "    }"
+                    "    const displayVal = j.value * mult;"
+                    "    let html = '<div class=\"result-box\">';"
+                    "    html += '<h3>'+regName+'</h3>';"
+                    "    html += '<div class=\"value\">'+displayVal.toFixed(4)+' '+unitStr+'</div>';"
+                    "    html += '<div class=\"meta\">Unit ID: '+j.unitId+'</div>';"
+                    "    if(j.valid){"
+                    "      html += '<div class=\"meta\">Valid: <span style=\"color:#4CAF50\">Yes</span>';"
+                    "      if(j.ageSeconds !== undefined){"
+                    "        html += ' (age: '+formatAge(j.ageSeconds)+')';"
+                    "      }"
+                    "      html += '</div>';"
+                    "    }else{"
+                    "      html += '<div class=\"meta\">Valid: <span class=\"error\">No</span>';"
+                    "      if(j.ageSeconds !== undefined){"
+                    "        html += ' <small>(last successful read: '+formatAge(j.ageSeconds)+' ago)</small>';"
+                    "      }else{"
+                    "        html += ' <small>(never read)</small>';"
+                    "      }"
+                    "      html += '</div>';"
+                    "    }"
+                    "    html += '<div class=\"meta\">Queued for update: '+(j.queued?'Yes':'No')+'</div>';"
+                    "    html += '<div class=\"meta\">Original value: '+j.value.toFixed(4)+' '+(reg?reg.unit:'')+'</div>';"
+                    "    if(reg){"
+                    "      html += '<div class=\"meta\">Address: '+reg.address+', Length: '+reg.length+'</div>';"
+                    "    }"
+                    "    html += '</div>';"
+                    "    qs('result').innerHTML = html;"
+                    "    qs('result').style.display = 'block';"
+                    "    qs('lastUpdate').textContent = new Date().toLocaleTimeString();"
+                    "    startAutoRefresh();"
+                    "  }catch(e){"
+                    "    qs('result').innerHTML = '<div class=\"result-box\"><div class=\"error\">Error: '+e.message+'</div></div>';"
+                    "    qs('result').style.display = 'block';"
+                    "    qs('lastUpdate').textContent = new Date().toLocaleTimeString();"
+                    "  }"
+                    "}"
+                    "function startAutoRefresh(){"
+                    "  stopAutoRefresh();"
+                    "  if(!qs('autoRefresh').checked) return;"
+                    "  const unitId = qs('device').value;"
+                    "  const regName = qs('register').value;"
+                    "  if(!unitId || !regName) return;"
+                    "  autoRefreshTimer = setInterval(()=>{"
+                    "    if(qs('autoRefresh').checked && qs('device').value && qs('register').value){"
+                    "      readValue();"
+                    "    }else{"
+                    "      stopAutoRefresh();"
+                    "    }"
+                    "  }, 5000);"
+                    "}"
+                    "function stopAutoRefresh(){"
+                    "  if(autoRefreshTimer){"
+                    "    clearInterval(autoRefreshTimer);"
+                    "    autoRefreshTimer = null;"
+                    "  }"
+                    "}"
+                    "function toggleAutoRefresh(){"
+                    "  if(qs('autoRefresh').checked){"
+                    "    startAutoRefresh();"
+                    "  }else{"
+                    "    stopAutoRefresh();"
+                    "  }"
+                    "}"
+                    "init();"
+                    "</script></body></html>");
+
+                request->send(200, "text/html", html);
+            });
+
         webServer->on("/view/modbus", HTTP_GET,
             [&devices, &modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
@@ -1493,7 +1698,8 @@ if($('autoRef').checked)startA();
                     "<div style='margin-top:12px;font-size:13px'>"
                     "<a href='/view/modbus/patterns' style='color:#4fc3f7'>Pattern Analysis</a> | "
                     "<a href='/view/modbus/scheduler' style='color:#4fc3f7'>Gap Scheduler</a> | "
-                    "<a href='/view/modbus/raw' style='color:#4fc3f7'>Raw Tools</a>"
+                    "<a href='/view/modbus/raw' style='color:#4fc3f7'>Raw Tools</a> | "
+                    "<a href='/view/modbus/decoded' style='color:#4fc3f7'>Decoded Viewer</a>"
                     "</div>"
                     "</body></html>");
 
@@ -1586,6 +1792,40 @@ if($('autoRef').checked)startA();
                     }
                 });
 
+                String output;
+                serializeJson(doc, output);
+                request->send(200, "application/json", output);
+            });
+
+        // Get register definitions for all devices
+        webServer->on("/api/modbus/registers", HTTP_GET,
+            [&devices, &server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+
+                auto _guard = devices.scopedLock();
+
+                JsonDocument doc;
+                JsonArray devicesArr = doc.to<JsonArray>();
+                
+                for (const auto& kv : devices.getDevices()) {
+                    JsonObject devObj = devicesArr.add<JsonObject>();
+                    devObj["unitId"] = kv.first;
+                    devObj["deviceName"] = kv.second.deviceName;
+                    devObj["deviceType"] = kv.second.deviceTypeName;
+                    
+                    JsonArray regsArr = devObj["registers"].to<JsonArray>();
+                    if (kv.second.deviceType) {
+                        for (const auto& reg : kv.second.deviceType->registers) {
+                            JsonObject regObj = regsArr.add<JsonObject>();
+                            regObj["name"] = reg.name;
+                            regObj["address"] = reg.address;
+                            regObj["length"] = reg.length;
+                            regObj["unit"] = reg.unit;
+                            regObj["dataType"] = (uint8_t)reg.dataType;
+                        }
+                    }
+                }
+                
                 String output;
                 serializeJson(doc, output);
                 request->send(200, "application/json", output);

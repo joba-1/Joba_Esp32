@@ -256,6 +256,11 @@ public:
     bool getValue(uint8_t unitId, const char* registerName, float& value) const;
     
     /**
+     * @brief Get full register value including metadata (from cache)
+     */
+    bool getRegisterValue(uint8_t unitId, const char* registerName, ModbusRegisterValue& regValue) const;
+    
+    /**
      * @brief Get all current values for a device as JSON
      */
     String getDeviceValuesJson(uint8_t unitId) const;

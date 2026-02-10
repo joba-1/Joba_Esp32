@@ -647,6 +647,18 @@ bool ModbusDeviceManager::getValue(uint8_t unitId, const char* registerName, flo
     return true;
 }
 
+bool ModbusDeviceManager::getRegisterValue(uint8_t unitId, const char* registerName, ModbusRegisterValue& regValue) const {
+    auto _guard = scopedLock();
+    auto it = _devices.find(unitId);
+    if (it == _devices.end()) return false;
+    
+    auto valIt = it->second.currentValues.find(registerName);
+    if (valIt == it->second.currentValues.end()) return false;
+    
+    regValue = valIt->second;
+    return true;
+}
+
 String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
     // Snapshot under lock (no heavy allocations while holding mutex).
     // Keep this small: unknown registers can get large quickly and this JSON is served from heap-backed buffers.
