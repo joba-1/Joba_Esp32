@@ -70,7 +70,17 @@ void WebServerFeature::setupDefaultRoutes() {
             return request->requestAuthentication();
         }
         
-        String title = String(DeviceInfo::getFirmwareName()) + " " + DeviceInfo::getDeviceId();
+        // If device ID starts with firmware name, show device ID only, otherwise show firmware + device ID
+        String deviceId = DeviceInfo::getDeviceId();
+        String firmwareName = String(DeviceInfo::getFirmwareName());
+        
+        String title;
+        if (deviceId.startsWith(firmwareName)) {
+            title = deviceId;
+        } else {
+            title = firmwareName + " " + deviceId;
+        }
+        
         String html = "<!DOCTYPE html><html><head><title>" + title + "</title>";
         html += "<meta charset='UTF-8'>";
         html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
@@ -400,6 +410,11 @@ void WebServerFeature::setupDefaultRoutes() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Storage - Files</title>
     <link rel="stylesheet" href="/style.css">
+    <style>
+        h1, a, .btn, button, th {color:#7E57C2!important}
+        .btn, button {background:#7E57C2!important}
+        .btn:hover, button:hover {background:#6A1B9A!important}
+    </style>
 </head>
 <body>
     <div class="container">

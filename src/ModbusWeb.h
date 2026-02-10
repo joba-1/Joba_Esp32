@@ -919,40 +919,40 @@ public:
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,system-ui,sans-serif;padding:16px;max-width:1200px;margin:0 auto}
-h1{color:#4fc3f7;margin-bottom:16px;font-size:1.5em}
-h2{color:#81c784;border-bottom:1px solid #333;padding-bottom:4px;margin:24px 0 10px;font-size:1.15em}
+h1{color:#26A69A;margin-bottom:16px;font-size:1.5em}
+h2{color:#26A69A;border-bottom:1px solid #333;padding-bottom:4px;margin:24px 0 10px;font-size:1.15em}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
 .card{background:#16213e;border-radius:8px;padding:12px;text-align:center}
-.card .v{font-size:1.4em;color:#4fc3f7;word-break:break-all}
+.card .v{font-size:1.4em;color:#26A69A;word-break:break-all}
 .card .l{font-size:.7em;color:#888;margin-top:2px}
 table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:.85em}
 th,td{border:1px solid #2a2a4a;padding:4px 8px;text-align:right}
-th{background:#16213e;color:#4fc3f7;position:sticky;top:0}
+th{background:#16213e;color:#26A69A;position:sticky;top:0}
 td:first-child,th:first-child{text-align:left}
 tr:nth-child(even){background:rgba(255,255,255,.02)}
 .histo{margin:8px 0 16px}
 .bar-row{display:flex;align-items:center;gap:6px;margin:2px 0}
-.bar{background:linear-gradient(90deg,#4fc3f7,#0288d1);height:18px;border-radius:2px;min-width:1px;transition:width .3s}
+.bar{background:linear-gradient(90deg,#26A69A,#00897B);height:18px;border-radius:2px;min-width:1px;transition:width .3s}
 .bar-label{min-width:72px;font-size:.8em;text-align:right;color:#aaa}
 .bar-count{font-size:.8em;min-width:36px}
 .bar-pct{font-size:.72em;color:#666;min-width:40px}
 .controls{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
-button{background:#4fc3f7;color:#000;border:none;padding:6px 14px;cursor:pointer;border-radius:4px;font-size:.85em;font-weight:600}
-button:hover{background:#81d4fa}
+button{background:#26A69A;color:#fff;border:none;padding:6px 14px;cursor:pointer;border-radius:4px;font-size:.85em;font-weight:600}
+button:hover{background:#009688}
 button.danger{background:#ef5350;color:#fff}
 button.danger:hover{background:#e53935}
 .status{font-size:.8em;color:#666;margin-left:auto}
-.note{background:#16213e;border-left:3px solid #4fc3f7;padding:10px 14px;margin:10px 0;font-size:.85em;border-radius:0 6px 6px 0}
+.note{background:#16213e;border-left:3px solid #26A69A;padding:10px 14px;margin:10px 0;font-size:.85em;border-radius:0 6px 6px 0}
 .cycle-step{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid #1a1a2e}
 .cycle-step:nth-child(even){background:rgba(255,255,255,.02)}
-.cycle-step.current{background:#1a3a2a;border-left:3px solid #81c784}
+.cycle-step.current{background:#1a3a2a;border-left:3px solid #26A69A}
 .cycle-num{min-width:28px;color:#666;font-size:.8em;text-align:right}
 .cycle-desc{flex:1;font-size:.9em}
 .cycle-gap{min-width:90px;text-align:right;font-size:.85em;font-weight:500}
 .gap-ok{color:#81c784}.gap-tight{color:#ffb74d}.gap-no{color:#ef5350}
-a{color:#4fc3f7}
+a{color:#26A69A}
 .footer{margin-top:24px;font-size:.75em;color:#555;border-top:1px solid #222;padding-top:10px}
-.home-link{color:#4fc3f7;text-decoration:none;font-size:.9em;display:inline-block;margin-bottom:10px}
+.home-link{color:#26A69A;text-decoration:none;font-size:.9em;display:inline-block;margin-bottom:10px}
 .home-link:before{content:'← '}
 </style></head><body>
 <a href="/" class="home-link">Home</a>
@@ -1088,7 +1088,7 @@ function render(d){
     else h+=`<div class="note">Cycle detected (${cy.length} steps). Gap tracking will sync on next matching request.</div>`;
   }else h+=`<p style="color:#666">No repeating cycle detected yet. Collect more data (2+ minutes).</p>`;
 
-  h+=`<div class="footer"><a href="/">\u2190 Home</a> &middot; <a href="/view/modbus/scheduler">Gap Scheduler</a> &middot; <a href="/api/modbus/patterns">Raw JSON</a></div>`;
+  h+=`<div class="footer"><a href="/">\u2190 Home</a> &middot; <a href="/view/modbus/scheduler" style="color:#FFA726">Gap Scheduler</a> &middot; <a href="/api/modbus/patterns">Raw JSON</a></div>`;
   $('content').innerHTML=h;
 }
 
@@ -1216,11 +1216,11 @@ refresh();startA();
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,system-ui,sans-serif;padding:16px;max-width:900px;margin:0 auto}
-h1{color:#4fc3f7;margin-bottom:16px;font-size:1.5em}
-h2{color:#81c784;border-bottom:1px solid #333;padding-bottom:4px;margin:20px 0 10px;font-size:1.15em}
+h1{color:#FFA726;margin-bottom:16px;font-size:1.5em}
+h2{color:#FFA726;border-bottom:1px solid #333;padding-bottom:4px;margin:20px 0 10px;font-size:1.15em}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
 .card{background:#16213e;border-radius:8px;padding:12px;text-align:center}
-.card .v{font-size:1.4em;color:#4fc3f7;word-break:break-all}
+.card .v{font-size:1.4em;color:#FFA726;word-break:break-all}
 .card .l{font-size:.7em;color:#888;margin-top:2px}
 .ok .v{color:#81c784} .warn .v{color:#ffb74d} .bad .v{color:#ef5350}
 .bar-bg{background:#0d1117;border-radius:4px;height:22px;overflow:hidden;margin:6px 0}
@@ -1228,18 +1228,18 @@ h2{color:#81c784;border-bottom:1px solid #333;padding-bottom:4px;margin:20px 0 1
 .bar-green{background:linear-gradient(90deg,#43a047,#81c784)}
 .bar-orange{background:linear-gradient(90deg,#f57c00,#ffb74d)}
 .bar-red{background:linear-gradient(90deg,#c62828,#ef5350)}
-.bar-blue{background:linear-gradient(90deg,#0288d1,#4fc3f7)}
+.bar-blue{background:linear-gradient(90deg,#FB8C00,#FFA726)}
 table{border-collapse:collapse;width:100%;font-size:.85em;margin-bottom:16px}
 th,td{border:1px solid #2a2a4a;padding:4px 8px;text-align:right}
-th{background:#16213e;color:#4fc3f7;position:sticky;top:0}
+th{background:#16213e;color:#FFA726;position:sticky;top:0}
 td:first-child,th:first-child{text-align:left}
 .controls{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
-button{background:#4fc3f7;color:#000;border:none;padding:6px 14px;cursor:pointer;border-radius:4px;font-size:.85em;font-weight:600}
-button:hover{background:#81d4fa}
+button{background:#FFA726;color:#000;border:none;padding:6px 14px;cursor:pointer;border-radius:4px;font-size:.85em;font-weight:600}
+button:hover{background:#FB8C00}
 .status{font-size:.8em;color:#666;margin-left:auto}
-a{color:#4fc3f7}
+a{color:#FFA726}
 .footer{margin-top:24px;font-size:.75em;color:#555;border-top:1px solid #222;padding-top:10px}
-.home-link{color:#4fc3f7;text-decoration:none;font-size:.9em;display:inline-block;margin-bottom:10px}
+.home-link{color:#FFA726;text-decoration:none;font-size:.9em;display:inline-block;margin-bottom:10px}
 .home-link:before{content:'← '}
 </style></head><body>
 <a href="/" class="home-link">Home</a>
@@ -1250,7 +1250,7 @@ a{color:#4fc3f7}
 <span class="status" id="status">Loading...</span>
 </div>
 <div id="content"></div>
-<div class="footer"><a href="/view/modbus">&larr; Dashboard</a> | <a href="/view/modbus/patterns">Patterns</a></div>
+<div class="footer"><a href="/view/modbus">&larr; Dashboard</a> | <a href="/view/modbus/patterns" style="color:#26A69A">Patterns</a></div>
 <script>
 let T=null;
 const $=s=>document.getElementById(s);
@@ -1399,7 +1399,7 @@ if($('autoRef').checked)startA();
                     "</style></head><body>"
                     "<a href='/' class='home-link'>Home</a>"
                     "<h1>Modbus Raw Tools</h1>"
-                    "<p><a href='/view/modbus'>&larr; Back to dashboard</a></p>"
+                    "<p><a href='/view/modbus' style='color:#2196F3'>&larr; Back to dashboard</a></p>"
                     "<div class='card'>"
                     "<h2>Tracked Raw Read</h2>"
                     "<p><small>Sends via <code>/api/modbus/raw/readTracked</code> and polls <code>/api/modbus/raw/result</code>.</small></p>"
@@ -1474,24 +1474,24 @@ if($('autoRef').checked)startA();
                     "<style>"
                     "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
                     ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
-                    "h1{color:#4CAF50}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}"
-                    "a{color:#4CAF50}"
+                    "h1{color:#AB47BC}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}"
+                    "a{color:#AB47BC}"
                     "label{display:inline-block;margin:6px 10px 6px 0;font-weight:600}"
                     "select,input{padding:8px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px;min-width:200px}"
-                    "button{padding:8px 16px;background:#4CAF50;color:#1a1a2e;border:none;border-radius:4px;font-weight:600;cursor:pointer;margin-top:10px}"
-                    "button:hover{background:#45a049}"
-                    ".result-box{background:#0a0a1a;border:2px solid #4CAF50;border-radius:6px;padding:15px;margin-top:15px}"
-                    ".value{font-size:32px;font-weight:bold;color:#4CAF50;margin:10px 0}"
+                    "button{padding:8px 16px;background:#AB47BC;color:#fff;border:none;border-radius:4px;font-weight:600;cursor:pointer;margin-top:10px}"
+                    "button:hover{background:#9C27B0}"
+                    ".result-box{background:#0a0a1a;border:2px solid #AB47BC;border-radius:6px;padding:15px;margin-top:15px}"
+                    ".value{font-size:32px;font-weight:bold;color:#AB47BC;margin:10px 0}"
                     ".meta{color:#888;font-size:12px;margin-top:5px}"
                     "small{color:#888}"
                     ".error{color:#F44336}"
                     ".warning{color:#FF9800}"
-                    ".home-link{display:inline-block;margin-bottom:12px;color:#4CAF50;font-size:0.9em}"
+                    ".home-link{display:inline-block;margin-bottom:12px;color:#AB47BC;font-size:0.9em}"
                     ".home-link:before{content:'← '}"
                     "</style></head><body>"
                     "<a href='/' class='home-link'>Home</a>"
                     "<h1>Decoded Register Viewer</h1>"
-                    "<p><a href='/view/modbus'>&larr; Back to dashboard</a></p>"
+                    "<p><a href='/view/modbus' style='color:#2196F3'>&larr; Back to dashboard</a></p>"
                     "<div class='card'>"
                     "<h2>Read Decoded Value</h2>"
                     "<p><small>Select device and register to view decoded value from cache</small></p>"
@@ -1711,10 +1711,10 @@ if($('autoRef').checked)startA();
                     "fetchData();setInterval(fetchData,5000);"
                     "</script>"
                     "<div style='margin-top:12px;font-size:13px'>"
-                    "<a href='/view/modbus/patterns' style='color:#4fc3f7'>Pattern Analysis</a> | "
-                    "<a href='/view/modbus/scheduler' style='color:#4fc3f7'>Gap Scheduler</a> | "
-                    "<a href='/view/modbus/raw' style='color:#4fc3f7'>Raw Tools</a> | "
-                    "<a href='/view/modbus/decoded' style='color:#4fc3f7'>Decoded Viewer</a>"
+                    "<a href='/view/modbus/patterns' style='color:#26A69A'>Pattern Analysis</a> | "
+                    "<a href='/view/modbus/scheduler' style='color:#FFA726'>Gap Scheduler</a> | "
+                    "<a href='/view/modbus/raw' style='color:#FF9800'>Raw Tools</a> | "
+                    "<a href='/view/modbus/decoded' style='color:#AB47BC'>Decoded Viewer</a>"
                     "</div>"
                     "</body></html>");
 

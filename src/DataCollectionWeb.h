@@ -181,9 +181,12 @@ private:
         html += R"rawliteral( - Data View</title>
     <link rel="stylesheet" href="/style.css">
     <style>
+        h1, a, .btn, button, th {color:#66BB6A!important}
+        .btn, button {background:#66BB6A!important}
+        .btn:hover, button:hover {background:#4CAF50!important}
         .status{display:flex;gap:15px;margin-bottom:15px;flex-wrap:wrap}
         .status-item{background:#16213e;padding:8px 12px;border-radius:6px;font-size:0.9em}
-        .status-item span{color:#00d4ff;font-weight:bold}
+        .status-item span{color:#66BB6A;font-weight:bold}
         .status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;animation:pulse 2s infinite}
         .status-dot.connected{background:#00ff88}
         .status-dot.disconnected{background:#ff4444}
