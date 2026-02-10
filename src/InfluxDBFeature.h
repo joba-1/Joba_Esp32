@@ -4,6 +4,9 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <vector>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 #include "Feature.h"
 
 /**
@@ -102,8 +105,10 @@ private:
         uint32_t failCount;
         uint32_t totalPointsWritten;
         uint32_t lastUploadMs;
-        uint32_t lastUploadDurationMs;  // How long the last upload blocked loop()
+        uint32_t lastUploadDurationMs;  // How long the last upload took
         uint32_t maxUploadDurationMs;   // Worst-case upload duration
+        uint32_t droppedLines;          // Lines dropped due to buffer cap or retry exhaustion
+        uint32_t retryCount;            // Total retry attempts
     };
     const Stats& getStats() const { return _stats; }
 
@@ -138,6 +143,21 @@ private:
     unsigned long _lastUploadTime;
     
     Stats _stats;
+
+    // --- Background upload task ---
+    static void uploadTaskFunc(void* param);
+    void resolveAndCacheUrl();      // DNS resolve once at setup
+
+    static constexpr size_t MAX_BUFFER_LINES = 500;  // Cap to prevent heap exhaustion
+    static constexpr int    MAX_RETRIES      = 2;    // Retry failed uploads
+    static constexpr int    RETRY_DELAY_MS   = 1000; // Delay between retries
+
+    TaskHandle_t     _uploadTask{nullptr};
+    SemaphoreHandle_t _payloadMutex{nullptr};
+    String           _pendingPayload;       // guarded by _payloadMutex
+    size_t           _pendingLineCount{0};  // guarded by _payloadMutex
+    volatile bool    _uploadInProgress{false};
+    String           _resolvedUrl;          // URL with IP instead of hostname
 };
 
 #endif // INFLUXDB_FEATURE_H

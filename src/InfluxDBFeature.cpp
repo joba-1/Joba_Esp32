@@ -1,6 +1,8 @@
 #include "InfluxDBFeature.h"
 #include "LoggingFeature.h"
 #include <WiFi.h>
+#include <lwip/dns.h>
+#include <lwip/ip_addr.h>
 
 // InfluxDB 2.x constructor
 InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
@@ -23,7 +25,7 @@ InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
     , _connected(false)
     , _enabled(false)
     , _lastUploadTime(0)
-    , _stats{0, 0, 0, 0}
+    , _stats{}
 {
 }
 
@@ -50,7 +52,7 @@ InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
     , _connected(false)
     , _enabled(false)
     , _lastUploadTime(0)
-    , _stats{0, 0, 0, 0}
+    , _stats{}
 {
 }
 
@@ -88,6 +90,25 @@ void InfluxDBFeature::setup() {
     
     if (_enabled) {
         LOG_I("  Batch interval: %lu ms, max size: %u", _batchIntervalMs, _batchSize);
+        
+        // Resolve hostname once and build the full URL for uploads
+        resolveAndCacheUrl();
+        
+        // Create mutex for payload handoff
+        _payloadMutex = xSemaphoreCreateMutex();
+        
+        // Create background upload task on core 0 (WiFi core)
+        // 4KB stack is enough for HTTPClient + small payload
+        xTaskCreatePinnedToCore(
+            uploadTaskFunc,
+            "influxUp",
+            4096,
+            this,
+            1,          // low priority
+            &_uploadTask,
+            0           // core 0 (WiFi/network core)
+        );
+        LOG_I("InfluxDB background upload task started");
     } else {
         LOG_I("InfluxDB disabled (not configured)");
     }
@@ -142,6 +163,15 @@ void InfluxDBFeature::queue(const String& lineProtocol) {
         }
     }
     
+    // Enforce buffer cap — drop oldest lines to stay within limit
+    if (_buffer.size() > MAX_BUFFER_LINES) {
+        size_t excess = _buffer.size() - MAX_BUFFER_LINES;
+        _buffer.erase(_buffer.begin(), _buffer.begin() + excess);
+        _stats.droppedLines += excess;
+        LOG_W("InfluxDB buffer capped: dropped %u oldest lines (total dropped: %u)",
+              excess, _stats.droppedLines);
+    }
+    
     LOG_V("InfluxDB: queued %u lines, buffer size: %u", 1, _buffer.size());
 }
 
@@ -152,78 +182,61 @@ bool InfluxDBFeature::upload() {
         return false;
     }
     
+    // Don't queue another upload while the background task is still busy
+    if (_uploadInProgress) {
+        LOG_V("InfluxDB upload deferred: previous upload still in progress");
+        return false;
+    }
+    
     // Build batch payload
     String payload;
     size_t lineCount = 0;
+    // Pre-reserve to avoid reallocation
+    size_t totalLen = 0;
+    for (const String& line : _buffer) {
+        totalLen += line.length() + 1;
+    }
+    payload.reserve(totalLen);
+    
     for (const String& line : _buffer) {
         if (lineCount > 0) payload += "\n";
         payload += line;
         lineCount++;
     }
     
-    LOG_V("InfluxDB uploading %u lines (%u bytes)", lineCount, payload.length());
-    
-    // NOTE: sendData() blocks loop() during the HTTP POST (up to HTTP_TIMEOUT_MS).
-    // We track the duration so the impact is observable via /api/buildinfo stats.
-    const uint32_t uploadStartMs = (uint32_t)millis();
-    const bool ok = sendData(payload);
-    const uint32_t durationMs = (uint32_t)millis() - uploadStartMs;
-    _stats.lastUploadDurationMs = durationMs;
-    if (durationMs > _stats.maxUploadDurationMs) _stats.maxUploadDurationMs = durationMs;
-    if (durationMs > 500) {
-        LOG_W("InfluxDB upload blocked loop for %ums", durationMs);
-    }
-    
-    if (ok) {
-        _stats.successCount++;
-        _stats.totalPointsWritten += lineCount;
-        _stats.lastUploadMs = millis();
-        _connected = true;
+    // Hand off to background task via mutex-protected payload
+    if (xSemaphoreTake(_payloadMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        _pendingPayload = std::move(payload);
+        _pendingLineCount = lineCount;
+        _uploadInProgress = true;
+        xSemaphoreGive(_payloadMutex);
+        
+        // Wake the background task
+        xTaskNotifyGive(_uploadTask);
+        
+        // Clear buffer immediately — data is now owned by the task
         _buffer.clear();
         _lastUploadTime = millis();
-        LOG_D("InfluxDB upload successful (%ums)", durationMs);
+        
+        LOG_V("InfluxDB: handed %u lines to background task", lineCount);
         return true;
     } else {
-        _stats.failCount++;
-        _connected = false;
-        if (millis() - _lastErrorLog >= _errorLogIntervalMs) {
-            LOG_W("InfluxDB upload failed (%ums), keeping %u lines in buffer", durationMs, _buffer.size());
-            _lastErrorLog = millis();
-        } else {
-            LOG_V("InfluxDB upload failed (throttled), buffer=%u", _buffer.size());
-        }
+        LOG_W("InfluxDB: mutex timeout, upload deferred");
         return false;
     }
 }
 
 bool InfluxDBFeature::sendData(const String& data) {
     HTTPClient http;
-    String url;
     
-    if (_isV1) {
-        // InfluxDB 1.x: /write?db=DATABASE&precision=ns
-        url = String(_serverUrl) + "/write?db=" + _bucket + "&precision=ns";
-        
-        // Add retention policy if specified
-        if (strlen(_retentionPolicy) > 0) {
-            url += "&rp=" + String(_retentionPolicy);
-        }
-        
-        // Add credentials as query params (alternative to Basic Auth)
-        if (strlen(_username) > 0) {
-            url += "&u=" + String(_username) + "&p=" + String(_password);
-        }
-    } else {
-        // InfluxDB 2.x: /api/v2/write?org=ORG&bucket=BUCKET&precision=ns
-        url = String(_serverUrl) + "/api/v2/write?org=" + _org + 
-              "&bucket=" + _bucket + "&precision=ns";
-    }
+    // Use pre-resolved URL (with IP) to avoid blocking DNS on every upload
+    const String& url = _resolvedUrl;
     
     http.begin(url);
     http.addHeader("Content-Type", "text/plain; charset=utf-8");
-    // Keep timeout short to limit loop() blocking. The ESP32 HTTPClient
-    // POST is synchronous, so this directly stalls Modbus RX, MQTT, etc.
-    static constexpr int HTTP_TIMEOUT_MS = 2000;
+    // Keep timeout short — this now runs on a background task so it doesn't
+    // block the main loop, but we still don't want to hold the task forever.
+    static constexpr int HTTP_TIMEOUT_MS = 3000;
     http.setTimeout(HTTP_TIMEOUT_MS);
     
     // Add authentication header
@@ -264,6 +277,139 @@ bool InfluxDBFeature::sendData(const String& data) {
         }
         http.end();
         return false;
+    }
+}
+
+// ---------- DNS caching ----------
+
+void InfluxDBFeature::resolveAndCacheUrl() {
+    // Parse hostname from _serverUrl (format: "http://hostname:port" or "http://ip:port")
+    String urlStr(_serverUrl);
+    String host;
+    int port = 80;
+    
+    // Strip scheme
+    int schemeEnd = urlStr.indexOf("://");
+    String rest = (schemeEnd >= 0) ? urlStr.substring(schemeEnd + 3) : urlStr;
+    
+    // Extract host:port
+    int colonPos = rest.indexOf(':');
+    int slashPos = rest.indexOf('/');
+    if (colonPos > 0 && (slashPos < 0 || colonPos < slashPos)) {
+        host = rest.substring(0, colonPos);
+        String portStr = rest.substring(colonPos + 1, slashPos > 0 ? slashPos : rest.length());
+        port = portStr.toInt();
+    } else {
+        host = rest.substring(0, slashPos > 0 ? slashPos : rest.length());
+    }
+    
+    // Try to resolve hostname to IP
+    IPAddress ip;
+    if (WiFi.hostByName(host.c_str(), ip)) {
+        // Build URL query parameters
+        String params;
+        if (_isV1) {
+            params = "/write?db=" + String(_bucket) + "&precision=ns";
+            if (strlen(_retentionPolicy) > 0) {
+                params += "&rp=" + String(_retentionPolicy);
+            }
+            if (strlen(_username) > 0) {
+                params += "&u=" + String(_username) + "&p=" + String(_password);
+            }
+        } else {
+            params = "/api/v2/write?org=" + String(_org) +
+                     "&bucket=" + String(_bucket) + "&precision=ns";
+        }
+        
+        _resolvedUrl = "http://" + ip.toString() + ":" + String(port) + params;
+        LOG_I("InfluxDB URL resolved: %s -> %s", host.c_str(), _resolvedUrl.c_str());
+    } else {
+        // Fallback: use original URL (will trigger DNS per request)
+        if (_isV1) {
+            _resolvedUrl = String(_serverUrl) + "/write?db=" + String(_bucket) + "&precision=ns";
+            if (strlen(_retentionPolicy) > 0) {
+                _resolvedUrl += "&rp=" + String(_retentionPolicy);
+            }
+            if (strlen(_username) > 0) {
+                _resolvedUrl += "&u=" + String(_username) + "&p=" + String(_password);
+            }
+        } else {
+            _resolvedUrl = String(_serverUrl) + "/api/v2/write?org=" + String(_org) +
+                           "&bucket=" + String(_bucket) + "&precision=ns";
+        }
+        LOG_W("InfluxDB DNS resolve failed for '%s', using original URL", host.c_str());
+    }
+}
+
+// ---------- Background upload task ----------
+
+void InfluxDBFeature::uploadTaskFunc(void* param) {
+    auto* self = static_cast<InfluxDBFeature*>(param);
+    
+    for (;;) {
+        // Wait for notification from upload() — blocks without consuming CPU
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000));
+        
+        if (!self->_uploadInProgress) continue;
+        
+        // Take payload from shared state
+        String payload;
+        size_t lineCount = 0;
+        if (xSemaphoreTake(self->_payloadMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            payload = std::move(self->_pendingPayload);
+            lineCount = self->_pendingLineCount;
+            self->_pendingPayload = String();  // release memory
+            self->_pendingLineCount = 0;
+            xSemaphoreGive(self->_payloadMutex);
+        } else {
+            self->_uploadInProgress = false;
+            continue;
+        }
+        
+        if (payload.length() == 0) {
+            self->_uploadInProgress = false;
+            continue;
+        }
+        
+        bool ok = false;
+        uint32_t totalDurationMs = 0;
+        
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            if (attempt > 0) {
+                self->_stats.retryCount++;
+                LOG_W("InfluxDB retry %d/%d for %u lines", attempt, MAX_RETRIES, lineCount);
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS * attempt));
+            }
+            
+            const uint32_t startMs = (uint32_t)millis();
+            ok = self->sendData(payload);
+            const uint32_t durationMs = (uint32_t)millis() - startMs;
+            totalDurationMs += durationMs;
+            
+            // Update stats (32-bit writes are atomic on ESP32)
+            self->_stats.lastUploadDurationMs = durationMs;
+            if (durationMs > self->_stats.maxUploadDurationMs) {
+                self->_stats.maxUploadDurationMs = durationMs;
+            }
+            
+            if (ok) break;
+        }
+        
+        if (ok) {
+            self->_stats.successCount++;
+            self->_stats.totalPointsWritten += lineCount;
+            self->_stats.lastUploadMs = (uint32_t)millis();
+            self->_connected = true;
+            LOG_D("InfluxDB bg upload ok: %u lines in %ums", lineCount, totalDurationMs);
+        } else {
+            self->_stats.failCount++;
+            self->_stats.droppedLines += lineCount;
+            self->_connected = false;
+            LOG_W("InfluxDB bg upload failed after %d retries: %u lines dropped, %ums",
+                  MAX_RETRIES, lineCount, totalDurationMs);
+        }
+        
+        self->_uploadInProgress = false;
     }
 }
 
