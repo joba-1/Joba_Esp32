@@ -633,7 +633,8 @@ public:
                 // Run cycle detection before responding
                 modbus.detectCycle();
 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                // Pre-allocate 16KB buffer to avoid cbuf resize failures on ESP32
+                AsyncResponseStream* response = request->beginResponseStream("application/json", 16384);
 
                 const unsigned long nowMs = millis();
 

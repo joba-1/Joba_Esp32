@@ -764,6 +764,7 @@ void ModbusRTUFeature::processReceivedData() {
                 // Keeping the gap open after a collision causes cascading
                 // collisions as we keep transmitting in a stale window.
                 _gapWindowActive = false;
+                _ownTxInCurrentGap = 0;  // collision → next TX needs full silence
             } else {
                 LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", 
                     frame.unitId, frame.functionCode);
@@ -929,6 +930,7 @@ void ModbusRTUFeature::processReceivedData() {
 
                 // Close any open gap window — bus is active again
                 _gapWindowActive = false;
+                _ownTxInCurrentGap = 0;  // foreign master resumed → next TX needs full silence
                 
                 startActiveTime(false);
                 }
@@ -1183,12 +1185,33 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
         _gapSchedulerStats.predictionsUsed++;
     }
 
-    // Pick the first request whose unit isn't paused.
+    // Pick the best request to send.
+    // First TX (full silence wait): prefer short requests that fit in any gap.
+    // Subsequent TXes (reduced silence): we're deep in a wrap-around gap,
+    // so pick FIFO to ensure all registers get polled.
+    // When silence is very long (>400ms), gap is definitely large → FIFO.
+    uint32_t preCheckSilenceMs = (uint32_t)((micros() - _lastByteTime) / 1000ULL);
     size_t sendIndex = (size_t)-1;
-    for (size_t i = 0; i < _requestQueue.size(); i++) {
-        if (!isUnitQueueingPaused(_requestQueue[i].unitId)) {
-            sendIndex = i;
-            break;
+
+    if (_ownTxInCurrentGap > 0 || preCheckSilenceMs >= 400) {
+        // Subsequent TX or long silence: FIFO (all requests OK)
+        for (size_t i = 0; i < _requestQueue.size(); i++) {
+            if (!isUnitQueueingPaused(_requestQueue[i].unitId)) {
+                sendIndex = i;
+                break;
+            }
+        }
+    } else {
+        // First TX with short silence: pick smallest by wire time
+        uint32_t bestWire = UINT32_MAX;
+        for (size_t i = 0; i < _requestQueue.size(); i++) {
+            if (!isUnitQueueingPaused(_requestQueue[i].unitId)) {
+                uint32_t w = estimateWireTimeMs(_requestQueue[i].quantity);
+                if (w < bestWire) {
+                    bestWire = w;
+                    sendIndex = i;
+                }
+            }
         }
     }
     
@@ -1221,15 +1244,22 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
 
     // Gap-aware TX decision.
     //
-    // Require MIN_GAP_SILENCE_MS of bus silence before sending.  This ensures
-    // we're past all inter-request gaps in the foreign master's cycle (~10-160ms)
-    // and into the wrap-around gap (~243-1759ms).  After our own TX+response,
-    // _lastByteTime resets so we naturally wait another 200ms before re-sending,
-    // allowing multiple TXes per wrap-around gap when it's long enough.
+    // Two silence thresholds for gap-aware TX:
+    // - MIN_GAP_SILENCE_MS (200ms): required before the FIRST TX in a gap.
+    //   This ensures we're past inter-request gaps (~10-160ms) and into the
+    //   wrap-around gap (~250-1800ms).
+    // - MIN_INTER_TX_SILENCE_MS (100ms): used for subsequent TXes in the same
+    //   gap.  After our TX+response, the bus is briefly idle before the foreign
+    //   master resumes.  100ms gives ample time to detect foreign activity
+    //   starting (a full Modbus request frame = 8 bytes = 8.3ms at 9600 baud,
+    //   so 100ms of silence strongly indicates the bus is still free).
     //
-    // Additional safety: check UART RX buffer immediately before TX to catch
-    // foreign frames that arrived between the silence measurement and now.
+    // _ownTxInCurrentGap tracks consecutive own TXes.  Reset to 0 on foreign
+    // activity; incremented after each successful own TX.
+    //
+    // Additional safety: UART RX buffer check immediately before TX.
     static constexpr uint32_t MIN_GAP_SILENCE_MS = 200;
+    static constexpr uint32_t MIN_INTER_TX_SILENCE_MS = 100;
 
     // Don't TX until we've observed at least one foreign transaction.
     // At boot, _lastByteTime is from initialization and doesn't reflect
@@ -1237,11 +1267,12 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
     if (!_hasLastTransactionEnd) return;
 
     uint32_t actualSilenceMs = (uint32_t)((micros() - _lastByteTime) / 1000ULL);
+    uint32_t requiredSilenceMs = (_ownTxInCurrentGap > 0) ? MIN_INTER_TX_SILENCE_MS : MIN_GAP_SILENCE_MS;
 
     {
         uint32_t wireMs = estimateWireTimeMs(_requestQueue[sendIndex].quantity);
 
-        if (actualSilenceMs < MIN_GAP_SILENCE_MS) {
+        if (actualSilenceMs < requiredSilenceMs) {
             _gapSchedulerStats.txDeferred++;
             return;
         }
@@ -1259,9 +1290,10 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
         _lastTxElapsedMs = txElapsed;
         _lastTxWireMs = wireMs;
         _sentDuringGapWindow = gap.valid;
-        LOG_I("Gap TX: silence=%ums wire=%ums qty=%u unit=%u gap=%s",
-              actualSilenceMs, wireMs, _requestQueue[sendIndex].quantity,
-              _requestQueue[sendIndex].unitId, gap.valid ? "yes" : "fallback");
+        LOG_I("Gap TX: silence=%ums(req=%u) wire=%ums qty=%u unit=%u gap=%s tx#=%u",
+              actualSilenceMs, requiredSilenceMs, wireMs, _requestQueue[sendIndex].quantity,
+              _requestQueue[sendIndex].unitId, gap.valid ? "yes" : "fallback",
+              _ownTxInCurrentGap + 1);
     }
 
     _processQueueCounter++;
@@ -1275,9 +1307,10 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
     if (sendRequest(req)) {
         LOG_V("Request sent successfully");
         _stats.ownRequestsSent++;
+        _ownTxInCurrentGap++;  // subsequent TXes use shorter silence
 
         // Don't close the gap window after our TX: _lastByteTime is updated
-        // by the response bytes, so the 200ms silence check naturally prevents
+        // by the response bytes, so the silence check naturally prevents
         // re-sending too quickly.  Keeping the window open allows multiple
         // TXes per wrap-around gap when it's long enough.
 

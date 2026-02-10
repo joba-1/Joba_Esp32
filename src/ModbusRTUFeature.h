@@ -963,6 +963,7 @@ private:
     uint32_t _gapWindowBudgetMs{0};      // predicted available ms in this window
     uint32_t _gapWindowUsedMs{0};        // wire time already consumed in this window
     bool _sentDuringGapWindow{false};     // true if current pending request was sent using gap prediction
+    uint8_t _ownTxInCurrentGap{0};        // consecutive own TXes in current gap (for inter-TX silence reduction)
     uint32_t _lastTxElapsedMs{0};         // gap elapsed at TX time (for collision diagnostics)
     uint32_t _lastTxWireMs{0};            // estimated wire time at TX time
     static constexpr uint32_t GAP_MIN_SAMPLES = 10;  // minimum transition samples before trusting prediction

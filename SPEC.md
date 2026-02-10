@@ -1079,41 +1079,83 @@ collected data for a fresh collection window.
 When the ESP32 shares a Modbus RTU bus with a foreign master (e.g. an inverter's
 built-in meter polling), it must inject its own requests into the idle gaps
 between the foreign master's transactions to avoid collisions. The gap-aware TX
-scheduler uses the transition map to predict when and how long the next gap will
-be, then decides whether to send.
+scheduler uses bus silence detection with multiple thresholds, plus an analysis
+infrastructure based on a per-transition Markov chain that tracks gap statistics.
 
 **Design principles:**
 
 - Occasional collisions are acceptable — the device will re-request on timeout.
-- The algorithm optimises for high gap utilisation with minimal collision rate.
-- All predictions degrade gracefully: if the transition map has insufficient data,
-  the scheduler falls back to the existing silence-based send logic.
+- The algorithm optimises for high register throughput while keeping the
+  collision rate reasonable (~10–15%).
+- All safety mechanisms degrade gracefully: if the bus has insufficient data,
+  the scheduler falls back to the full silence threshold.
 - The foreign master may change its pattern at any time; the transition map
   adapts continuously.
 
-##### Prediction Algorithm (`predictCurrentGap`)
+##### Strategies Tried and Their Problems
 
-After a foreign response completes, the scheduler predicts the available idle
-time before the next foreign request:
+Multiple TX scheduling strategies were implemented and tested on a real bus with
+a foreign master cycling ~15 registers every ~4.5s (inter-request gaps 10–160ms,
+wrap-around gaps 243–1759ms):
 
-1. Look up the last completed transaction key in the transition map.
-2. Sum observation counts across all successor edges (those with ≥ 2 samples).
-   Require ≥ `GAP_MIN_SAMPLES` (10) total samples before trusting the prediction.
-3. Find the **most-likely successor** — the edge with the highest transition
-   count — and compute its conservative gap for display/monitoring.
-4. Compute a conservative gap estimate for that edge:
-   `conservative = max(mean − 1σ, observed_min)`.
-5. Apply the dynamic safety margin: `predicted = conservative × (1 − safetyMargin)`.
-6. Also compute `confirmationMs` = min conservative across ALL successor edges
-   + 2ms jitter buffer. This is the time the scheduler must wait before any
-   short-gap successor is ruled out. Exposed in the API for monitoring.
-7. Return a `GapPrediction` struct with `valid`, `predictedGapMs`,
-   `confirmationMs`, `minObservedMs` (hard min across all edges), and
-   `sampleCount`.
+1. **Prediction: minimum gap across all successors.**  Too conservative — the
+   hard minimum of any observed gap was often very small due to occasional
+   timing jitter, blocking almost all TXes.
 
-**Note:** The actual send decision is made by `canSafelyTransmitInGap()` (see
-TX Decision Flow below), which checks ALL successor edges dynamically — not
-just the most-likely one.
+2. **Prediction: probability-weighted gap estimate.**  Computes a weighted mean
+   gap from all successor edges.  Fails on bimodal distributions: a transition
+   with both 20ms (inter-request) and 600ms (wrap-around) gaps produces a
+   misleading mean of ~310ms.
+
+3. **Prediction: most-likely successor.**  Uses the edge with the highest
+   transition count.  The most-likely successor is usually a short inter-request
+   gap, so the scheduler chronically overestimates the gap.  ~14% collision rate.
+
+4. **Prediction: most-likely + confirmation wait.**  Waits until short-gap
+   successors are "ruled out" (their expected time has elapsed) before sending.
+   Better (~11% collision rate) but still fragile on bimodal edges.
+
+5. **Prediction: `canSafelyTransmitInGap` (full successor checking).**  Checks
+   ALL successor edges dynamically, ruling out ones whose gap window has passed.
+   Conceptually sound but fails in practice: bimodal edges (where min >200ms on
+   one mode) cause it to block the very wrap-around gap we are trying to use.
+   ~17% collision rate.
+
+6. **Silence-based: fixed 200ms threshold (single TX per gap).**  Ignores
+   prediction entirely.  Waits for 200ms of bus silence (safely past all
+   inter-request gaps maxing at ~160ms) then sends.  ~10% collision rate at
+   ~2.4 regs/sec.  Simple and robust but limited throughput — can only fit one
+   TX per wrap-around gap.
+
+7. **Silence-based: dual threshold with inter-TX silence (current).**  Uses
+   200ms silence for the first TX in a gap, then 100ms between subsequent TXes
+   in the same gap.  This allows 2–3 TXes per wrap-around gap, roughly doubling
+   throughput.  ~11% collision rate at ~3.9 regs/sec.  The 100ms inter-TX
+   silence is conservative enough to detect foreign master resumption (an 8-byte
+   Modbus request takes ~8.3ms on the wire at 9600 baud).
+
+The prediction infrastructure (transition map, gap statistics, cycle detection)
+is preserved for monitoring and analysis, even though the current TX decision
+does not use `canSafelyTransmitInGap()` as a gate.
+
+##### Current TX Decision Logic (`processQueue`)
+
+When a queued request is ready to send:
+
+1. **Boot safety:** Don't TX until at least one foreign transaction has been
+   observed (`_hasLastTransactionEnd`).
+2. **Request selection:** First TX in a gap picks the shortest wire-time
+   request (to fit in any gap).  Subsequent TXes (or silence >400ms) use FIFO.
+3. **Silence check:** Require `MIN_GAP_SILENCE_MS` (200ms) silence for the
+   first TX; `MIN_INTER_TX_SILENCE_MS` (100ms) for subsequent TXes
+   (`_ownTxInCurrentGap > 0`).
+4. **UART RX check:** If `_serial.available() > 0` at TX decision time, a
+   foreign frame is arriving — defer.
+5. **Send** and increment `_ownTxInCurrentGap`.
+6. Track whether prediction data was valid (`txInGap`) or not (`txFallback`).
+
+The `_ownTxInCurrentGap` counter is reset to 0 when foreign activity is
+detected (foreign request seen) or on CRC error (likely collision).
 
 ##### Wire Time Estimation (`estimateWireTimeMs`)
 
@@ -1127,31 +1169,30 @@ wireMs     = totalBytes × charTimeUs / 1000 + 5ms (device turnaround)
 At 9600 baud 8N1 this gives ~1.146 ms per byte. A single-register read takes
 ~20 ms; an 18-register read takes ~50 ms.
 
-##### TX Decision Flow (`processQueue`)
+##### Prediction Algorithm (`predictCurrentGap`)
 
-When a request is ready to send:
+The prediction algorithm is retained for monitoring. After a foreign response
+completes, it predicts the available idle time before the next foreign request:
 
-1. Call `predictCurrentGap()` to get a prediction for display/monitoring.
-2. Estimate wire time for the selected request.
-3. Call `canSafelyTransmitInGap(wireMs)` — this checks ALL successor edges
-   for the current predecessor, not just the most-likely one:
-   - For each successor edge, compute its conservative gap.
-   - Edges where `elapsed ≥ conservative` are "ruled out" — if that successor
-     were going to follow, its request would have already arrived.
-   - Among remaining (non-ruled-out) edges, verify that
-     `elapsed + wireMs + safetyMargin ≤ conservative` — i.e., our TX would
-     complete before ANY still-possible successor's request arrives.
-4. **If any non-ruled-out successor would collide**: defer (`txDeferred++`).
-5. **If safe for all remaining successors, or no prediction available**: send.
-6. Track whether the TX used gap prediction (`txInGap`) or silence-based
-   fallback (`txFallback`).
+1. Look up the last completed transaction key in the transition map.
+2. Sum observation counts across all successor edges (those with ≥ 2 samples).
+   Require ≥ `GAP_MIN_SAMPLES` (10) total samples before trusting the prediction.
+3. Find the **most-likely successor** — the edge with the highest transition
+   count — and compute its conservative gap for display/monitoring.
+4. Compute a conservative gap estimate for that edge:
+   `conservative = max(mean − 1σ, observed_min)`.
+5. Apply the dynamic safety margin: `predicted = conservative × (1 − safetyMargin)`.
+6. Also compute `confirmationMs` = min conservative across ALL successor edges
+   + 2ms jitter buffer.
+7. Return a `GapPrediction` struct with `valid`, `predictedGapMs`,
+   `confirmationMs`, `minObservedMs` (hard min across all edges), and
+   `sampleCount`.
 
 ##### Gap Window State Machine
 
 - **Window opens** when a foreign response frame completes (`_gapWindowActive = true`,
   `_gapWindowOpenMs = millis()`).
-- **Window closes** when the next foreign request is detected
-  (`_gapWindowActive = false`).
+- **Window closes** when the next foreign request is detected, or on CRC error.
 - The `_sentDuringGapWindow` flag tracks whether the current pending own request
   was sent using a gap prediction, enabling collision attribution.
 
@@ -1164,8 +1205,7 @@ The safety margin adapts based on observed outcomes:
 | Collision detected (timeout during gap window) | +5% | max 60% |
 | Every 50 consecutive successful gap TXes | −1% | min 10% |
 
-Starting margin: 20%. The margin is exposed via the API and monitoring page for
-operational visibility.
+Starting margin: 20%.
 
 ##### Collision Detection
 
@@ -1174,46 +1214,38 @@ A "collision" is detected when:
 - The request times out (no response received within `responseTimeoutMs`).
 
 On collision, `reportCollision()` increments the collision counter, bumps the
-safety margin by +5%, and logs a warning.
+safety margin by +5%, and logs a warning with diagnostic context (silence at TX
+time, wire time, global min gap, per-successor gapMin/count/mean).
+
+CRC errors also close the gap window and reset `_ownTxInCurrentGap`, since a
+CRC error likely indicates a bus collision.
 
 ##### Monitoring
 
 - **`GET /api/modbus/gap-scheduler`** — JSON with TX decisions, prediction
-  quality, collision stats, dynamic margin, current gap prediction, and timing.
+  quality, collision stats, dynamic margin, current gap prediction, registers
+  per second, and timing.
 - **`GET /view/modbus/scheduler`** — Human-readable dashboard with color-coded
   cards, progress bars, and auto-refresh (5s).
 
-##### Planned: Dynamic `pollIntervalFactor`
+##### Observed Performance
 
-The `pollIntervalFactor` setting in `devices.json` (per device) multiplies every
-register's `pollInterval` to slow down or speed up polling. Currently set
-manually (e.g. `16.0` = poll 16× slower than the register definition requests).
+With the current dual-threshold silence approach at `pollIntervalFactor=2.0`:
 
-**Planned automatic adaptation:**
+| Metric | Value |
+|--------|-------|
+| Registers/sec | ~3.9 |
+| Collision rate | ~11% |
+| Foreign master success | ~82% |
+| TXes per wrap-around gap | 1–3 |
 
-The gap scheduler will dynamically adjust each device's `pollIntervalFactor`
-based on observed bus conditions:
+##### Throughput vs Demand
 
-1. **Start conservatively** — use the configured `pollIntervalFactor` or a high
-   default (e.g. 4.0) to avoid overloading the bus.
-2. **Decrease toward minimum** — when the collision rate is low (< 1%) and
-   prediction success rate is high (> 95%), gradually reduce the factor toward
-   a calculated bandwidth minimum (`F_min`). `F_min` is derived from total
-   wire demand vs. available idle bus time:
-   ```
-   totalDemandPerSec = sum of (wireTime / pollInterval) across all batches
-   availablePerSec   = 1.0 − busUtilisation
-   F_min             = totalDemandPerSec / availablePerSec × headroom
-   ```
-   At 9600 baud with 16.6% foreign bus utilisation, `F_min ≈ 0.32` with 20%
-   headroom, giving a comfortable recommended minimum of `0.50`.
-3. **Increase on pressure** — if the collision rate exceeds a threshold (e.g.
-   > 5%) or the deferred-TX rate is too high, increase the factor to back off.
-4. **Per-device independence** — each device's factor adapts independently;
-   a single unresponsive device doesn't starve others.
-
-The goal is to reach the configured refresh rates (`pollInterval` per register)
-as closely as bus conditions allow, without manual tuning.
+At `pollIntervalFactor=1.0`, total demand is ~16.4 regs/sec (33 requests,
+147 registers).  The bus realistically supports ~3–7 regs/sec depending on
+wrap-around gap distribution (median ~600ms, usable ~400ms after 200ms initial
+silence).  Fast-poll registers (5s interval, 10.2 regs/sec demand) will lag
+behind their target interval.
 
 ### 11. ModbusDeviceManager
 
