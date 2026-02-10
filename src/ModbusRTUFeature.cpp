@@ -1910,19 +1910,25 @@ GapPrediction ModbusRTUFeature::predictCurrentGap() const {
     const auto& successors = predIt->second;
     if (successors.empty()) return result;
 
-    // Sum up total observations across all successors
+    // Sum up total observations across all successors (only edges with ≥2 samples)
     uint32_t totalSamples = 0;
+    uint32_t usableEdges = 0;
     for (const auto& kv : successors) {
-        totalSamples += kv.second.count;
+        if (kv.second.count >= 2) {
+            totalSamples += kv.second.count;
+            usableEdges++;
+        }
     }
 
-    if (totalSamples < GAP_MIN_SAMPLES) return result;
+    if (totalSamples < GAP_MIN_SAMPLES || usableEdges == 0) return result;
 
-    // Conservative prediction: use the MINIMUM gap across all successors,
-    // weighted by the probability of each successor occurring.
-    // For each successor edge, compute (mean - 1*stddev) as conservative estimate.
-    // Then take the weighted minimum across all edges.
-    uint32_t minAcrossSuccessors = UINT32_MAX;
+    // Probability-weighted prediction: for each successor, compute a
+    // conservative per-edge gap (mean - 1*stddev, floored at observed min),
+    // then weight by transition probability (count / totalSamples).
+    // This predicts the *expected* gap rather than the worst-case gap,
+    // giving much better utilisation for predecessors whose dominant
+    // successor has a large gap but a rare alternate successor is fast.
+    double weightedSum = 0.0;
     uint32_t hardMinObserved = UINT32_MAX;
 
     for (const auto& kv : successors) {
@@ -1933,27 +1939,26 @@ GapPrediction ModbusRTUFeature::predictCurrentGap() const {
         double variance = (te.gapSumSq / te.count) - (mean * mean);
         double stddev = (variance > 0) ? sqrt(variance) : 0;
 
-        // Conservative: mean - 1*stddev, floored at observed minimum
+        // Conservative per-edge: mean - 1*stddev, floored at observed minimum
         double conservative = mean - stddev;
         if (conservative < (double)te.gapMin) conservative = (double)te.gapMin;
         if (conservative < 0) conservative = 0;
 
-        uint32_t conservativeMs = (uint32_t)conservative;
-        if (conservativeMs < minAcrossSuccessors) {
-            minAcrossSuccessors = conservativeMs;
-        }
+        double weight = (double)te.count / (double)totalSamples;
+        weightedSum += weight * conservative;
+
         if (te.gapMin < hardMinObserved) {
             hardMinObserved = te.gapMin;
         }
     }
 
-    if (minAcrossSuccessors == UINT32_MAX) return result;
+    if (weightedSum <= 0) return result;
 
     // Apply safety margin
-    uint32_t withMargin = (uint32_t)((float)minAcrossSuccessors * (1.0f - _gapSchedulerStats.safetyMargin));
+    uint32_t predicted = (uint32_t)(weightedSum * (1.0 - (double)_gapSchedulerStats.safetyMargin));
 
     result.valid = true;
-    result.predictedGapMs = withMargin;
+    result.predictedGapMs = predicted;
     result.minObservedMs = hardMinObserved;
     result.sampleCount = totalSamples;
     return result;

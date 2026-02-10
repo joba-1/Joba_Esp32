@@ -161,8 +161,8 @@ using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntr
  */
 struct GapPrediction {
     bool    valid{false};          // true if we have enough data to predict
-    uint32_t predictedGapMs{0};   // conservative predicted gap (mean - 1*stddev) * (1 - margin)
-    uint32_t minObservedMs{0};    // hard minimum ever observed for this predecessor
+    uint32_t predictedGapMs{0};   // probability-weighted gap: Σ(p_i * conservative_i) * (1 - margin)
+    uint32_t minObservedMs{0};    // hard minimum ever observed across all successor edges
     uint32_t sampleCount{0};      // total successor observations for this predecessor
 };
 

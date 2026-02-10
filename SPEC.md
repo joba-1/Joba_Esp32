@@ -1097,15 +1097,18 @@ After a foreign response completes, the scheduler predicts the available idle
 time before the next foreign request:
 
 1. Look up the last completed transaction key in the transition map.
-2. Sum observation counts across all successor edges. Require ≥ `GAP_MIN_SAMPLES`
-   (10) total samples before trusting the prediction.
+2. Sum observation counts across all successor edges (those with ≥ 2 samples).
+   Require ≥ `GAP_MIN_SAMPLES` (10) total samples before trusting the prediction.
 3. For each successor edge with ≥ 2 samples, compute a conservative gap estimate:
    `conservative = max(mean − 1σ, observed_min)`.
-4. Take the **minimum** conservative estimate across all possible successors
-   (worst-case next transition).
-5. Apply the dynamic safety margin: `predicted = conservative × (1 − safetyMargin)`.
+4. Compute a **probability-weighted** prediction across all successor edges:
+   `predicted = Σ(p_i × conservative_i)` where `p_i = count_i / totalSamples`.
+   This predicts the *expected* gap rather than the worst-case, giving much
+   better bus utilisation for predecessors whose dominant successor has a large
+   gap but a rare alternate successor is fast.
+5. Apply the dynamic safety margin: `predicted = weighted × (1 − safetyMargin)`.
 6. Return a `GapPrediction` struct with `valid`, `predictedGapMs`,
-   `minObservedMs`, and `sampleCount`.
+   `minObservedMs` (hard minimum across all edges), and `sampleCount`.
 
 ##### Wire Time Estimation (`estimateWireTimeMs`)
 
