@@ -89,8 +89,8 @@ void ModbusDeviceManager::handleObservedFrame(const ModbusFrame& frame, bool isR
         auto reqIt = _lastSeenRequests.find(frame.unitId);
         if (reqIt != _lastSeenRequests.end()) {
             const ModbusFrame& request = reqIt->second;
-            // Only consider reasonably recent request/response pairs
-            if ((frame.timestamp - request.timestamp) < 2000) {
+            // Only consider reasonably recent request/response pairs (responses typically arrive within 100-200ms)
+            if ((frame.timestamp - request.timestamp) < 500) {
                 tryUpdateFromPassiveResponse(it->second, request, frame);
             }
         }
@@ -117,8 +117,16 @@ void ModbusDeviceManager::tryUpdateFromPassiveResponse(ModbusDeviceInstance& dev
     if (!regData || byteCount < 2) return;
 
     uint16_t startReg = request.getStartRegister();
+    uint16_t requestCount = request.getQuantity();
     size_t respRegCount = byteCount / 2;
     if (respRegCount == 0) return;
+
+    // Verify response byte count matches request - if not, likely a mismatch
+    if (respRegCount != requestCount) {
+        LOG_W("Response/request mismatch for unit %u: requested %u regs from addr %u, got %u regs",
+              device.unitId, requestCount, startReg, (unsigned)respRegCount);
+        return;
+    }
 
     bool matchedAny = false;
 
@@ -143,6 +151,55 @@ void ModbusDeviceManager::tryUpdateFromPassiveResponse(ModbusDeviceInstance& dev
 
         auto& cached = device.currentValues[reg.name];
         bool shouldNotify = (!cached.valid) || valuesDiffer(cached.value, value);
+
+        // Sanity check for suspicious value changes
+        if (shouldNotify && cached.valid) {
+            uint32_t timeDeltaMs = millis() - cached.updatedAtMs;
+            float valueDelta = value - cached.value;
+            if (valueDelta < 0) valueDelta = -valueDelta;
+            
+            bool suspicious = false;
+            const char* reason = "";
+            
+            // Temperature registers: check for physically implausible rate of change
+            if (strstr(reg.unit, "°C") != nullptr || strstr(reg.unit, "C") != nullptr ||
+                strstr(reg.name, "Temperature") != nullptr || strstr(reg.name, "Temp") != nullptr) {
+                // Physical limit: air temperature can't change faster than ~5°C/second in normal conditions
+                // In practice, inverter temps change much slower (0.1-0.5°C/s)
+                float maxDeltaPerSec = 5.0f;
+                float timeDeltaSec = timeDeltaMs / 1000.0f;
+                if (timeDeltaSec > 0 && timeDeltaSec < 10.0f) {  // Only check for recent changes
+                    float rateOfChange = valueDelta / timeDeltaSec;
+                    if (rateOfChange > maxDeltaPerSec) {
+                        suspicious = true;
+                        reason = "implausible temp rate";
+                    }
+                }
+            }
+            
+            // Log suspicious changes with detailed diagnostics
+            if (suspicious) {
+                LOG_E("SUSPICIOUS: Unit %u %s: %.2f%s -> %.2f%s (Δ=%.2f in %ums, %s) raw=0x%04X reqAddr=%u regAddr=%u",
+                      device.unitId, reg.name, cached.value, cached.unit,
+                      value, reg.unit, valueDelta, timeDeltaMs, reason,
+                      rawData[0], request.getStartRegister(), reg.address);
+                // Skip this update - keep the old value
+                continue;
+            }
+            
+            // Log large changes that aren't suspicious (for monitoring)
+            float changePct = (cached.value != 0) ? (valueDelta / cached.value * 100.0f) : 0;
+            if (changePct > 10.0f) {
+                // Skip logging for registers that are expected to be volatile
+                bool isVolatile = (strstr(reg.name, "Energy") != nullptr && strstr(reg.name, "Today") != nullptr) ||
+                                  strstr(reg.name, "Daily") != nullptr;
+                if (!isVolatile) {
+                    LOG_I("Unit %u %s: %.2f%s -> %.2f%s (%.1f%% in %ums) raw=0x%04X",
+                          device.unitId, reg.name, cached.value, cached.unit,
+                          value, reg.unit, changePct, timeDeltaMs, rawData[0]);
+                }
+            }
+        }
 
         cached.updatedAtMs = millis();
         cached.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
