@@ -59,6 +59,11 @@ void WebServerFeature::setup() {
 }
 
 void WebServerFeature::setupDefaultRoutes() {
+    // Serve static CSS file (no auth required)
+    _server->on("/style.css", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        request->send(LittleFS, "/style.css", "text/css");
+    });
+
     // Root endpoint - basic info
     _server->on("/", HTTP_GET, [this](AsyncWebServerRequest* request) {
         if (_authEnabled && !authenticate(request)) {
@@ -69,26 +74,16 @@ void WebServerFeature::setupDefaultRoutes() {
         String html = "<!DOCTYPE html><html><head><title>" + title + "</title>";
         html += "<meta charset='UTF-8'>";
         html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-        html += "<style>"
-            "body{font-family:Arial,sans-serif;margin:20px;}"
-            "h2{margin-top:22px;}"
-            ".card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:10px 0;}"
-            "code{background:#f6f6f6;padding:1px 4px;border-radius:4px;}"
-            "form{margin:8px 0;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:6px;}"
-            "label{display:inline-block;margin-right:10px;margin-bottom:6px;}"
-            "input,select{padding:4px 6px;}"
-            "button{padding:5px 10px;}"
-            "small{color:#666;}"
-            "</style></head>";
-        html += "<body><h1>" + title + "</h1>";
-        html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
-        html += "<p>Uptime: " + String(millis() / 1000) + " seconds</p>";
-        html += "<p>Free Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
+        html += "<link rel='stylesheet' href='/style.css'>";
+        html += "</head>";
+        html += "<body><div class='container'>";
+        html += "<h1>" + title + "</h1>";
+        html += "<p style='color:#888'>IP: " + WiFi.localIP().toString() + " | Uptime: " + String(millis() / 1000) + "s | Heap: " + String(ESP.getFreeHeap()) + " bytes</p>";
         html += "<div class='card'>";
         html += "<h2>System</h2>";
-        html += "<p><a href='/health?json'>/health?json</a> <small>(health check, no auth)</small></p>";
-        html += "<p><a href='/api/status'>/api/status</a></p>";
-        html += "<p><a href='/api/buildinfo'>/api/buildinfo</a></p>";
+        html += "<p><a href='/health?json'>Health Check</a> <small>(no auth, JSON)</small></p>";
+        html += "<p><a href='/api/status'>Device Status</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/buildinfo'>Build Information</a> <small>(JSON)</small></p>";
         html += "<form action='/api/reset' method='post' onsubmit=\"return confirm('Restart device now?')\">"
             "<strong>/api/reset</strong> <small>(POST)</small> "
             "<label>delayMs <input name='delayMs' type='number' value='250' min='50' max='10000'></label>"
@@ -103,7 +98,8 @@ void WebServerFeature::setupDefaultRoutes() {
 
         html += "<div class='card'>";
         html += "<h2>Storage</h2>";
-        html += "<p><a href='/api/storage'>/api/storage</a></p>";
+        html += "<p><a href='/api/storage'>Storage Status</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/view/storage'>File Browser</a> <small>(interactive)</small></p>";
         html += "<form action='/api/storage/list' method='get'>"
             "<strong>/api/storage/list</strong> "
             "<label>path <input name='path' type='text' value='/' size='30'></label>"
@@ -114,27 +110,26 @@ void WebServerFeature::setupDefaultRoutes() {
             "<label>path <input name='path' type='text' value='/data/sensors.json' size='30'></label>"
             "<button type='submit'>GET</button>"
             "</form>";
-        html += "<p><a href='/view/storage'>/view/storage</a> <small>(HTML file browser)</small></p>";
         html += "</div>";
 
         html += "<div class='card'>";
         html += "<h2>Data Collection</h2>";
-        html += "<p><a href='/api/sensors'>/api/sensors</a></p>";
-        html += "<p><a href='/api/sensors/latest'>/api/sensors/latest</a></p>";
-        html += "<p><a href='/view/sensors'>/view/sensors</a> <small>(HTML table)</small></p>";
+        html += "<p><a href='/view/sensors'>Sensors Dashboard</a> <small>(live table)</small></p>";
+        html += "<p><a href='/api/sensors'>All Sensor Data</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/sensors/latest'>Latest Sensor Values</a> <small>(JSON)</small></p>";
         html += "</div>";
 
         html += "<div class='card'>";
         html += "<h2>Modbus</h2>";
-        html += "<p><a href='/api/modbus/status'>/api/modbus/status</a></p>";
-        html += "<p><a href='/api/modbus/devices'>/api/modbus/devices</a></p>";
-        html += "<p><a href='/api/modbus/maps'>/api/modbus/maps</a></p>";
-        html += "<p><a href='/api/modbus/types'>/api/modbus/types</a></p>";
-        html += "<p><a href='/api/modbus/monitor'>/api/modbus/monitor</a></p>";
-        html += "<p><a href='/view/modbus/patterns'>Bus Pattern Analysis</a> <small>(<a href='/api/modbus/patterns'>JSON</a>)</small></p>";
-        html += "<p><a href='/view/modbus'>/view/modbus</a> <small>(HTML dashboard)</small></p>";
-        html += "<p><a href='/view/modbus/raw'>/view/modbus/raw</a> <small>(raw request tool)</small></p>";
-        html += "<p><a href='/view/modbus/decoded'>/view/modbus/decoded</a> <small>(decoded register viewer)</small></p>";
+        html += "<p><a href='/view/modbus'>Modbus Dashboard</a> <small>(live dashboard)</small></p>";
+        html += "<p><a href='/view/modbus/decoded'>Decoded Register Viewer</a> <small>(interactive)</small></p>";
+        html += "<p><a href='/view/modbus/raw'>Raw Request Tool</a> <small>(low-level debugging)</small></p>";
+        html += "<p><a href='/view/modbus/patterns'>Bus Pattern Analysis</a> <small>(traffic analysis)</small></p>";
+        html += "<p><a href='/api/modbus/status'>Bus Status</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/modbus/devices'>Device List</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/modbus/maps'>Register Maps</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/modbus/types'>Device Types</a> <small>(JSON)</small></p>";
+        html += "<p><a href='/api/modbus/monitor'>Frame Monitor</a> <small>(JSON)</small></p>";
 
         html += "<form action='/api/modbus/device' method='get'>"
             "<strong>/api/modbus/device</strong> "
@@ -168,7 +163,7 @@ void WebServerFeature::setupDefaultRoutes() {
             "</form>";
 
         html += "</div>";
-        html += "</body></html>";
+        html += "</div></body></html>";
         
         request->send(200, "text/html", html);
     });
@@ -402,23 +397,12 @@ void WebServerFeature::setupDefaultRoutes() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Storage - Files</title>
-    <style>
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}
-        .container{max-width:1200px;margin:0 auto}
-        h1{color:#4CAF50}
-        .table-container{background:#16213e;border-radius:8px;padding:10px;width:max-content;min-width:100%;box-shadow:0 2px 4px rgba(0,0,0,0.3)}
-        table{width:100%;border-collapse:collapse;font-size:0.95em;background:#16213e}
-        th,td{padding:8px 10px;border-bottom:1px solid #2a2a4a}
-        th{background:#0f3460;color:#4CAF50;text-align:left}
-        .btn{background:#4CAF50;color:#1a1a2e;padding:6px 10px;border-radius:6px;text-decoration:none;font-weight:600;border:none;cursor:pointer}
-        .btn:hover{background:#388E3C}
-        a.btn{display:inline-block}
-        .controls{margin-bottom:10px}
-    </style>
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div class="container">
-        <h1>Storage</h1>
+        <a href="/" class="home-link">Home</a>
+        <h1>Storage Browser</h1>
         <div class="controls">
             <button class="btn" onclick="goUp()">Up</button>
             <span style="margin-left:10px;color:#ccc">Current: <span id="currentPath">/</span></span>

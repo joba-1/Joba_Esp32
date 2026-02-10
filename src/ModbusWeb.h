@@ -952,7 +952,10 @@ button.danger:hover{background:#e53935}
 .gap-ok{color:#81c784}.gap-tight{color:#ffb74d}.gap-no{color:#ef5350}
 a{color:#4fc3f7}
 .footer{margin-top:24px;font-size:.75em;color:#555;border-top:1px solid #222;padding-top:10px}
+.home-link{color:#4fc3f7;text-decoration:none;font-size:.9em;display:inline-block;margin-bottom:10px}
+.home-link:before{content:'← '}
 </style></head><body>
+<a href="/" class="home-link">Home</a>
 <h1>&#128268; Bus Pattern Analysis</h1>
 <div class="controls">
 <button onclick="refresh()">&#8635; Refresh</button>
@@ -1236,7 +1239,10 @@ button:hover{background:#81d4fa}
 .status{font-size:.8em;color:#666;margin-left:auto}
 a{color:#4fc3f7}
 .footer{margin-top:24px;font-size:.75em;color:#555;border-top:1px solid #222;padding-top:10px}
+.home-link{color:#4fc3f7;text-decoration:none;font-size:.9em;display:inline-block;margin-bottom:10px}
+.home-link:before{content:'← '}
 </style></head><body>
+<a href="/" class="home-link">Home</a>
 <h1>&#9201; Gap Scheduler Monitor</h1>
 <div class="controls">
 <button onclick="refresh()">&#8635; Refresh</button>
@@ -1388,7 +1394,10 @@ if($('autoRef').checked)startA();
                     "pre{background:#0a0a1a;color:#eee;padding:10px;border-radius:6px;overflow:auto;border:1px solid #2a2a4a}"
                     "code{background:#0f3460;padding:2px 6px;border-radius:3px}"
                     "small{color:#888}"
+                    ".home-link{display:inline-block;margin-bottom:12px;color:#FF9800;font-size:0.9em}"
+                    ".home-link:before{content:'← '}"
                     "</style></head><body>"
+                    "<a href='/' class='home-link'>Home</a>"
                     "<h1>Modbus Raw Tools</h1>"
                     "<p><a href='/view/modbus'>&larr; Back to dashboard</a></p>"
                     "<div class='card'>"
@@ -1477,7 +1486,10 @@ if($('autoRef').checked)startA();
                     "small{color:#888}"
                     ".error{color:#F44336}"
                     ".warning{color:#FF9800}"
+                    ".home-link{display:inline-block;margin-bottom:12px;color:#4CAF50;font-size:0.9em}"
+                    ".home-link:before{content:'← '}"
                     "</style></head><body>"
+                    "<a href='/' class='home-link'>Home</a>"
                     "<h1>Decoded Register Viewer</h1>"
                     "<p><a href='/view/modbus'>&larr; Back to dashboard</a></p>"
                     "<div class='card'>"
@@ -1665,7 +1677,10 @@ if($('autoRef').checked)startA();
                     ".update-info{font-size:12px;color:#666;margin-top:10px}"
                     ".flash{animation:flash 0.3s}"
                     "@keyframes flash{0%{background:#2a4a6a}100%{background:transparent}}"
+                    ".home-link{display:inline-block;margin-bottom:12px;color:#2196F3;font-size:0.9em}"
+                    ".home-link:before{content:'← '}"
                     "</style></head><body>"
+                    "<a href='/' class='home-link'>Home</a>"
                     "<h1>Modbus Dashboard</h1>"
                     "<div id='content'>Loading...</div>"
                     "<div class='update-info'>Auto-refresh every 5s | Last update: <span id='lastUpdate'>-</span></div>"

@@ -179,11 +179,8 @@ private:
     <title>)rawliteral";
         html += name;
         html += R"rawliteral( - Data View</title>
+    <link rel="stylesheet" href="/style.css">
     <style>
-        *{box-sizing:border-box;margin:0;padding:0}
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;background:#1a1a2e;color:#eee;padding:10px;min-height:100vh}
-        .container{max-width:1200px;margin:0 auto}
-        h1{color:#00d4ff;margin-bottom:10px;font-size:1.8em}
         .status{display:flex;gap:15px;margin-bottom:15px;flex-wrap:wrap}
         .status-item{background:#16213e;padding:8px 12px;border-radius:6px;font-size:0.9em}
         .status-item span{color:#00d4ff;font-weight:bold}
@@ -191,21 +188,12 @@ private:
         .status-dot.connected{background:#00ff88}
         .status-dot.disconnected{background:#ff4444}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-        .table-container{background:#16213e;border-radius:8px;padding:10px;width:max-content;min-width:100%;box-shadow:0 2px 4px rgba(0,0,0,0.3)}
-        table{width:100%;border-collapse:collapse;font-size:0.9em}
-        th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #2a2a4a}
-        th{background:#0f3460;color:#00d4ff;font-weight:600;position:sticky;top:0}
-        tr:hover{background:#1f3a5f}
-        tr:last-child td{border-bottom:none}
-        .no-data{text-align:center;padding:40px;color:#666}
-        .refresh-info{text-align:right;font-size:0.8em;color:#666;margin-top:10px}
-        .btn{background:#00d4ff;color:#1a1a2e;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;margin-left:10px}
-        .btn:hover{background:#00a8cc}
         .latest{background:#1f4a3f!important}
     </style>
 </head>
 <body>
     <div class="container">
+        <a href="/" class="home-link">Home</a>
         <h1>)rawliteral";
         html += name;
         html += R"rawliteral(</h1>
@@ -225,7 +213,7 @@ private:
             </table>
             <div class="no-data" id="noData" style="display:none;">No data available</div>
         </div>
-        <div class="refresh-info">Auto-refresh every )rawliteral";
+        <div class="status-info">Auto-refresh every )rawliteral";
         html += String(refreshIntervalMs / 1000);
         html += R"rawliteral( seconds</div>
     </div>
