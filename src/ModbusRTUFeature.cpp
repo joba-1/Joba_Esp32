@@ -990,6 +990,15 @@ void ModbusRTUFeature::processReceivedData() {
                                 uint16_t qty      = (req.data[2] << 8) | req.data[3];
                                 _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
                                 _hasLastCompletedTx = true;
+
+                                // Keep _lastTransactionEndMs in sync with _lastCompletedTxKey.
+                                // Both must refer to the same transaction so that successor gap
+                                // and transition gap measurements are attributed correctly.
+                                // (Previously this was set unconditionally for all responses,
+                                // causing unpaired responses to desync the two values and pollute
+                                // the transition map with near-zero gap artefacts.)
+                                _lastTransactionEndMs = respEndMs;
+                                _hasLastTransactionEnd = true;
                             }
                         }
                     }
@@ -1014,12 +1023,6 @@ void ModbusRTUFeature::processReceivedData() {
                         }
                     }
                 }
-
-                // Track end of foreign transaction for cycle gap measurement
-                // Use frame END time (start + wire duration) so successor gaps
-                // measure actual bus silence, not response-start to next-request-start.
-                _lastTransactionEndMs = frame.timestamp + (uint32_t)((uint64_t)frameLen * _charTimeUs / 1000ULL);
-                _hasLastTransactionEnd = true;
 
                 // Open gap window for gap-aware TX scheduling.
                 // The gap prediction uses the just-completed transaction as the predecessor
@@ -1821,14 +1824,23 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
 
     // Record successor gap on the PREVIOUS completed transaction
     // "After transaction X finished, the bus was idle for Y ms before this request"
+    //
+    // Filter: discard gaps shorter than the Modbus RTU inter-frame minimum (3.5 char times).
+    // When the ESP32 loop() is slower than the bus, multiple frames coalesce in the same
+    // RX buffer.  The frame timestamps are derived from byte-index × charTime, which treats
+    // coalesced frames as contiguous and collapses the inter-frame silence to ~0ms.
+    // These sub-minimum "gaps" are measurement artefacts, not real bus silences.
+    const uint32_t minInterframeMs = (uint32_t)(3.5 * _charTimeUs / 1000.0) + 1; // ~5ms at 9600 baud
     if (_hasLastCompletedTx && _hasLastTransactionEnd && frame.timestamp > _lastTransactionEndMs) {
         uint32_t gapMs = (uint32_t)(frame.timestamp - _lastTransactionEndMs);
-        auto predIt = _busPatterns.find(_lastCompletedTxKey);
-        if (predIt != _busPatterns.end()) {
-            predIt->second.recordSuccessorGap(gapMs);
+        if (gapMs >= minInterframeMs) {
+            auto predIt = _busPatterns.find(_lastCompletedTxKey);
+            if (predIt != _busPatterns.end()) {
+                predIt->second.recordSuccessorGap(gapMs);
+            }
+            // Record transition with gap: predecessor -> this request
+            _busTransitions[_lastCompletedTxKey][key].record(gapMs);
         }
-        // Record transition with gap: predecessor -> this request
-        _busTransitions[_lastCompletedTxKey][key].record(gapMs);
     }
 
     // Record into cycle sequence ring buffer
@@ -1857,7 +1869,7 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
                 // Match! Record gap since last transaction ended
                 if (_hasLastTransactionEnd && frame.timestamp > _lastTransactionEndMs) {
                     uint32_t gapMs = (uint32_t)(frame.timestamp - _lastTransactionEndMs);
-                    if (pos < _cycleStepGaps.size()) {
+                    if (gapMs >= minInterframeMs && pos < _cycleStepGaps.size()) {
                         _cycleStepGaps[pos].record(gapMs);
                     }
                 }
