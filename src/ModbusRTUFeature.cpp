@@ -747,17 +747,7 @@ void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameL
         _intervalStats.ownSuccess++;
         _gapPredictor.stats().registersRead += _currentRequest.quantity;
         if (_sentDuringGapWindow) {
-            _gapPredictor.stats().gapSufficient++;
-            if (_gapPredictor.stats().gapSufficient % GAP_RELAX_INTERVAL == 0 &&
-                _gapPredictor.stats().safetyMargin > _gapPredictor.stats().minMargin) {
-                float oldMargin = _gapPredictor.stats().safetyMargin;
-                _gapPredictor.stats().safetyMargin = std::max(
-                    _gapPredictor.stats().minMargin,
-                    _gapPredictor.stats().safetyMargin - 0.01f);
-                LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
-                      oldMargin * 100.0f, _gapPredictor.stats().safetyMargin * 100.0f,
-                      _gapPredictor.stats().gapSufficient);
-            }
+                _gapPredictor.noteGapSuccess(GAP_RELAX_INTERVAL, 0.01f);
         }
         _sentDuringGapWindow = false;
     } else {
@@ -1002,17 +992,7 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
             _intervalStats.ownSuccess++;
             _gapPredictor.stats().registersRead += _currentRequest.quantity;
             if (_sentDuringGapWindow) {
-                _gapPredictor.stats().gapSufficient++;
-                if (_gapPredictor.stats().gapSufficient % GAP_RELAX_INTERVAL == 0 &&
-                    _gapPredictor.stats().safetyMargin > _gapPredictor.stats().minMargin) {
-                    float oldMargin = _gapPredictor.stats().safetyMargin;
-                    _gapPredictor.stats().safetyMargin = std::max(
-                        _gapPredictor.stats().minMargin,
-                        _gapPredictor.stats().safetyMargin - 0.01f);
-                    LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
-                          oldMargin * 100.0f, _gapPredictor.stats().safetyMargin * 100.0f,
-                          _gapPredictor.stats().gapSufficient);
-                }
+                _gapPredictor.noteGapSuccess(GAP_RELAX_INTERVAL, 0.01f);
             }
             _sentDuringGapWindow = false;
         } else {

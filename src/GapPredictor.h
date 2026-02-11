@@ -113,6 +113,9 @@ public:
     void reportCollision(bool sentDuringGapWindow, uint32_t lastTxElapsedMs, uint32_t lastTxWireMs,
                          bool hasLastCompletedTx, uint64_t lastCompletedTxKey);
 
+    // Record a successful gap TX to relax safety margin over time.
+    void noteGapSuccess(uint32_t relaxInterval, float relaxStep);
+
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
     const GapSchedulerStats& stats() const { return _stats; }
     GapSchedulerStats& stats() { return _stats; }
