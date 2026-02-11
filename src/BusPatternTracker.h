@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <limits>
 
 /**
@@ -125,6 +126,9 @@ public:
                              uint64_t lastCompletedTxKey,
                              unsigned long lastTransactionEndMs);
 
+    using TransitionCallback = std::function<void(uint64_t predecessorKey, uint64_t successorKey, uint32_t gapMs)>;
+    void setTransitionCallback(TransitionCallback cb) { _transitionCb = cb; }
+
     const BusPatternMap& getBusPatterns() const { return _busPatterns; }
     const std::vector<BusCycleEntry>& getDetectedCycle() const { return _detectedCycle; }
     const std::vector<CycleStepStats>& getCycleStepGaps() const { return _cycleStepGaps; }
@@ -141,6 +145,7 @@ private:
     size_t _cycleSeqIndex{0};
     size_t _cycleSeqCount{0};
     int _cycleTrackingPos{-1};
+    TransitionCallback _transitionCb; // optional callback to notify about discovered transitions
 };
 
 #endif // BUS_PATTERN_TRACKER_H

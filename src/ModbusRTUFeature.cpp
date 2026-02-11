@@ -342,6 +342,10 @@ void ModbusRTUFeature::setup() {
     }
     
     _busByteStats.reset();
+    // Wire BusPatternTracker transitions directly to GapPredictor
+    _patternTracker.setTransitionCallback([this](uint64_t pred, uint64_t succ, uint32_t gapMs) {
+        _gapPredictor.recordTransition(pred, succ, gapMs);
+    });
     _gapPredictor.stats().startMs = millis();
     _ready = true;
 }

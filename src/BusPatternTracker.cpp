@@ -75,6 +75,10 @@ RecordResult BusPatternTracker::recordFrame(const ModbusFrame& frame,
             res.predecessorKey = lastCompletedTxKey;
             res.successorKey = key;
             res.gapMs = gapMs;
+            // Notify via callback if set
+            if (_transitionCb) {
+                _transitionCb(res.predecessorKey, res.successorKey, res.gapMs);
+            }
         }
     }
 
