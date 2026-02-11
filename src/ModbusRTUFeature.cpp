@@ -8,6 +8,15 @@ static inline bool timeBefore32(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
 }
 
+// Modbus RTU constants
+static constexpr uint8_t MAX_RTU_UNIT_ID = 247;
+static constexpr size_t MIN_FRAME_SIZE = 4;
+
+// Helper to check if function code is a read operation
+static inline bool isReadFunction(uint8_t fc) {
+    return (fc == ModbusFC::READ_HOLDING_REGISTERS || fc == ModbusFC::READ_INPUT_REGISTERS);
+}
+
 bool ModbusRTUFeature::isQueueingPaused() const {
     if (_requestQueue.empty()) return false;
 
@@ -721,8 +730,7 @@ void ModbusRTUFeature::handleCrcInvalidFrame(const ModbusFrame& frame, bool resy
     } else {
         LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", frame.unitId, frame.functionCode);
     }
-    recordFrameToHistory(frame);
-    if (_frameCallback) _frameCallback(frame, frame.isRequest);
+    // Note: recordFrameToHistory and _frameCallback are called by scanAndAdvanceIndex
     _inResync = true;
 }
 
@@ -784,7 +792,7 @@ void ModbusRTUFeature::handleForeignRequest(const ModbusFrame& frame) {
     }
 
     uint8_t reqFc = frame.functionCode & 0x7F;
-    if (reqFc == ModbusFC::READ_HOLDING_REGISTERS || reqFc == ModbusFC::READ_INPUT_REGISTERS) {
+    if (isReadFunction(reqFc)) {
         ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, reqFc);
         map.requestCount++;
         map.lastUpdate = millis();
@@ -808,7 +816,7 @@ void ModbusRTUFeature::handleForeignResponse(const ModbusFrame& frame, size_t fr
 
         uint8_t exFc = frame.functionCode & 0x7F;
         bool paired = false;
-        if (exFc == ModbusFC::READ_HOLDING_REGISTERS || exFc == ModbusFC::READ_INPUT_REGISTERS) {
+        if (isReadFunction(exFc)) {
             auto reqIt = _lastRequestPerUnit.find(frame.unitId);
             if (reqIt != _lastRequestPerUnit.end()) {
                 const ModbusFrame& req = reqIt->second;
@@ -819,7 +827,7 @@ void ModbusRTUFeature::handleForeignResponse(const ModbusFrame& frame, size_t fr
             if (paired) _stats.otherExceptionsPaired++; else _stats.otherExceptionsUnpaired++;
         }
 
-        if (exFc == ModbusFC::READ_HOLDING_REGISTERS || exFc == ModbusFC::READ_INPUT_REGISTERS) {
+        if (isReadFunction(exFc)) {
             ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, exFc);
             map.responseCount++;
             map.errorCount++;
@@ -855,13 +863,13 @@ void ModbusRTUFeature::handleForeignResponse(const ModbusFrame& frame, size_t fr
     }
 
     uint8_t respFc = frame.functionCode & 0x7F;
-    if (!updated && (respFc == ModbusFC::READ_HOLDING_REGISTERS || respFc == ModbusFC::READ_INPUT_REGISTERS)) {
+    if (!updated && isReadFunction(respFc)) {
         ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, respFc);
         map.responseCount++;
         map.lastUpdate = millis();
     }
 
-    if (respFc == ModbusFC::READ_HOLDING_REGISTERS || respFc == ModbusFC::READ_INPUT_REGISTERS) {
+    if (isReadFunction(respFc)) {
         if (updated) _stats.otherResponsesPaired++; else _stats.otherResponsesUnpaired++;
     }
 
@@ -884,12 +892,12 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
     bool sawNoise = false;
     size_t extractedCount = 0;
 
-    while (i + 4 <= _rxBuffer.size()) {
+    while (i + MIN_FRAME_SIZE <= _rxBuffer.size()) {
         const uint8_t* p = _rxBuffer.data() + i;
         size_t remaining = _rxBuffer.size() - i;
 
         uint8_t unitId = p[0];
-        if (unitId == 0 || unitId > 247) { sawNoise = true; i++; continue; }
+        if (unitId == 0 || unitId > MAX_RTU_UNIT_ID) { sawNoise = true; i++; continue; }
 
         bool isRequest = false;
         size_t frameLen = 0;
@@ -899,7 +907,8 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
         ModbusFrame frame;
         parseFrameAndComputeMetadata(i, frameLen, frame, isRequest, approxStartMs);
 
-        // Record parsed frame into history (matches previous behavior)
+        // Record all frames to history immediately (before dispatch)
+        // Callbacks are invoked once per frame after dispatch logic below
         recordFrameToHistory(frame);
 
         if (!frame.isValid) {
@@ -920,7 +929,7 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
             const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
             const bool fcMatches = (frame.functionCode == expectedFc) || (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
             bool byteCountMatches = true;
-            if (!frame.isException && (expectedFcBase == ModbusFC::READ_HOLDING_REGISTERS || expectedFcBase == ModbusFC::READ_INPUT_REGISTERS)) {
+            if (!frame.isException && isReadFunction(expectedFcBase)) {
                 byteCountMatches = (frame.getByteCount() == (size_t)_currentRequest.quantity * 2);
             }
             if (frame.isValid && fcMatches && byteCountMatches) {
@@ -1237,7 +1246,7 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
     
     if (!regData || byteCount == 0) return;
     
-    if (fc == ModbusFC::READ_HOLDING_REGISTERS || fc == ModbusFC::READ_INPUT_REGISTERS) {
+    if (isReadFunction(fc)) {
         // Each register is 2 bytes
         size_t regCount = byteCount / 2;
         for (size_t i = 0; i < regCount; i++) {
@@ -1413,7 +1422,7 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
 
         // Track our own FC3/FC4 requests in the register map
         uint8_t fc = req.functionCode & 0x7F;
-        if (fc == ModbusFC::READ_HOLDING_REGISTERS || fc == ModbusFC::READ_INPUT_REGISTERS) {
+        if (isReadFunction(fc)) {
             ModbusRegisterMap& map = ensureRegisterMap(req.unitId, fc);
             map.requestCount++;
             map.lastUpdate = millis();
