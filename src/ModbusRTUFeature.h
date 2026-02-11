@@ -454,6 +454,9 @@ public:
 
 private:
     void processReceivedData();
+    // Helpers extracted from the large processReceivedData() function
+    size_t extractFramesFromRxBuffer();
+    void handleParsedFrame(const ModbusFrame& frame, bool isRequest, size_t frameLen);
     bool parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame);
     void recordFrameToHistory(const ModbusFrame& frame);
     void recordCrcErrorContext(const ModbusFrame& badFrame);

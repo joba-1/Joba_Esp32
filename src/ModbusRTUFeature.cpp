@@ -599,27 +599,29 @@ void ModbusRTUFeature::loop() {
 
 void ModbusRTUFeature::processReceivedData() {
     if (_rxBuffer.size() < 4) {
-        // Still record byte-level stats even for short/incomplete frames
-        if (_rxBuffer.size() > 0) {
-            onFrameBoundary(_rxBuffer.size());
-        }
-        // Incomplete frames are common on noisy buses; don't spam logs
+        if (_rxBuffer.size() > 0) onFrameBoundary(_rxBuffer.size());
         _rxBuffer.clear();
         return;
     }
 
     onFrameBoundary(_rxBuffer.size());
 
-    // Spec-based extraction for Modbus RTU (focus: FC3/FC4).
-    // For FC3/FC4 we can deduce the exact frame length from the function code and (for responses) byteCount.
-    // This drastically reduces false-positive "valid" frames compared to CRC-scanning arbitrary slices.
+    // Delegate to extracted helpers
+    extractFramesFromRxBuffer();
+
+    _rxBuffer.clear();
+}
+
+// Extract frames from _rxBuffer and handle them. Returns number of bytes consumed.
+size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
+    // Spec-based extraction constants (focus: FC3/FC4)
     static constexpr uint8_t FC3 = ModbusFC::READ_HOLDING_REGISTERS;
     static constexpr uint8_t FC4 = ModbusFC::READ_INPUT_REGISTERS;
     static constexpr uint8_t FC3_EX = (uint8_t)(FC3 | 0x80);
     static constexpr uint8_t FC4_EX = (uint8_t)(FC4 | 0x80);
     static constexpr uint8_t MAX_RTU_UNIT_ID = 247;
     static constexpr uint16_t MAX_REGS_PER_READ = 125;
-    static constexpr uint8_t MAX_BYTECOUNT = 250;  // per spec: max 125 regs => 250 bytes
+    static constexpr uint8_t MAX_BYTECOUNT = 250;
 
     size_t i = 0;
     size_t extractedCount = 0;
@@ -632,8 +634,6 @@ void ModbusRTUFeature::processReceivedData() {
         uint8_t unitId = p[0];
         uint8_t fc = p[1];
 
-        // Basic plausibility: this is a sniffer; broadcast (0) is not useful here.
-        // Reject unitId=0 to drastically reduce false positives on noisy/contended buses.
         if (unitId == 0 || unitId > MAX_RTU_UNIT_ID) {
             sawNoise = true;
             i++;
@@ -651,21 +651,15 @@ void ModbusRTUFeature::processReceivedData() {
             return frame.isValid ? TryParseResult::Valid : TryParseResult::CrcInvalid;
         };
 
-        // Exceptions for FC3/FC4 are fixed length: unit + fc|0x80 + excCode + crc(2) = 5
         if ((fc == FC3_EX || fc == FC4_EX) && remaining >= 5) {
             const TryParseResult r = tryParseAtLen(5);
             if (r != TryParseResult::Fail && frame.isException) {
-                // Exception responses are responses (never requests)
                 isRequest = false;
                 frameLen = 5;
             }
         }
 
-        // Normal FC3/FC4
         if (frameLen == 0 && (fc == FC3 || fc == FC4)) {
-            // IMPORTANT: Try request FIRST (fixed 8 bytes).
-            // Many real-world register addresses start with an even MSB (e.g. 0x06xx), which can look like
-            // a valid response byteCount and cause false-positive response parsing if we try response first.
             if (remaining >= 8) {
                 const TryParseResult r = tryParseAtLen(8);
                 if (r != TryParseResult::Fail && !frame.isException && frame.dataLen == 4) {
@@ -677,18 +671,12 @@ void ModbusRTUFeature::processReceivedData() {
                 }
             }
 
-            // Try response: unit + fc + byteCount + data + crc
             if (frameLen == 0 && remaining >= 5) {
                 uint8_t byteCount = p[2];
-                // Spec: byteCount must be even for register reads and <= 250.
                 if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
                     size_t respLen = (size_t)byteCount + 5;
                     const TryParseResult r = tryParseAtLen(respLen);
                     if (r != TryParseResult::Fail && !frame.isException) {
-                        // Optional stronger validation using last seen request for this unit/fc
-                        // Prefer our in-flight request (if any) over sniffed traffic.
-                        // This avoids foreign masters overwriting _lastRequestPerUnit and causing us
-                        // to incorrectly discard our own response as "noise" due to byteCount mismatch.
                         const uint8_t inflightFc = (uint8_t)(_currentRequest.functionCode & 0x7F);
                         if (_waitingForResponse && _hasPendingRequest && unitId == _currentRequest.unitId && inflightFc == fc) {
                             const uint16_t qty = _currentRequest.quantity;
@@ -705,13 +693,10 @@ void ModbusRTUFeature::processReceivedData() {
                                 const ModbusFrame& req = reqIt->second;
                                 uint8_t reqFc = req.functionCode & 0x7F;
                                 if (req.isValid && reqFc == fc && req.dataLen == 4) {
-                                    // Only enforce if response is reasonably close in time
                                     if ((frame.timestamp - req.timestamp) < 2000) {
                                         uint16_t qty = req.getQuantity();
                                         if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
                                             if ((size_t)byteCount != (size_t)qty * 2) {
-                                                // Mismatched byte count => not a valid FC3/FC4 response for the request we saw.
-                                                // Treat as noise and keep searching.
                                                 sawNoise = true;
                                                 i++;
                                                 continue;
@@ -729,343 +714,251 @@ void ModbusRTUFeature::processReceivedData() {
             }
         }
 
-        // Not supported / not implemented
         if (frameLen == 0) {
-            // Discard FCs we don't implement for now.
-            // FCs outside the Modbus spec are treated as noise.
-            // FCs in-spec but unimplemented are also discarded (future extension point).
-            // (We don't spam logs here; higher-level stats already track CRC noise.)
             sawNoise = true;
             i++;
             continue;
         }
 
-          // At this point we have a spec-plausible frame. It may be CRC-valid or CRC-invalid.
-          extractedCount++;
+        extractedCount++;
 
-          // Best-effort start-of-message uptime:
-          // - if this RX buffer was built from multiple frames, "i" approximates the offset.
-          // - works well when frames are contiguous in the buffer.
-          const uint32_t approxStartMs = _rxBufferStartMs + (uint32_t)((uint64_t)i * (uint64_t)_charTimeUs / 1000ULL);
-          frame.timestamp = approxStartMs;
-          frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
-          frame.isRequest = isRequest;
+        const uint32_t approxStartMs = _rxBufferStartMs + (uint32_t)((uint64_t)i * (uint64_t)_charTimeUs / 1000ULL);
+        frame.timestamp = approxStartMs;
+        frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+        frame.isRequest = isRequest;
 
-          if (!frame.isValid) {
-            // Only count CRC error if this is the first bad frame (not during resync scanning)
+        if (!frame.isValid) {
             if (!_inResync) {
                 _stats.crcErrors++;
                 _busByteStats.invalidFrames++;
                 LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
-                    frame.unitId, frame.functionCode,
-                    formatFrameHex(frame).c_str());
-
-                // Close the gap window: a CRC error means something is
-                // being transmitted on the bus (likely a collision).
-                // Keeping the gap open after a collision causes cascading
-                // collisions as we keep transmitting in a stale window.
+                      frame.unitId, frame.functionCode,
+                      formatFrameHex(frame).c_str());
                 _gapWindowActive = false;
-                _ownTxInCurrentGap = 0;  // collision → next TX needs full silence
+                _ownTxInCurrentGap = 0;
             } else {
-                LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", 
-                    frame.unitId, frame.functionCode);
+                LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", frame.unitId, frame.functionCode);
             }
             recordFrameToHistory(frame);
-            if (_frameCallback) {
-                _frameCallback(frame, isRequest);
-            }
-            // Advance by only 1 byte on CRC errors to allow frame resynchronization
-            // (the calculated frameLen is unreliable when parsing started at wrong offset)
-            _inResync = true;  // Enter resync mode
+            if (_frameCallback) _frameCallback(frame, isRequest);
+            _inResync = true;
             i++;
             continue;
-          }
-
-          // CRC-valid frame - exit resync mode
-          _inResync = false;
-          _stats.framesReceived++;
-          _busByteStats.validFrames++;
-
-          // Frame details available via /api/modbus/monitor; don't spam logs
-          recordFrameToHistory(frame);
-
-        bool isOurResponse = false;
-
-        // Match our response more strictly:
-        // - must be a response (not a request)
-        // - unitId + functionCode (or exception variant)
-        // - for FC3/FC4: response byteCount must match our requested quantity
-        const uint8_t expectedFc = _currentRequest.functionCode;
-        const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
-        const bool fcMatches = (frame.functionCode == expectedFc) ||
-                               (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
-
-        bool byteCountMatches = true;
-        if (!frame.isException && (expectedFcBase == FC3 || expectedFcBase == FC4)) {
-            const size_t expectedBytes = (size_t)_currentRequest.quantity * 2;
-            const size_t actualBytes = frame.getByteCount();
-            byteCountMatches = (actualBytes == expectedBytes);
         }
 
-        if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
-            !frame.isRequest && frame.unitId == _currentRequest.unitId &&
-            fcMatches && byteCountMatches) {
-            isRequest = false;
-            isOurResponse = true;
-            _waitingForResponse = false;
+        // CRC-valid frame
+        _inResync = false;
+        _stats.framesReceived++;
+        _busByteStats.validFrames++;
+        recordFrameToHistory(frame);
 
-            // Record our own round-trip time
-            {
-                uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
-                _busTransactionStats.record(rtt);
-            }
+        // Delegate detailed handling to helper
+        handleParsedFrame(frame, isRequest, frameLen);
 
-            // Reset backoff for this unit only
-            _backoffByUnit.erase(frame.unitId);
-            _lastSuccessTime = millis();
-
-            if (!frame.isException) {
-                _stats.ownRequestsSuccess++;
-                _intervalStats.ownSuccess++;
-
-                // Count registers read on successful response
-                _gapPredictor.stats().registersRead += _currentRequest.quantity;
-
-                // Gap scheduler: successful TX during predicted gap
-                if (_sentDuringGapWindow) {
-                    _gapPredictor.stats().gapSufficient++;
-                    // Gradually relax safety margin after sustained success
-                    if (_gapPredictor.stats().gapSufficient % GAP_RELAX_INTERVAL == 0 &&
-                        _gapPredictor.stats().safetyMargin > _gapPredictor.stats().minMargin) {
-                        float oldMargin = _gapPredictor.stats().safetyMargin;
-                        _gapPredictor.stats().safetyMargin = std::max(
-                            _gapPredictor.stats().minMargin,
-                            _gapPredictor.stats().safetyMargin - 0.01f);
-                        LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
-                              oldMargin * 100.0f, _gapPredictor.stats().safetyMargin * 100.0f,
-                              _gapPredictor.stats().gapSufficient);
-                    }
-                }
-                _sentDuringGapWindow = false;
-            } else {
-                _stats.ownRequestsFailed++;
-                _intervalStats.ownFailed++;
-                _sentDuringGapWindow = false;
-                LOG_W("Modbus exception 0x%02X from unit %d",
-                      frame.exceptionCode, frame.unitId);
-            }
-
-            updateRegisterMap(_lastRequest, frame);
-
-            std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
-            if (_currentRequest.callback) {
-                callbackCopy = _currentRequest.callback;
-            }
-            _hasPendingRequest = false;
-
-            if (callbackCopy) {
-                try {
-                    callbackCopy(!frame.isException, frame);
-                } catch (...) {
-                    LOG_E("Exception in Modbus response callback");
-                }
-            }
-
-            endActiveTime();
-
-            // Track end of our transaction for cycle gap measurement
-            _lastTransactionEndMs = millis();
-            _hasLastTransactionEnd = true;
-
-        } else if (_waitingForResponse && _hasPendingRequest && frame.isValid && !frame.isRequest) {
-            // Debug: why didn't this match our request?
-            // Record mismatch for diagnostics
-            ResponseMismatch& m = _mismatchHistory[_mismatchIndex];
-            m.timestamp = millis();
-            m.expectedUnit = _currentRequest.unitId;
-            m.actualUnit = frame.unitId;
-            m.expectedFc = _currentRequest.functionCode;
-            m.actualFc = frame.functionCode;
-            m.byteCountMatch = byteCountMatches;
-            _mismatchIndex = (_mismatchIndex + 1) % MISMATCH_HISTORY_SIZE;
-            _mismatchCount++;
-            
-            LOG_W("RX mismatch: unit=%d/%d fc=%d/%d byteCount=%s",
-                  frame.unitId, _currentRequest.unitId,
-                  frame.functionCode, _currentRequest.functionCode,
-                  byteCountMatches ? "ok" : "MISMATCH");
-        } else {
-            // Foreign traffic (sniffed)
-            if (isRequest) {
-                // Some RS485 transceivers/UART setups echo our own transmitted bytes back into RX.
-                // If we are currently waiting for a response, and this request exactly matches
-                // the in-flight request, treat it as TX echo and do not feed it into the passive
-                // request/response tracking.
-                if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
-                    frame.unitId == _currentRequest.unitId &&
-                    ((frame.functionCode & 0x7F) == (_currentRequest.functionCode & 0x7F)) &&
-                    (frame.getStartRegister() == _currentRequest.startRegister) &&
-                    (frame.getQuantity() == _currentRequest.quantity)) {
-                    // Echo is typically immediate; still accept it regardless of exact timing.
-                    // We already keep _lastRequestPerUnit for our own requests in processQueue().
-                    // Do not count this as other traffic.
-                } else {
-                // FC3/FC4: track per-unit requests and register-map requestCount
-                uint8_t reqFc = frame.functionCode & 0x7F;
-                if (reqFc == FC3 || reqFc == FC4) {
-                    ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, reqFc);
-                    map.requestCount++;
-                    map.lastUpdate = millis();
-                }
-
-                _lastRequestPerUnit[frame.unitId] = frame;
-                _stats.otherRequestsSeen++;
-
-                // Bus pattern tracking: record request timing
-                recordBusPattern(frame);
-                
-                // Multi-master arbitration: mark that we saw a foreign request, 
-                // so we wait for its response before transmitting
-                _sawForeignRequest = true;
-                _foreignRequestTimeMs = millis();
-
-                // Close any open gap window — bus is active again
-                _gapWindowActive = false;
-                _ownTxInCurrentGap = 0;  // foreign master resumed → next TX needs full silence
-                
-                startActiveTime(false);
-                }
-            } else {
-                if (frame.isException) {
-                    _stats.otherExceptionsSeen++;
-                    _intervalStats.otherFailed++;
-                    
-                    // Foreign response received - clear the "waiting for response" flag
-                    _sawForeignRequest = false;
-
-                    // Pairing quality (best-effort): try to associate exception with a recent request
-                    // from the same unit and matching FC.
-                    {
-                        uint8_t exFc = frame.functionCode & 0x7F;
-                        bool paired = false;
-                        if (exFc == FC3 || exFc == FC4) {
-                            auto reqIt = _lastRequestPerUnit.find(frame.unitId);
-                            if (reqIt != _lastRequestPerUnit.end()) {
-                                const ModbusFrame& req = reqIt->second;
-                                if (req.isValid && ((req.functionCode & 0x7F) == exFc) && req.dataLen == 4) {
-                                    if ((frame.timestamp - req.timestamp) < 2000) {
-                                        paired = true;
-                                    }
-                                }
-                            }
-
-                            if (paired) {
-                                _stats.otherExceptionsPaired++;
-                            } else {
-                                _stats.otherExceptionsUnpaired++;
-                            }
-                        }
-                    }
-
-                    // FC3/FC4 exceptions: count as device/map errors
-                    uint8_t exFc = frame.functionCode & 0x7F;
-                    if (exFc == FC3 || exFc == FC4) {
-                        ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, exFc);
-                        map.responseCount++;
-                        map.errorCount++;
-                        map.lastUpdate = millis();
-                    }
-                } else {
-                    _stats.otherResponsesSeen++;
-                    _intervalStats.otherSuccess++;
-                    
-                    // Foreign response received - clear the "waiting for response" flag
-                    _sawForeignRequest = false;
-                }
-
-                if (!frame.isException) {
-                    auto reqIt = _lastRequestPerUnit.find(frame.unitId);
-                    bool updated = false;
-                    if (reqIt != _lastRequestPerUnit.end()) {
-                        const ModbusFrame& req = reqIt->second;
-                        if (req.isValid && ((req.functionCode & 0x7F) == (frame.functionCode & 0x7F)) && req.dataLen == 4) {
-                            if ((frame.timestamp - req.timestamp) < 2000) {
-                                updateRegisterMap(req, frame);
-                                updated = true;
-                                // Record observed transaction time (request start → response end)
-                                // = request TX + device turnaround + response TX
-                                uint32_t respEndMs = frame.timestamp + (uint32_t)((uint64_t)frameLen * _charTimeUs / 1000ULL);
-                                uint32_t rtt = (uint32_t)(respEndMs - req.timestamp);
-                                _busTransactionStats.record(rtt);
-
-                                // Remember last completed transaction for successor gap tracking
-                                uint16_t startReg = (req.data[0] << 8) | req.data[1];
-                                uint16_t qty      = (req.data[2] << 8) | req.data[3];
-                                _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
-                                _hasLastCompletedTx = true;
-
-                                // Keep _lastTransactionEndMs in sync with _lastCompletedTxKey.
-                                // Both must refer to the same transaction so that successor gap
-                                // and transition gap measurements are attributed correctly.
-                                // (Previously this was set unconditionally for all responses,
-                                // causing unpaired responses to desync the two values and pollute
-                                // the transition map with near-zero gap artefacts.)
-                                _lastTransactionEndMs = respEndMs;
-                                _hasLastTransactionEnd = true;
-                            }
-                        }
-                    }
-
-                    // If we couldn't map it (e.g., request not observed), still count the response.
-                    uint8_t respFc = frame.functionCode & 0x7F;
-                    if (!updated && (respFc == FC3 || respFc == FC4)) {
-                        ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, respFc);
-                        map.responseCount++;
-                        map.lastUpdate = millis();
-                    }
-
-                    // Pairing quality counters for FC3/FC4 responses
-                    {
-                        uint8_t respFc = frame.functionCode & 0x7F;
-                        if (respFc == FC3 || respFc == FC4) {
-                            if (updated) {
-                                _stats.otherResponsesPaired++;
-                            } else {
-                                _stats.otherResponsesUnpaired++;
-                            }
-                        }
-                    }
-
-                    // Open gap window for gap-aware TX scheduling.
-                    // Only open on PAIRED responses where we successfully matched
-                    // request→response — this ensures _lastCompletedTxKey accurately
-                    // reflects the just-completed transaction.  Unpaired responses
-                    // (where we missed the request, e.g., due to a bus collision)
-                    // would produce a stale predecessor key and wrong predictions.
-                    if (updated && _hasLastCompletedTx) {
-                        _gapWindowOpenMs = millis();
-                        _gapWindowActive = true;
-                        _gapWindowUsedMs = 0;
-                    }
-                }
-            }
-        }
-
-        if (_frameCallback) {
-            _frameCallback(frame, isRequest);
-        }
+        if (_frameCallback) _frameCallback(frame, isRequest);
 
         i += frameLen;
     }
 
-    // If there were leftover bytes that didn't form any frame, count as CRC/noise once.
     if ((i < _rxBuffer.size()) || (sawNoise && extractedCount == 0)) {
         _stats.crcErrors++;
     }
 
     (void)extractedCount;
-    _rxBuffer.clear();
-    return;
+    return i;
+}
+
+void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isRequest, size_t frameLen) {
+    bool isOurResponse = false;
+
+    const uint8_t expectedFc = _currentRequest.functionCode;
+    const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
+    const bool fcMatches = (frame.functionCode == expectedFc) ||
+                           (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
+
+    bool byteCountMatches = true;
+    static constexpr uint8_t FC3 = ModbusFC::READ_HOLDING_REGISTERS;
+    static constexpr uint8_t FC4 = ModbusFC::READ_INPUT_REGISTERS;
+    if (!frame.isException && (expectedFcBase == FC3 || expectedFcBase == FC4)) {
+        const size_t expectedBytes = (size_t)_currentRequest.quantity * 2;
+        const size_t actualBytes = frame.getByteCount();
+        byteCountMatches = (actualBytes == expectedBytes);
+    }
+
+    if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
+        !frame.isRequest && frame.unitId == _currentRequest.unitId &&
+        fcMatches && byteCountMatches) {
+        isOurResponse = true;
+        _waitingForResponse = false;
+
+        uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
+        _busTransactionStats.record(rtt);
+
+        _backoffByUnit.erase(frame.unitId);
+        _lastSuccessTime = millis();
+
+        if (!frame.isException) {
+            _stats.ownRequestsSuccess++;
+            _intervalStats.ownSuccess++;
+            _gapPredictor.stats().registersRead += _currentRequest.quantity;
+            if (_sentDuringGapWindow) {
+                _gapPredictor.stats().gapSufficient++;
+                if (_gapPredictor.stats().gapSufficient % GAP_RELAX_INTERVAL == 0 &&
+                    _gapPredictor.stats().safetyMargin > _gapPredictor.stats().minMargin) {
+                    float oldMargin = _gapPredictor.stats().safetyMargin;
+                    _gapPredictor.stats().safetyMargin = std::max(
+                        _gapPredictor.stats().minMargin,
+                        _gapPredictor.stats().safetyMargin - 0.01f);
+                    LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
+                          oldMargin * 100.0f, _gapPredictor.stats().safetyMargin * 100.0f,
+                          _gapPredictor.stats().gapSufficient);
+                }
+            }
+            _sentDuringGapWindow = false;
+        } else {
+            _stats.ownRequestsFailed++;
+            _intervalStats.ownFailed++;
+            _sentDuringGapWindow = false;
+            LOG_W("Modbus exception 0x%02X from unit %d", frame.exceptionCode, frame.unitId);
+        }
+
+        updateRegisterMap(_lastRequest, frame);
+
+        std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
+        if (_currentRequest.callback) callbackCopy = _currentRequest.callback;
+        _hasPendingRequest = false;
+
+        if (callbackCopy) {
+            try {
+                callbackCopy(!frame.isException, frame);
+            } catch (...) {
+                LOG_E("Exception in Modbus response callback");
+            }
+        }
+
+        endActiveTime();
+        _lastTransactionEndMs = millis();
+        _hasLastTransactionEnd = true;
+        return;
+    }
+
+    if (_waitingForResponse && _hasPendingRequest && frame.isValid && !frame.isRequest) {
+        ResponseMismatch& m = _mismatchHistory[_mismatchIndex];
+        m.timestamp = millis();
+        m.expectedUnit = _currentRequest.unitId;
+        m.actualUnit = frame.unitId;
+        m.expectedFc = _currentRequest.functionCode;
+        m.actualFc = frame.functionCode;
+        m.byteCountMatch = byteCountMatches;
+        _mismatchIndex = (_mismatchIndex + 1) % MISMATCH_HISTORY_SIZE;
+        _mismatchCount++;
+        LOG_W("RX mismatch: unit=%d/%d fc=%d/%d byteCount=%s",
+              frame.unitId, _currentRequest.unitId,
+              frame.functionCode, _currentRequest.functionCode,
+              byteCountMatches ? "ok" : "MISMATCH");
+        return;
+    }
+
+    // Foreign traffic handling
+    if (isRequest) {
+        if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
+            frame.unitId == _currentRequest.unitId &&
+            ((frame.functionCode & 0x7F) == (_currentRequest.functionCode & 0x7F)) &&
+            (frame.getStartRegister() == _currentRequest.startRegister) &&
+            (frame.getQuantity() == _currentRequest.quantity)) {
+            // Likely TX echo - ignore
+            return;
+        }
+
+        uint8_t reqFc = frame.functionCode & 0x7F;
+        if (reqFc == FC3 || reqFc == FC4) {
+            ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, reqFc);
+            map.requestCount++;
+            map.lastUpdate = millis();
+        }
+
+        _lastRequestPerUnit[frame.unitId] = frame;
+        _stats.otherRequestsSeen++;
+        recordBusPattern(frame);
+        _sawForeignRequest = true;
+        _foreignRequestTimeMs = millis();
+        _gapWindowActive = false;
+        _ownTxInCurrentGap = 0;
+        startActiveTime(false);
+        return;
+    }
+
+    // Response (foreign)
+    if (frame.isException) {
+        _stats.otherExceptionsSeen++;
+        _intervalStats.otherFailed++;
+        _sawForeignRequest = false;
+
+        uint8_t exFc = frame.functionCode & 0x7F;
+        bool paired = false;
+        if (exFc == FC3 || exFc == FC4) {
+            auto reqIt = _lastRequestPerUnit.find(frame.unitId);
+            if (reqIt != _lastRequestPerUnit.end()) {
+                const ModbusFrame& req = reqIt->second;
+                if (req.isValid && ((req.functionCode & 0x7F) == exFc) && req.dataLen == 4) {
+                    if ((frame.timestamp - req.timestamp) < 2000) paired = true;
+                }
+            }
+            if (paired) _stats.otherExceptionsPaired++; else _stats.otherExceptionsUnpaired++;
+        }
+
+        if (exFc == FC3 || exFc == FC4) {
+            ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, exFc);
+            map.responseCount++;
+            map.errorCount++;
+            map.lastUpdate = millis();
+        }
+        return;
+    }
+
+    // Non-exception response
+    _stats.otherResponsesSeen++;
+    _intervalStats.otherSuccess++;
+    _sawForeignRequest = false;
+
+    auto reqIt = _lastRequestPerUnit.find(frame.unitId);
+    bool updated = false;
+    if (reqIt != _lastRequestPerUnit.end()) {
+        const ModbusFrame& req = reqIt->second;
+        if (req.isValid && ((req.functionCode & 0x7F) == (frame.functionCode & 0x7F)) && req.dataLen == 4) {
+            if ((frame.timestamp - req.timestamp) < 2000) {
+                updateRegisterMap(req, frame);
+                updated = true;
+                uint32_t respEndMs = frame.timestamp + (uint32_t)((uint64_t)frameLen * _charTimeUs / 1000ULL);
+                uint32_t rtt = (uint32_t)(respEndMs - req.timestamp);
+                _busTransactionStats.record(rtt);
+
+                uint16_t startReg = (req.data[0] << 8) | req.data[1];
+                uint16_t qty      = (req.data[2] << 8) | req.data[3];
+                _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
+                _hasLastCompletedTx = true;
+                _lastTransactionEndMs = respEndMs;
+                _hasLastTransactionEnd = true;
+            }
+        }
+    }
+
+    uint8_t respFc = frame.functionCode & 0x7F;
+    if (!updated && (respFc == FC3 || respFc == FC4)) {
+        ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, respFc);
+        map.responseCount++;
+        map.lastUpdate = millis();
+    }
+
+    if (respFc == FC3 || respFc == FC4) {
+        if (updated) _stats.otherResponsesPaired++; else _stats.otherResponsesUnpaired++;
+    }
+
+    if (updated && _hasLastCompletedTx) {
+        _gapWindowOpenMs = millis();
+        _gapWindowActive = true;
+        _gapWindowUsedMs = 0;
+    }
 }
 
 ModbusRegisterMap& ModbusRTUFeature::ensureRegisterMap(uint8_t unitId, uint8_t functionCode) {
