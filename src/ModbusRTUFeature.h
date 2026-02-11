@@ -628,20 +628,6 @@ public:
     GapPrediction predictCurrentGap() const;
 
     /**
-     * @brief Check whether a TX of the given wire time can safely fit in the current gap.
-     *
-     * Unlike predictCurrentGap() (which returns one number), this method checks
-     * ALL successor edges.  A successor is "ruled out" when enough silence has
-     * elapsed that its request would have already arrived.  Among the remaining
-     * (non-ruled-out) successors, the TX is safe only if all of their
-     * conservative gaps still leave room for the full wire time.
-     *
-     * @param wireMs  Estimated wire time of the request + response
-     * @return true if it's safe to transmit now, false if we should defer
-     */
-    bool canSafelyTransmitInGap(uint32_t wireMs) const;
-
-    /**
      * @brief Estimate wire time for a Modbus read request+response.
      *
      * @param quantity Number of registers to read
@@ -650,23 +636,11 @@ public:
     uint32_t estimateWireTimeMs(uint16_t quantity) const;
 
     /**
-     * @brief Report a collision (foreign frame appeared during our TX window).
-     *
-     * Called from frame processing when we detect our TX was stepped on.
-     * Increases the dynamic safety margin.
-     */
-    void reportCollision();
-
-    /**
      * @brief Reset bus pattern tracking data
      */
     void resetBusPatterns();
 
-    /**
-     * @brief Record a request frame into bus pattern tracking
-     */
-    void recordBusPattern(const ModbusFrame& frame);
-
+    
     /**
      * @brief Record an inter-frame gap (in microseconds)
      */
@@ -698,6 +672,14 @@ private:
     void checkAndLogWarnings();
     void startActiveTime(bool isOwn);
     void endActiveTime();
+    // Internal: gap/prediction helpers (moved from public)
+    /**
+     * @brief Record a request frame into bus pattern tracking.
+     *
+     * Extracts pattern key from the `ModbusFrame` and updates per-pattern
+     * counts and successor-gap statistics (delegates to `GapPredictor`).
+     */
+    void recordBusPattern(const ModbusFrame& frame);
     
     static uint16_t makeMapKey(uint8_t unitId, uint8_t functionCode) {
         return (unitId << 8) | functionCode;

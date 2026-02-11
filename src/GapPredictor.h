@@ -78,6 +78,10 @@ public:
     // Check whether a TX of wireMs can safely transmit given elapsedMs since window open
     bool canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, uint32_t elapsedMs) const;
 
+    // Record a collision event (our TX was stepped on). Pass contextual info for logging.
+    void reportCollision(bool sentDuringGapWindow, uint32_t lastTxElapsedMs, uint32_t lastTxWireMs,
+                         bool hasLastCompletedTx, uint64_t lastCompletedTxKey);
+
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
     const GapSchedulerStats& stats() const { return _stats; }
     GapSchedulerStats& stats() { return _stats; }

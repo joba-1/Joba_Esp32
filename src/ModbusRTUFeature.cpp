@@ -475,7 +475,8 @@ void ModbusRTUFeature::loop() {
         // If we sent this request using gap prediction and it timed out,
         // it likely collided with the foreign master — increase safety margin
         if (_sentDuringGapWindow) {
-            reportCollision();
+            _gapPredictor.reportCollision(_sentDuringGapWindow, _lastTxElapsedMs, _lastTxWireMs,
+                                          _hasLastCompletedTx, _lastCompletedTxKey);
             _sentDuringGapWindow = false;
         }
 
@@ -1997,12 +1998,6 @@ GapPrediction ModbusRTUFeature::predictCurrentGap() const {
     return _gapPredictor.predictCurrentGap(_lastCompletedTxKey);
 }
 
-bool ModbusRTUFeature::canSafelyTransmitInGap(uint32_t wireMs) const {
-    if (!_hasLastCompletedTx || !_gapWindowActive) return false;
-    uint32_t elapsedMs = (uint32_t)(millis() - _gapWindowOpenMs);
-    return _gapPredictor.canSafelyTransmit(_lastCompletedTxKey, wireMs, elapsedMs);
-}
-
 uint32_t ModbusRTUFeature::estimateWireTimeMs(uint16_t quantity) const {
     // Request: 8 bytes (unit + FC + startReg_hi/lo + qty_hi/lo + CRC_lo/hi)
     // Response: 5 + 2*qty bytes (unit + FC + byteCount + data + CRC)
@@ -2013,40 +2008,7 @@ uint32_t ModbusRTUFeature::estimateWireTimeMs(uint16_t quantity) const {
     return wireMs;
 }
 
-void ModbusRTUFeature::reportCollision() {
-    _gapPredictor.stats().collisions++;
-    _gapPredictor.stats().gapInsufficient++;
-    _gapPredictor.stats().lastCollisionMs = millis();
-
-    // Log detailed context about the collision for diagnostics
-        LOG_W("COLLISION: sentInGap=%s txElapsed=%ums txWire=%ums globalMin=%ums",
-            _sentDuringGapWindow ? "yes" : "no", _lastTxElapsedMs, _lastTxWireMs,
-            _gapPredictor.getGlobalMinGapMs() != UINT32_MAX ? _gapPredictor.getGlobalMinGapMs() : 0);
-
-    if (_hasLastCompletedTx) {
-        auto const& transitions = _gapPredictor.getBusTransitions();
-        auto predIt = transitions.find(_lastCompletedTxKey);
-        if (predIt != transitions.end()) {
-            for (const auto& kv : predIt->second) {
-                const BusTransitionEntry& te = kv.second;
-                LOG_W("  successor gapMin=%u count=%u mean=%.0f",
-                      te.gapMin, te.count, te.count > 0 ? te.gapSum / te.count : 0.0);
-            }
-        }
-    }
-
-    // Increase safety margin by 5% on each collision, up to max
-    float oldMargin = _gapPredictor.stats().safetyMargin;
-    _gapPredictor.stats().safetyMargin = std::min(
-        _gapPredictor.stats().safetyMargin + 0.05f,
-        _gapPredictor.stats().maxMargin
-    );
-    if (_gapPredictor.stats().safetyMargin != oldMargin) {
-        _gapPredictor.stats().lastMarginAdjustMs = millis();
-        LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
-              oldMargin * 100, _gapPredictor.stats().safetyMargin * 100);
-    }
-}
+// reportCollision now handled by GapPredictor::reportCollision
 
 void ModbusRTUFeature::resetBusPatterns() {
     _busPatterns.clear();

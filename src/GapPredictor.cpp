@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <cmath>
 #include <algorithm>
+#include "LoggingFeature.h"
 
 GapPredictor::GapPredictor() {
     _stats.reset();
@@ -132,4 +133,34 @@ bool GapPredictor::canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, u
 
     if (!atLeastOneNotRuledOut) return false;
     return hasAnyEdge;
+}
+
+void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElapsedMs, uint32_t lastTxWireMs,
+                                   bool hasLastCompletedTx, uint64_t lastCompletedTxKey) {
+    _stats.collisions++;
+    _stats.gapInsufficient++;
+    _stats.lastCollisionMs = millis();
+
+    LOG_W("COLLISION: sentInGap=%s txElapsed=%ums txWire=%ums globalMin=%ums",
+          sentDuringGapWindow ? "yes" : "no", lastTxElapsedMs, lastTxWireMs,
+          _globalMinGapMs != UINT32_MAX ? _globalMinGapMs : 0);
+
+    if (hasLastCompletedTx) {
+        auto predIt = _busTransitions.find(lastCompletedTxKey);
+        if (predIt != _busTransitions.end()) {
+            for (const auto& kv : predIt->second) {
+                const BusTransitionEntry& te = kv.second;
+                LOG_W("  successor gapMin=%u count=%u mean=%.0f",
+                      te.gapMin, te.count, te.count > 0 ? te.gapSum / te.count : 0.0);
+            }
+        }
+    }
+
+    float oldMargin = _stats.safetyMargin;
+    _stats.safetyMargin = std::min(_stats.safetyMargin + 0.05f, _stats.maxMargin);
+    if (_stats.safetyMargin != oldMargin) {
+        _stats.lastMarginAdjustMs = millis();
+        LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
+              oldMargin * 100, _stats.safetyMargin * 100);
+    }
 }
