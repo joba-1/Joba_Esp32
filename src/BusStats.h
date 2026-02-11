@@ -6,6 +6,14 @@
 #include <limits>
 #include <Arduino.h>
 
+/**
+ * @brief Inter-frame gap histogram and statistics
+ *
+ * `BusGapStats` records the silence durations observed between consecutive
+ * frame boundaries (measured in microseconds at the byte-receive level).
+ * This captures all inter-frame silence including between unrelated devices
+ * and is used for gap-aware transmission scheduling.
+ */
 struct BusGapStats {
     static constexpr size_t NUM_BUCKETS = 12;
     static constexpr uint32_t kBoundariesUs[NUM_BUCKETS] = {
@@ -32,6 +40,12 @@ struct BusGapStats {
     void reset() { *this = BusGapStats{}; }
 };
 
+/**
+ * @brief Raw byte-level bus statistics
+ *
+ * `BusByteStats` tracks raw byte/frame counts and simple frame validity
+ * counters useful for diagnostics and estimating traffic volume.
+ */
 struct BusByteStats {
     uint32_t totalBytes{0};
     uint32_t totalFrameBoundaries{0};
@@ -47,6 +61,13 @@ struct BusByteStats {
     }
 };
 
+/**
+ * @brief Transaction duration statistics (request→response)
+ *
+ * `BusTransactionStats` aggregates round-trip durations (ms) for paired
+ * request→response transactions. This helps estimate minimum wire time
+ * required for our own requests to fit into observed gaps.
+ */
 struct BusTransactionStats {
     static constexpr size_t NUM_BUCKETS = 8;
     static constexpr uint32_t kBoundariesMs[NUM_BUCKETS] = {10,20,50,100,200,500,1000,UINT32_MAX};

@@ -6,7 +6,23 @@
 #include <cstdint>
 #include <limits>
 
-// --- Bus pattern types (moved here) ---
+/**
+ * @file BusPatternTracker.h
+ * @brief Track per-register polling patterns and detect polling cycles.
+ *
+ * `BusPatternTracker` maintains compact statistics for distinct register-range
+ * requests observed on the Modbus bus. Each `BusPatternEntry` aggregates
+ * occurrence counts and inter-arrival intervals; successor-gap statistics are
+ * recorded to enable transition-based gap prediction (GapPredictor consumes
+ * recorded transitions).
+ */
+
+/**
+ * @brief Statistics for a unique register-range polling pattern.
+ *
+ * Identified by unitId/functionCode/startRegister/quantity. Only aggregated
+ * statistics are kept (counts, sums, min/max) to keep memory usage bounded.
+ */
 struct BusPatternEntry {
     uint8_t  unitId;
     uint8_t  functionCode;
@@ -21,7 +37,8 @@ struct BusPatternEntry {
     uint32_t intervalMin{UINT32_MAX};
     uint32_t intervalMax{0};
 
-    // Successor gap stats
+    // Successor gap stats: gaps (ms) between this pattern's response and the
+    // subsequent request that follows it on the bus.
     uint32_t successorGapCount{0};
     double   successorGapSum{0};
     double   successorGapSumSq{0};
@@ -37,6 +54,9 @@ struct BusPatternEntry {
     }
 };
 
+/**
+ * @brief Compact identifier for a cycle step (used when a polling cycle is detected).
+ */
 struct BusCycleEntry {
     uint8_t  unitId;
     uint8_t  functionCode;
@@ -44,6 +64,9 @@ struct BusCycleEntry {
     uint16_t quantity;
 };
 
+/**
+ * @brief Per-step gap statistics for detected cycles.
+ */
 struct CycleStepStats {
     uint32_t count{0};
     double   sumMs{0};
@@ -65,6 +88,13 @@ struct ModbusFrame;
 
 using BusPatternMap = std::map<uint64_t, BusPatternEntry>;
 
+/**
+ * @brief Result returned when recording a frame.
+ *
+ * If a transition was observed (predecessor -> successor), `hasTransition`
+ * will be true and `predecessorKey`/`successorKey`/`gapMs` contain the
+ * relevant data to forward to `GapPredictor`.
+ */
 struct RecordResult {
     bool hasTransition{false};
     uint64_t predecessorKey{0};
@@ -72,6 +102,13 @@ struct RecordResult {
     uint32_t gapMs{0};
 };
 
+/**
+ * @brief Tracks observed register-range patterns and detects cycles.
+ *
+ * Usage: call `recordFrame()` for each request frame. The tracker updates
+ * per-pattern stats and may return a `RecordResult` containing a discovered
+ * transition to feed into `GapPredictor`.
+ */
 class BusPatternTracker {
 public:
     BusPatternTracker();

@@ -4,7 +4,18 @@
 #include <map>
 #include <cstdint>
 
-// Transition entry: statistics for gap between predecessor -> successor
+/**
+ * @file GapPredictor.h
+ * @brief Predict idle gaps and manage gap-aware TX scheduling statistics.
+ *
+ * `GapPredictor` aggregates per-transition gap statistics (predecessor ->
+ * successor) so the scheduler can conservatively estimate how many
+ * milliseconds are likely available after a foreign transaction completes.
+ */
+
+/**
+ * @brief Transition entry: statistics for gap between predecessor -> successor
+ */
 struct BusTransitionEntry {
     uint32_t count{0};
     double   gapSum{0};
@@ -23,6 +34,9 @@ struct BusTransitionEntry {
 
 using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntry>>;
 
+/**
+ * @brief Gap prediction result returned by `predictCurrentGap()`.
+ */
 struct GapPrediction {
     bool    valid{false};
     uint32_t predictedGapMs{0};
@@ -31,6 +45,13 @@ struct GapPrediction {
     uint32_t sampleCount{0};
 };
 
+/**
+ * @brief Runtime statistics for the gap scheduler.
+ *
+ * Tracks how often gap predictions were used, collisions observed and
+ * heuristic margins applied to stay conservative when scheduling TX during
+ * predicted gaps.
+ */
 struct GapSchedulerStats {
     uint32_t txInGap{0};
     uint32_t txFallback{0};
@@ -63,6 +84,16 @@ struct GapSchedulerStats {
     }
 };
 
+/**
+ * @brief Predicts gaps and provides safety checks for transmitting in a gap.
+ *
+ * The class stores per-transition histograms and exposes:
+ * - `recordTransition()` to feed observed predecessor->successor gaps,
+ * - `predictCurrentGap()` to get a conservative predicted gap for a given
+ *    predecessor, and
+ * - `canSafelyTransmit()` for a quick check whether a planned TX fits the
+ *    currently available budget.
+ */
 class GapPredictor {
 public:
     GapPredictor();

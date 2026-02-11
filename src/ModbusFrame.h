@@ -4,6 +4,15 @@
 #include <array>
 #include <cstdint>
 
+/**
+ * @brief A single Modbus RTU frame (request or response)
+ *
+ * Represents a parsed Modbus RTU frame captured from the bus. `data` contains
+ * the payload (excluding unit id, function code and CRC). `timestamp` records
+ * `millis()` at capture time (monotonic) and `unixTimestamp` stores epoch
+ * seconds when available. Helper accessors extract common fields used by
+ * pattern analysis and transaction matching.
+ */
 struct ModbusFrame {
     static constexpr size_t MAX_DATA_LEN = 252;
 

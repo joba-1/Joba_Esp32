@@ -26,7 +26,6 @@ namespace ModbusFC {
     constexpr uint8_t WRITE_MULTIPLE_REGISTERS = 0x10;
 }
 
-// ModbusFrame is defined in its own header.
 #include "ModbusFrame.h"
 
 /**
@@ -44,30 +43,7 @@ struct ModbusRegisterMap {
 
 #include "BusPatternTracker.h"
 
-/**
- * @brief Tracking entry for a specific register request pattern on the bus.
- *
- * Identified by unit+FC+startRegister+quantity.  Stores running statistics
- * (count, min/max/mean interval) without keeping individual timestamps, so
- * memory is O(distinct register ranges) regardless of collection duration.
- */
-// Bus pattern types are defined in BusPatternTracker.h
-
-/**
- * @brief Transition entry: from pattern A to pattern B, with gap statistics.
- *
- * Tracks both how often a transition occurs and the idle-bus gap (ms)
- * between the predecessor's response and the successor's request.
- * This enables per-transition TX window prediction.
- */
-// Gap prediction and scheduler types are provided by GapPredictor
-
-// Bus stats moved to BusStats.h
-
-/**
- * @brief Cycle entry for detected register polling sequence.
- */
-// Cycle types are defined in BusPatternTracker.h
+ 
 
 /**
  * @brief Pending Modbus request
@@ -492,7 +468,7 @@ private:
     void checkAndLogWarnings();
     void startActiveTime(bool isOwn);
     void endActiveTime();
-    // Internal: gap/prediction helpers (moved from public)
+    
     /**
      * @brief Record a request frame into bus pattern tracking.
      *
@@ -652,7 +628,7 @@ private:
 
     BusPatternTracker _patternTracker;
 
-    // Cycle/transaction tracking left in ModbusRTUFeature where timings come from
+    
     BusTransactionStats _busTransactionStats;  // request→response round-trip times
     unsigned long _lastTransactionEndMs{0};
     bool _hasLastTransactionEnd{false};
