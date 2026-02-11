@@ -631,144 +631,331 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
     size_t extractedCount = 0;
     bool sawNoise = false;
 
-    while (i + 4 <= _rxBuffer.size()) {
-        const uint8_t* p = _rxBuffer.data() + i;
-        size_t remaining = _rxBuffer.size() - i;
-
-        uint8_t unitId = p[0];
-        uint8_t fc = p[1];
-
-        if (unitId == 0 || unitId > MAX_RTU_UNIT_ID) {
-            sawNoise = true;
-            i++;
-            continue;
-        }
-
-        bool isRequest = false;
-        size_t frameLen = 0;
-        ModbusFrame frame;
-
-        enum class TryParseResult : uint8_t { Fail = 0, Valid = 1, CrcInvalid = 2 };
-        auto tryParseAtLen = [&](size_t len) -> TryParseResult {
-            if (remaining < len) return TryParseResult::Fail;
-            if (!parseFrame(p, len, frame)) return TryParseResult::Fail;
-            return frame.isValid ? TryParseResult::Valid : TryParseResult::CrcInvalid;
-        };
-
-        if ((fc == FC3_EX || fc == FC4_EX) && remaining >= 5) {
-            const TryParseResult r = tryParseAtLen(5);
-            if (r != TryParseResult::Fail && frame.isException) {
-                isRequest = false;
-                frameLen = 5;
-            }
-        }
-
-        if (frameLen == 0 && (fc == FC3 || fc == FC4)) {
-            if (remaining >= 8) {
-                const TryParseResult r = tryParseAtLen(8);
-                if (r != TryParseResult::Fail && !frame.isException && frame.dataLen == 4) {
-                    uint16_t qty = frame.getQuantity();
-                    if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                        isRequest = true;
-                        frameLen = 8;
-                    }
-                }
-            }
-
-            if (frameLen == 0 && remaining >= 5) {
-                uint8_t byteCount = p[2];
-                if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
-                    size_t respLen = (size_t)byteCount + 5;
-                    const TryParseResult r = tryParseAtLen(respLen);
-                    if (r != TryParseResult::Fail && !frame.isException) {
-                        const uint8_t inflightFc = (uint8_t)(_currentRequest.functionCode & 0x7F);
-                        if (_waitingForResponse && _hasPendingRequest && unitId == _currentRequest.unitId && inflightFc == fc) {
-                            const uint16_t qty = _currentRequest.quantity;
-                            if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                                if ((size_t)byteCount != (size_t)qty * 2) {
-                                    sawNoise = true;
-                                    i++;
-                                    continue;
-                                }
-                            }
-                        } else {
-                            auto reqIt = _lastRequestPerUnit.find(unitId);
-                            if (reqIt != _lastRequestPerUnit.end()) {
-                                const ModbusFrame& req = reqIt->second;
-                                uint8_t reqFc = req.functionCode & 0x7F;
-                                if (req.isValid && reqFc == fc && req.dataLen == 4) {
-                                    if ((frame.timestamp - req.timestamp) < 2000) {
-                                        uint16_t qty = req.getQuantity();
-                                        if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                                            if ((size_t)byteCount != (size_t)qty * 2) {
-                                                sawNoise = true;
-                                                i++;
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        isRequest = false;
-                        frameLen = respLen;
-                    }
-                }
-            }
-        }
-
-        if (frameLen == 0) {
-            sawNoise = true;
-            i++;
-            continue;
-        }
-
-        extractedCount++;
-
-        const uint32_t approxStartMs = _rxBufferStartMs + (uint32_t)((uint64_t)i * (uint64_t)_charTimeUs / 1000ULL);
-        frame.timestamp = approxStartMs;
-        frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
-        frame.isRequest = isRequest;
-
-        if (!frame.isValid) {
-            if (!_inResync) {
-                _stats.crcErrors++;
-                _busByteStats.invalidFrames++;
-                LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
-                      frame.unitId, frame.functionCode,
-                      formatFrameHex(frame).c_str());
-                _gapWindowActive = false;
-                _ownTxInCurrentGap = 0;
-            } else {
-                LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", frame.unitId, frame.functionCode);
-            }
-            recordFrameToHistory(frame);
-            if (_frameCallback) _frameCallback(frame, isRequest);
-            _inResync = true;
-            i++;
-            continue;
-        }
-
-        // CRC-valid frame
-        _inResync = false;
-        _stats.framesReceived++;
-        _busByteStats.validFrames++;
-        recordFrameToHistory(frame);
-
-        // Delegate detailed handling to helper
-        handleParsedFrame(frame, isRequest, frameLen);
-
-        if (_frameCallback) _frameCallback(frame, isRequest);
-
-        i += frameLen;
-    }
+    // Use scan-and-dispatch helper to keep main loop concise
+    size_t consumed = scanAndAdvanceIndex();
+    (void)consumed;
 
     if ((i < _rxBuffer.size()) || (sawNoise && extractedCount == 0)) {
         _stats.crcErrors++;
     }
 
     (void)extractedCount;
+    return _rxBuffer.size();
+}
+
+// Small parser helpers
+bool ModbusRTUFeature::tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& out) {
+    if (remaining < len) return false;
+    return parseFrame(p, len, out);
+}
+
+bool ModbusRTUFeature::determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, size_t& frameLen) {
+    isRequest = false;
+    frameLen = 0;
+    if (remaining < 4) return false;
+
+    uint8_t fc = p[1];
+    static constexpr uint8_t FC3 = ModbusFC::READ_HOLDING_REGISTERS;
+    static constexpr uint8_t FC4 = ModbusFC::READ_INPUT_REGISTERS;
+    static constexpr uint8_t FC3_EX = (uint8_t)(FC3 | 0x80);
+    static constexpr uint8_t FC4_EX = (uint8_t)(FC4 | 0x80);
+    static constexpr uint16_t MAX_REGS_PER_READ = 125;
+    static constexpr uint8_t MAX_BYTECOUNT = 250;
+
+    ModbusFrame tmp;
+
+    // Exceptions fixed length = 5
+    if ((fc == FC3_EX || fc == FC4_EX) && remaining >= 5) {
+        if (tryParseAtLen(p, remaining, 5, tmp) && tmp.isException) {
+            isRequest = false;
+            frameLen = 5;
+            return true;
+        }
+    }
+
+    if (fc == FC3 || fc == FC4) {
+        // Try request first (8 bytes)
+        if (remaining >= 8) {
+            if (tryParseAtLen(p, remaining, 8, tmp) && !tmp.isException && tmp.dataLen == 4) {
+                uint16_t qty = tmp.getQuantity();
+                if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
+                    isRequest = true;
+                    frameLen = 8;
+                    return true;
+                }
+            }
+        }
+        // Try response
+        if (remaining >= 5) {
+            uint8_t byteCount = p[2];
+            if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
+                size_t respLen = (size_t)byteCount + 5;
+                if (tryParseAtLen(p, remaining, respLen, tmp) && !tmp.isException) {
+                    isRequest = false;
+                    frameLen = respLen;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void ModbusRTUFeature::parseFrameAndComputeMetadata(size_t offset, size_t frameLen, ModbusFrame& frame, bool isRequest, uint32_t approxStartMs) {
+    // parseFrame expects pointer to start of frame
+    parseFrame(_rxBuffer.data() + offset, frameLen, frame);
+    frame.timestamp = approxStartMs;
+    frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
+    frame.isRequest = isRequest;
+}
+
+void ModbusRTUFeature::handleCrcInvalidFrame(const ModbusFrame& frame, bool resyncAllowed) {
+    if (!resyncAllowed) return;
+    if (!_inResync) {
+        _stats.crcErrors++;
+        _busByteStats.invalidFrames++;
+        LOG_W("RX Frame (CRC ERROR): Unit=%d, FC=0x%02X, Raw=%s",
+              frame.unitId, frame.functionCode, formatFrameHex(frame).c_str());
+        _gapWindowActive = false;
+        _ownTxInCurrentGap = 0;
+    } else {
+        LOG_V("RX resync attempt: Unit=%d, FC=0x%02X (not counted)", frame.unitId, frame.functionCode);
+    }
+    recordFrameToHistory(frame);
+    if (_frameCallback) _frameCallback(frame, frame.isRequest);
+    _inResync = true;
+}
+
+void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameLen) {
+    // matched our in-flight request
+    _waitingForResponse = false;
+    uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
+    _busTransactionStats.record(rtt);
+    _backoffByUnit.erase(frame.unitId);
+    _lastSuccessTime = millis();
+
+    if (!frame.isException) {
+        _stats.ownRequestsSuccess++;
+        _intervalStats.ownSuccess++;
+        _gapPredictor.stats().registersRead += _currentRequest.quantity;
+        if (_sentDuringGapWindow) {
+            _gapPredictor.stats().gapSufficient++;
+            if (_gapPredictor.stats().gapSufficient % GAP_RELAX_INTERVAL == 0 &&
+                _gapPredictor.stats().safetyMargin > _gapPredictor.stats().minMargin) {
+                float oldMargin = _gapPredictor.stats().safetyMargin;
+                _gapPredictor.stats().safetyMargin = std::max(
+                    _gapPredictor.stats().minMargin,
+                    _gapPredictor.stats().safetyMargin - 0.01f);
+                LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
+                      oldMargin * 100.0f, _gapPredictor.stats().safetyMargin * 100.0f,
+                      _gapPredictor.stats().gapSufficient);
+            }
+        }
+        _sentDuringGapWindow = false;
+    } else {
+        _stats.ownRequestsFailed++;
+        _intervalStats.ownFailed++;
+        _sentDuringGapWindow = false;
+        LOG_W("Modbus exception 0x%02X from unit %d", frame.exceptionCode, frame.unitId);
+    }
+
+    updateRegisterMap(_lastRequest, frame);
+
+    std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
+    if (_currentRequest.callback) callbackCopy = _currentRequest.callback;
+    _hasPendingRequest = false;
+    if (callbackCopy) {
+        try { callbackCopy(!frame.isException, frame); } catch (...) { LOG_E("Exception in Modbus response callback"); }
+    }
+    endActiveTime();
+    _lastTransactionEndMs = millis();
+    _hasLastTransactionEnd = true;
+}
+
+void ModbusRTUFeature::handleForeignRequest(const ModbusFrame& frame) {
+    // possible TX echo check
+    if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
+        frame.unitId == _currentRequest.unitId &&
+        ((frame.functionCode & 0x7F) == (_currentRequest.functionCode & 0x7F)) &&
+        (frame.getStartRegister() == _currentRequest.startRegister) &&
+        (frame.getQuantity() == _currentRequest.quantity)) {
+        // echo - ignore
+        return;
+    }
+
+    uint8_t reqFc = frame.functionCode & 0x7F;
+    if (reqFc == ModbusFC::READ_HOLDING_REGISTERS || reqFc == ModbusFC::READ_INPUT_REGISTERS) {
+        ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, reqFc);
+        map.requestCount++;
+        map.lastUpdate = millis();
+    }
+
+    _lastRequestPerUnit[frame.unitId] = frame;
+    _stats.otherRequestsSeen++;
+    recordBusPattern(frame);
+    _sawForeignRequest = true;
+    _foreignRequestTimeMs = millis();
+    _gapWindowActive = false;
+    _ownTxInCurrentGap = 0;
+    startActiveTime(false);
+}
+
+void ModbusRTUFeature::handleForeignResponse(const ModbusFrame& frame, size_t frameLen) {
+    if (frame.isException) {
+        _stats.otherExceptionsSeen++;
+        _intervalStats.otherFailed++;
+        _sawForeignRequest = false;
+
+        uint8_t exFc = frame.functionCode & 0x7F;
+        bool paired = false;
+        if (exFc == ModbusFC::READ_HOLDING_REGISTERS || exFc == ModbusFC::READ_INPUT_REGISTERS) {
+            auto reqIt = _lastRequestPerUnit.find(frame.unitId);
+            if (reqIt != _lastRequestPerUnit.end()) {
+                const ModbusFrame& req = reqIt->second;
+                if (req.isValid && ((req.functionCode & 0x7F) == exFc) && req.dataLen == 4) {
+                    if ((frame.timestamp - req.timestamp) < 2000) paired = true;
+                }
+            }
+            if (paired) _stats.otherExceptionsPaired++; else _stats.otherExceptionsUnpaired++;
+        }
+
+        if (exFc == ModbusFC::READ_HOLDING_REGISTERS || exFc == ModbusFC::READ_INPUT_REGISTERS) {
+            ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, exFc);
+            map.responseCount++;
+            map.errorCount++;
+            map.lastUpdate = millis();
+        }
+        return;
+    }
+
+    _stats.otherResponsesSeen++;
+    _intervalStats.otherSuccess++;
+    _sawForeignRequest = false;
+
+    auto reqIt = _lastRequestPerUnit.find(frame.unitId);
+    bool updated = false;
+    if (reqIt != _lastRequestPerUnit.end()) {
+        const ModbusFrame& req = reqIt->second;
+        if (req.isValid && ((req.functionCode & 0x7F) == (frame.functionCode & 0x7F)) && req.dataLen == 4) {
+            if ((frame.timestamp - req.timestamp) < 2000) {
+                updateRegisterMap(req, frame);
+                updated = true;
+                uint32_t respEndMs = frame.timestamp + (uint32_t)((uint64_t)frameLen * _charTimeUs / 1000ULL);
+                uint32_t rtt = (uint32_t)(respEndMs - req.timestamp);
+                _busTransactionStats.record(rtt);
+
+                uint16_t startReg = (req.data[0] << 8) | req.data[1];
+                uint16_t qty      = (req.data[2] << 8) | req.data[3];
+                _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
+                _hasLastCompletedTx = true;
+                _lastTransactionEndMs = respEndMs;
+                _hasLastTransactionEnd = true;
+            }
+        }
+    }
+
+    uint8_t respFc = frame.functionCode & 0x7F;
+    if (!updated && (respFc == ModbusFC::READ_HOLDING_REGISTERS || respFc == ModbusFC::READ_INPUT_REGISTERS)) {
+        ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, respFc);
+        map.responseCount++;
+        map.lastUpdate = millis();
+    }
+
+    if (respFc == ModbusFC::READ_HOLDING_REGISTERS || respFc == ModbusFC::READ_INPUT_REGISTERS) {
+        if (updated) _stats.otherResponsesPaired++; else _stats.otherResponsesUnpaired++;
+    }
+
+    if (updated && _hasLastCompletedTx) {
+        _gapWindowOpenMs = millis();
+        _gapWindowActive = true;
+        _gapWindowUsedMs = 0;
+    }
+}
+
+void ModbusRTUFeature::finishFrameProcessingAndNotify(const ModbusFrame& frame, bool isRequest) {
+    // record history and call frame callback
+    recordFrameToHistory(frame);
+    if (_frameCallback) _frameCallback(frame, isRequest);
+}
+
+size_t ModbusRTUFeature::scanAndAdvanceIndex() {
+    size_t i = 0;
+    size_t consumed = 0;
+    bool sawNoise = false;
+    size_t extractedCount = 0;
+
+    while (i + 4 <= _rxBuffer.size()) {
+        const uint8_t* p = _rxBuffer.data() + i;
+        size_t remaining = _rxBuffer.size() - i;
+
+        uint8_t unitId = p[0];
+        if (unitId == 0 || unitId > 247) { sawNoise = true; i++; continue; }
+
+        bool isRequest = false;
+        size_t frameLen = 0;
+        if (!determineFrameLength(p, remaining, isRequest, frameLen)) { sawNoise = true; i++; continue; }
+
+        const uint32_t approxStartMs = _rxBufferStartMs + (uint32_t)((uint64_t)i * (uint64_t)_charTimeUs / 1000ULL);
+        ModbusFrame frame;
+        parseFrameAndComputeMetadata(i, frameLen, frame, isRequest, approxStartMs);
+
+        // Record parsed frame into history (matches previous behavior)
+        recordFrameToHistory(frame);
+
+        if (!frame.isValid) {
+            handleCrcInvalidFrame(frame, true);
+            i++; // advance one to resync
+            continue;
+        }
+
+        // valid frame: update counters
+        _inResync = false;
+        _stats.framesReceived++;
+        _busByteStats.validFrames++;
+
+        // dispatch
+        if (_waitingForResponse && _hasPendingRequest && !frame.isRequest && frame.unitId == _currentRequest.unitId) {
+            // check matching
+            const uint8_t expectedFc = _currentRequest.functionCode;
+            const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
+            const bool fcMatches = (frame.functionCode == expectedFc) || (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
+            bool byteCountMatches = true;
+            if (!frame.isException && (expectedFcBase == ModbusFC::READ_HOLDING_REGISTERS || expectedFcBase == ModbusFC::READ_INPUT_REGISTERS)) {
+                byteCountMatches = (frame.getByteCount() == (size_t)_currentRequest.quantity * 2);
+            }
+            if (frame.isValid && fcMatches && byteCountMatches) {
+                handleOurResponse(frame, frameLen);
+            } else {
+                // mismatch
+                ResponseMismatch& m = _mismatchHistory[_mismatchIndex];
+                m.timestamp = millis();
+                m.expectedUnit = _currentRequest.unitId;
+                m.actualUnit = frame.unitId;
+                m.expectedFc = _currentRequest.functionCode;
+                m.actualFc = frame.functionCode;
+                m.byteCountMatch = byteCountMatches;
+                _mismatchIndex = (_mismatchIndex + 1) % MISMATCH_HISTORY_SIZE;
+                _mismatchCount++;
+                LOG_W("RX mismatch: unit=%d/%d fc=%d/%d byteCount=%s", frame.unitId, _currentRequest.unitId, frame.functionCode, _currentRequest.functionCode, byteCountMatches ? "ok" : "MISMATCH");
+            }
+            // Notify listeners
+            if (_frameCallback) _frameCallback(frame, isRequest);
+            i += frameLen; extractedCount++; continue;
+        }
+
+        if (frame.isRequest) {
+            handleForeignRequest(frame);
+            if (_frameCallback) _frameCallback(frame, isRequest);
+            i += frameLen; extractedCount++; continue;
+        }
+
+        // response from other device
+        handleForeignResponse(frame, frameLen);
+        if (_frameCallback) _frameCallback(frame, isRequest);
+        i += frameLen; extractedCount++; continue;
+    }
+
+    (void)sawNoise; (void)extractedCount;
     return i;
 }
 

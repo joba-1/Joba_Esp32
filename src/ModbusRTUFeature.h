@@ -457,6 +457,16 @@ private:
     // Helpers extracted from the large processReceivedData() function
     size_t extractFramesFromRxBuffer();
     void handleParsedFrame(const ModbusFrame& frame, bool isRequest, size_t frameLen);
+    // Further decomposition helpers (small, focused units)
+    bool tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& out);
+    bool determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, size_t& frameLen);
+    void parseFrameAndComputeMetadata(size_t offset, size_t frameLen, ModbusFrame& frame, bool isRequest, uint32_t approxStartMs);
+    void handleCrcInvalidFrame(const ModbusFrame& frame, bool resyncAllowed);
+    void handleOurResponse(const ModbusFrame& frame, size_t frameLen);
+    void handleForeignRequest(const ModbusFrame& frame);
+    void handleForeignResponse(const ModbusFrame& frame, size_t frameLen);
+    void finishFrameProcessingAndNotify(const ModbusFrame& frame, bool isRequest);
+    size_t scanAndAdvanceIndex();
     bool parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame);
     void recordFrameToHistory(const ModbusFrame& frame);
     void recordCrcErrorContext(const ModbusFrame& badFrame);
