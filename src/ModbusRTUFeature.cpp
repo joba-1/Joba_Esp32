@@ -1872,117 +1872,13 @@ void ModbusRTUFeature::onFrameBoundary(size_t bytesInBuffer) {
 }
 
 void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
-    if (!frame.isRequest || !frame.isValid) return;
-
-    uint8_t fc = frame.functionCode & 0x7F;
-    // Only track read requests (FC3/FC4) — they have standard 4-byte payload
-    if (fc != ModbusFC::READ_HOLDING_REGISTERS && fc != ModbusFC::READ_INPUT_REGISTERS) return;
-    if (frame.dataLen < 4) return;
-
-    uint16_t startReg = frame.getStartRegister();
-    uint16_t qty      = frame.getQuantity();
-    uint64_t key      = makeBusPatternKey(frame.unitId, fc, startReg, qty);
-
-    auto it = _busPatterns.find(key);
-    if (it == _busPatterns.end()) {
-        // Cap the number of patterns to prevent unbounded growth
-        if (_busPatterns.size() >= MAX_BUS_PATTERNS) {
-            return;  // Silently drop new patterns once at capacity
-        }
-        BusPatternEntry entry;
-        entry.unitId        = frame.unitId;
-        entry.functionCode  = fc;
-        entry.startRegister = startReg;
-        entry.quantity      = qty;
-        entry.count         = 1;
-        entry.firstSeenMs   = frame.timestamp;
-        entry.lastSeenMs    = frame.timestamp;
-        _busPatterns[key] = entry;
-    } else {
-        BusPatternEntry& e = it->second;
-        if (e.lastSeenMs != 0 && frame.timestamp > e.lastSeenMs) {
-            uint32_t interval = (uint32_t)(frame.timestamp - e.lastSeenMs);
-            e.intervalCount++;
-            e.intervalSum   += interval;
-            e.intervalSumSq += (double)interval * interval;
-            if (interval < e.intervalMin) e.intervalMin = interval;
-            if (interval > e.intervalMax) e.intervalMax = interval;
-        }
-        e.count++;
-        e.lastSeenMs = frame.timestamp;
-    }
-
-    // Record successor gap on the PREVIOUS completed transaction
-    // "After transaction X finished, the bus was idle for Y ms before this request"
-    //
-    // Filter: discard gaps shorter than the Modbus RTU inter-frame minimum (3.5 char times).
-    // When the ESP32 loop() is slower than the bus, multiple frames coalesce in the same
-    // RX buffer.  The frame timestamps are derived from byte-index × charTime, which treats
-    // coalesced frames as contiguous and collapses the inter-frame silence to ~0ms.
-    // These sub-minimum "gaps" are measurement artefacts, not real bus silences.
-    // Use 10ms floor: at 9600 baud an 8-byte request takes ~8ms, so any real gap
-    // must account for at least the inter-frame silence plus physical turnaround.
     const uint32_t minInterframeCalc = (uint32_t)(3.5 * _charTimeUs / 1000.0) + 1;
     const uint32_t minInterframeMs = (minInterframeCalc < 10) ? 10 : minInterframeCalc;
-    if (_hasLastCompletedTx && _hasLastTransactionEnd && frame.timestamp > _lastTransactionEndMs) {
-        uint32_t gapMs = (uint32_t)(frame.timestamp - _lastTransactionEndMs);
-        if (gapMs >= minInterframeMs) {
-            auto predIt = _busPatterns.find(_lastCompletedTxKey);
-            if (predIt != _busPatterns.end()) {
-                predIt->second.recordSuccessorGap(gapMs);
-            }
-            // Record transition with gap into GapPredictor (handles caps and global min)
-            _gapPredictor.recordTransition(_lastCompletedTxKey, key, gapMs);
-        }
-    }
 
-    // Record into cycle sequence ring buffer
-    _cycleSeq[_cycleSeqIndex] = key;
-    _cycleSeqIndex = (_cycleSeqIndex + 1) % CYCLE_SEQ_SIZE;
-    _cycleSeqCount++;
-
-    // Cycle position tracking for gap prediction
-    if (!_detectedCycle.empty()) {
-        if (_cycleTrackingPos < 0) {
-            // Try to sync: find this request in the cycle
-            for (size_t ci = 0; ci < _detectedCycle.size(); ci++) {
-                const BusCycleEntry& ce = _detectedCycle[ci];
-                if (ce.unitId == frame.unitId && ce.functionCode == fc &&
-                    ce.startRegister == startReg && ce.quantity == qty) {
-                    _cycleTrackingPos = (int)((ci + 1) % _detectedCycle.size());
-                    break;
-                }
-            }
-        } else {
-            size_t pos = (size_t)_cycleTrackingPos;
-            const BusCycleEntry& expected = _detectedCycle[pos];
-            uint64_t expectedKey = makeBusPatternKey(expected.unitId, expected.functionCode,
-                                                      expected.startRegister, expected.quantity);
-            if (expectedKey == key) {
-                // Match! Record gap since last transaction ended
-                if (_hasLastTransactionEnd && frame.timestamp > _lastTransactionEndMs) {
-                    uint32_t gapMs = (uint32_t)(frame.timestamp - _lastTransactionEndMs);
-                    if (gapMs >= minInterframeMs && pos < _cycleStepGaps.size()) {
-                        _cycleStepGaps[pos].record(gapMs);
-                    }
-                }
-                _cycleTrackingPos = (int)((pos + 1) % _detectedCycle.size());
-            } else {
-                // Mismatch — try to find in cycle and resync
-                bool found = false;
-                for (size_t search = 1; search < _detectedCycle.size(); search++) {
-                    size_t tryPos = (pos + search) % _detectedCycle.size();
-                    const BusCycleEntry& ce = _detectedCycle[tryPos];
-                    if (ce.unitId == frame.unitId && ce.functionCode == fc &&
-                        ce.startRegister == startReg && ce.quantity == qty) {
-                        _cycleTrackingPos = (int)((tryPos + 1) % _detectedCycle.size());
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) _cycleTrackingPos = -1;  // Lost sync
-            }
-        }
+    auto res = _patternTracker.recordFrame(frame, minInterframeMs,
+                                           _hasLastCompletedTx, _lastCompletedTxKey, _lastTransactionEndMs);
+    if (res.hasTransition) {
+        _gapPredictor.recordTransition(res.predecessorKey, res.successorKey, res.gapMs);
     }
 }
 
@@ -2011,15 +1907,14 @@ uint32_t ModbusRTUFeature::estimateWireTimeMs(uint16_t quantity) const {
 // reportCollision now handled by GapPredictor::reportCollision
 
 void ModbusRTUFeature::resetBusPatterns() {
-    _busPatterns.clear();
+    _patternTracker.reset();
     _busGapStats.reset();
     _busByteStats.reset();
     _busTransactionStats.reset();
     _hasLastFrameBoundary = false;
     _lastFrameBoundaryUs = 0;
-    _detectedCycle.clear();
-    _cycleStepGaps.clear();
-    _cycleTrackingPos = -1;
+    _lastTransactionEndMs = 0;
+    _hasLastTransactionEnd = false;
     _lastTransactionEndMs = 0;
     _hasLastTransactionEnd = false;
     _lastCompletedTxKey = 0;
@@ -2029,71 +1924,10 @@ void ModbusRTUFeature::resetBusPatterns() {
     _gapWindowBudgetMs = 0;
     _gapWindowUsedMs = 0;
     _sentDuringGapWindow = false;
-    _cycleSeqIndex = 0;
-    _cycleSeqCount = 0;
-    memset(_cycleSeq, 0, sizeof(_cycleSeq));
+    // cycle sequence reset performed inside pattern tracker
     LOG_I("Bus pattern tracking reset");
 }
 
 void ModbusRTUFeature::detectCycle() {
-    _detectedCycle.clear();
-
-    // Need at least some data
-    size_t available = (_cycleSeqCount < CYCLE_SEQ_SIZE) ? _cycleSeqCount : CYCLE_SEQ_SIZE;
-    if (available < 4) return;
-
-    // Build the sequence in chronological order (stack array, avoids heap allocation)
-    uint64_t seq[CYCLE_SEQ_SIZE];
-    if (_cycleSeqCount >= CYCLE_SEQ_SIZE) {
-        // Ring buffer wrapped — oldest is at _cycleSeqIndex
-        for (size_t i = 0; i < CYCLE_SEQ_SIZE; ++i) {
-            seq[i] = _cycleSeq[(_cycleSeqIndex + i) % CYCLE_SEQ_SIZE];
-        }
-    } else {
-        for (size_t i = 0; i < _cycleSeqCount; ++i) {
-            seq[i] = _cycleSeq[i];
-        }
-    }
-
-    // Try cycle lengths from 1 to available/2
-    size_t bestLen = 0;
-    size_t bestMatches = 0;
-    for (size_t tryLen = 1; tryLen <= available / 2 && tryLen <= 64; ++tryLen) {
-        size_t matches = 0;
-        for (size_t i = tryLen; i < available; ++i) {
-            if (seq[i] == seq[i % tryLen]) {
-                matches++;
-            }
-        }
-        // Require >80% match rate for a valid cycle
-        size_t compared = available - tryLen;
-        if (compared > 0 && matches * 100 / compared > 80) {
-            if (matches > bestMatches || (matches == bestMatches && tryLen < bestLen)) {
-                bestLen = tryLen;
-                bestMatches = matches;
-            }
-        }
-    }
-
-    if (bestLen > 0) {
-        _detectedCycle.reserve(bestLen);
-        for (size_t i = 0; i < bestLen; ++i) {
-            uint64_t k = seq[i];
-            BusCycleEntry ce;
-            ce.unitId        = (uint8_t)(k >> 40);
-            ce.functionCode  = (uint8_t)(k >> 32);
-            ce.startRegister = (uint16_t)(k >> 16);
-            ce.quantity      = (uint16_t)(k & 0xFFFF);
-            _detectedCycle.push_back(ce);
-        }
-        size_t compared = available - bestLen;
-        size_t matchPct = (compared > 0) ? (bestMatches * 100 / compared) : 0;
-        LOG_I("Bus cycle detected: length=%u, match=%u%% (%u/%u)",
-              (unsigned)bestLen, (unsigned)matchPct,
-              (unsigned)bestMatches, (unsigned)compared);
-
-        // Allocate per-step gap tracking and reset tracking position
-        _cycleStepGaps.assign(_detectedCycle.size(), CycleStepStats{});
-        _cycleTrackingPos = -1;  // Will sync on next matching request
-    }
+    _patternTracker.detectCycle();
 }

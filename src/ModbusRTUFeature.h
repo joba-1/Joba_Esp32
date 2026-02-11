@@ -79,6 +79,8 @@ struct ModbusRegisterMap {
     uint32_t errorCount;
 };
 
+#include "BusPatternTracker.h"
+
 /**
  * @brief Tracking entry for a specific register request pattern on the bus.
  *
@@ -86,38 +88,7 @@ struct ModbusRegisterMap {
  * (count, min/max/mean interval) without keeping individual timestamps, so
  * memory is O(distinct register ranges) regardless of collection duration.
  */
-struct BusPatternEntry {
-    uint8_t  unitId;
-    uint8_t  functionCode;
-    uint16_t startRegister;
-    uint16_t quantity;
-    uint32_t count{0};               // total requests seen
-    unsigned long firstSeenMs{0};
-    unsigned long lastSeenMs{0};
-    // Running interval statistics (between consecutive requests for same range)
-    uint32_t intervalCount{0};
-    double   intervalSum{0};
-    double   intervalSumSq{0};
-    uint32_t intervalMin{UINT32_MAX};
-    uint32_t intervalMax{0};
-
-    // --- Successor gap stats ---
-    // Gap (ms) between this transaction's response and the NEXT request on the bus.
-    // This answers: "how long is the bus idle after this register is polled?"
-    uint32_t successorGapCount{0};
-    double   successorGapSum{0};
-    double   successorGapSumSq{0};
-    uint32_t successorGapMin{UINT32_MAX};
-    uint32_t successorGapMax{0};
-
-    void recordSuccessorGap(uint32_t gapMs) {
-        ++successorGapCount;
-        successorGapSum += gapMs;
-        successorGapSumSq += (double)gapMs * gapMs;
-        if (gapMs < successorGapMin) successorGapMin = gapMs;
-        if (gapMs > successorGapMax) successorGapMax = gapMs;
-    }
-};
+// Bus pattern types are defined in BusPatternTracker.h
 
 /**
  * @brief Transition entry: from pattern A to pattern B, with gap statistics.
@@ -219,35 +190,7 @@ struct BusTransactionStats {
 /**
  * @brief Cycle entry for detected register polling sequence.
  */
-struct BusCycleEntry {
-    uint8_t  unitId;
-    uint8_t  functionCode;
-    uint16_t startRegister;
-    uint16_t quantity;
-};
-
-/**
- * @brief Per-step gap statistics for the detected polling cycle.
- *
- * For each step in the detected cycle, tracks the gap (idle time)
- * between the previous transaction ending and this step's request starting.
- * This enables predicting when large gaps will occur.
- */
-struct CycleStepStats {
-    uint32_t count{0};
-    double   sumMs{0};
-    double   sumSqMs{0};
-    uint32_t minMs{UINT32_MAX};
-    uint32_t maxMs{0};
-
-    void record(uint32_t gapMs) {
-        ++count;
-        sumMs += gapMs;
-        sumSqMs += (double)gapMs * gapMs;
-        if (gapMs < minMs) minMs = gapMs;
-        if (gapMs > maxMs) maxMs = gapMs;
-    }
-};
+// Cycle types are defined in BusPatternTracker.h
 
 /**
  * @brief Pending Modbus request
@@ -576,7 +519,7 @@ public:
     /**
      * @brief Get bus pattern entries (per register-range timing stats)
      */
-    const std::map<uint64_t, BusPatternEntry>& getBusPatterns() const { return _busPatterns; }
+    const std::map<uint64_t, BusPatternEntry>& getBusPatterns() const { return _patternTracker.getBusPatterns(); }
 
     /**
      * @brief Get inter-frame gap statistics (measured at byte level)
@@ -591,7 +534,7 @@ public:
     /**
      * @brief Get detected polling cycle (ordered register sequence)
      */
-    const std::vector<BusCycleEntry>& getDetectedCycle() const { return _detectedCycle; }
+    const std::vector<BusCycleEntry>& getDetectedCycle() const { return _patternTracker.getDetectedCycle(); }
 
     /**
      * @brief Get transaction time statistics (request→response duration)
@@ -601,12 +544,12 @@ public:
     /**
      * @brief Get per-step gap statistics for the detected cycle
      */
-    const std::vector<CycleStepStats>& getCycleStepGaps() const { return _cycleStepGaps; }
+    const std::vector<CycleStepStats>& getCycleStepGaps() const { return _patternTracker.getCycleStepGaps(); }
 
     /**
      * @brief Get current position in detected cycle (-1 = not synced)
      */
-    int getCycleTrackingPos() const { return _cycleTrackingPos; }
+    int getCycleTrackingPos() const { return _patternTracker.getCycleTrackingPos(); }
 
     /**
      * @brief Get transition map (predecessor -> successor -> count)
@@ -825,21 +768,15 @@ private:
     static uint64_t makeBusPatternKey(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty) {
         return ((uint64_t)unitId << 40) | ((uint64_t)fc << 32) | ((uint64_t)startReg << 16) | qty;
     }
-    static constexpr size_t MAX_BUS_PATTERNS = 64;
-    std::map<uint64_t, BusPatternEntry> _busPatterns;  // key -> entry
     BusGapStats _busGapStats;               // inter-frame gaps measured at byte level
     BusByteStats _busByteStats;             // raw byte-level diagnostics
     unsigned long _lastFrameBoundaryUs{0};  // micros() of last byte of previous frame chunk
     bool _hasLastFrameBoundary{false};
-    std::vector<BusCycleEntry> _detectedCycle;
-    // Cycle detection ring buffer: last N request keys in order
-    static constexpr size_t CYCLE_SEQ_SIZE = 128;
-    uint64_t _cycleSeq[CYCLE_SEQ_SIZE]{};
-    size_t _cycleSeqIndex{0};
-    size_t _cycleSeqCount{0};              // total entries written (capped display)
+
+    BusPatternTracker _patternTracker;
+
+    // Cycle/transaction tracking left in ModbusRTUFeature where timings come from
     BusTransactionStats _busTransactionStats;  // request→response round-trip times
-    std::vector<CycleStepStats> _cycleStepGaps;  // parallel to _detectedCycle
-    int _cycleTrackingPos{-1};                    // -1 = not synced to cycle
     unsigned long _lastTransactionEndMs{0};
     bool _hasLastTransactionEnd{false};
 
