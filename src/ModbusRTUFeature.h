@@ -10,6 +10,7 @@
 #include "Feature.h"
 #include "LoggingFeature.h"
 #include "GapPredictor.h"
+#include "BusStats.h"
 
 /**
  * @brief Modbus function codes
@@ -25,46 +26,8 @@ namespace ModbusFC {
     constexpr uint8_t WRITE_MULTIPLE_REGISTERS = 0x10;
 }
 
-/**
- * @brief A single Modbus RTU frame (request or response)
- */
-struct ModbusFrame {
-    static constexpr size_t MAX_DATA_LEN = 252;  // up to FC3/FC4 response payload (byteCount+data)
-
-    uint8_t unitId;
-    uint8_t functionCode;
-    std::array<uint8_t, MAX_DATA_LEN> data{};  // Payload without unit ID, FC, and CRC
-    uint16_t dataLen{0};
-    uint16_t crc;
-    unsigned long timestamp;         // millis() at capture time (monotonic)
-    uint32_t unixTimestamp;          // epoch seconds at capture time (0 if time invalid)
-    bool isRequest;                  // request vs response (best-effort)
-    bool isValid;                   // CRC check passed
-    bool isException;               // Exception response (FC | 0x80)
-    uint8_t exceptionCode;
-    
-    // For read requests: extract start register and quantity
-    uint16_t getStartRegister() const {
-        if (dataLen >= 2) return (data[0] << 8) | data[1];
-        return 0;
-    }
-    
-    uint16_t getQuantity() const {
-        if (dataLen >= 4) return (data[2] << 8) | data[3];
-        return 0;
-    }
-    
-    // For read responses: get register data
-    size_t getByteCount() const {
-        if (dataLen >= 1) return data[0];
-        return 0;
-    }
-    
-    const uint8_t* getRegisterData() const {
-        if (dataLen > 1) return &data[1];
-        return nullptr;
-    }
-};
+// ModbusFrame is defined in its own header.
+#include "ModbusFrame.h"
 
 /**
  * @brief Raw register data storage for a unit/function code combination
@@ -99,93 +62,7 @@ struct ModbusRegisterMap {
  */
 // Gap prediction and scheduler types are provided by GapPredictor
 
-/**
- * @brief Gap histogram: time between consecutive frame boundaries on the bus.
- *
- * A "gap" = silence between the last byte of frame N and the first byte of frame N+1,
- * measured in microseconds at the byte-receive level.  This captures ALL inter-frame
- * silences regardless of whether the flanking frames passed CRC.
- */
-struct BusGapStats {
-    static constexpr size_t NUM_BUCKETS = 12;
-    // Bucket boundaries in microseconds (us):
-    //  <1ms, 1-3ms, 3-5ms, 5-10ms, 10-20ms, 20-50ms, 50-100ms, 100-200ms, 200-500ms, 500ms-1s, 1-5s, >=5s
-    static constexpr uint32_t kBoundariesUs[NUM_BUCKETS] = {
-        1000, 3000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000, 5000000, UINT32_MAX
-    };
-    uint32_t buckets[NUM_BUCKETS]{};
-    uint32_t count{0};
-    double   sumUs{0};
-    double   sumSqUs{0};
-    uint32_t minUs{UINT32_MAX};
-    uint32_t maxUs{0};
-
-    void record(uint32_t gapUs) {
-        ++count;
-        sumUs += gapUs;
-        sumSqUs += (double)gapUs * gapUs;
-        if (gapUs < minUs) minUs = gapUs;
-        if (gapUs > maxUs) maxUs = gapUs;
-        for (size_t i = 0; i < NUM_BUCKETS; ++i) {
-            if (gapUs < kBoundariesUs[i]) { ++buckets[i]; break; }
-        }
-    }
-
-    void reset() { *this = BusGapStats{}; }
-};
-
-/**
- * @brief Raw byte-level bus statistics.
- */
-struct BusByteStats {
-    uint32_t totalBytes{0};
-    uint32_t totalFrameBoundaries{0};  // how many times processReceivedData() was called with data
-    uint32_t validFrames{0};
-    uint32_t invalidFrames{0};         // CRC or parse failures
-    unsigned long startMs{0};
-    unsigned long lastUpdateMs{0};
-
-    void reset() {
-        *this = BusByteStats{};
-        startMs = millis();
-        lastUpdateMs = startMs;
-    }
-};
-
-/**
- * @brief Transaction duration stats: time from request to response (measured in ms).
- *
- * Tracks round-trip times for paired request→response transactions on the bus.
- * This answers "how long does a transaction take?" which determines the minimum
- * inter-frame gap needed to fit our own requests.
- */
-struct BusTransactionStats {
-    static constexpr size_t NUM_BUCKETS = 8;
-    // Bucket boundaries in milliseconds:
-    //  <10ms, 10-20ms, 20-50ms, 50-100ms, 100-200ms, 200-500ms, 500ms-1s, >=1s
-    static constexpr uint32_t kBoundariesMs[NUM_BUCKETS] = {
-        10, 20, 50, 100, 200, 500, 1000, UINT32_MAX
-    };
-    uint32_t buckets[NUM_BUCKETS]{};
-    uint32_t count{0};
-    double   sumMs{0};
-    double   sumSqMs{0};
-    uint32_t minMs{UINT32_MAX};
-    uint32_t maxMs{0};
-
-    void record(uint32_t durationMs) {
-        ++count;
-        sumMs += durationMs;
-        sumSqMs += (double)durationMs * durationMs;
-        if (durationMs < minMs) minMs = durationMs;
-        if (durationMs > maxMs) maxMs = durationMs;
-        for (size_t i = 0; i < NUM_BUCKETS; ++i) {
-            if (durationMs < kBoundariesMs[i]) { ++buckets[i]; break; }
-        }
-    }
-
-    void reset() { *this = BusTransactionStats{}; }
-};
+// Bus stats moved to BusStats.h
 
 /**
  * @brief Cycle entry for detected register polling sequence.
