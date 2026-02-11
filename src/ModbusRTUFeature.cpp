@@ -342,7 +342,7 @@ void ModbusRTUFeature::setup() {
     }
     
     _busByteStats.reset();
-    _gapSchedulerStats.startMs = millis();
+    _gapPredictor.stats().startMs = millis();
     _ready = true;
 }
 
@@ -828,21 +828,21 @@ void ModbusRTUFeature::processReceivedData() {
                 _intervalStats.ownSuccess++;
 
                 // Count registers read on successful response
-                _gapSchedulerStats.registersRead += _currentRequest.quantity;
+                _gapPredictor.stats().registersRead += _currentRequest.quantity;
 
                 // Gap scheduler: successful TX during predicted gap
                 if (_sentDuringGapWindow) {
-                    _gapSchedulerStats.gapSufficient++;
+                    _gapPredictor.stats().gapSufficient++;
                     // Gradually relax safety margin after sustained success
-                    if (_gapSchedulerStats.gapSufficient % GAP_RELAX_INTERVAL == 0 &&
-                        _gapSchedulerStats.safetyMargin > _gapSchedulerStats.minMargin) {
-                        float oldMargin = _gapSchedulerStats.safetyMargin;
-                        _gapSchedulerStats.safetyMargin = std::max(
-                            _gapSchedulerStats.minMargin,
-                            _gapSchedulerStats.safetyMargin - 0.01f);
+                    if (_gapPredictor.stats().gapSufficient % GAP_RELAX_INTERVAL == 0 &&
+                        _gapPredictor.stats().safetyMargin > _gapPredictor.stats().minMargin) {
+                        float oldMargin = _gapPredictor.stats().safetyMargin;
+                        _gapPredictor.stats().safetyMargin = std::max(
+                            _gapPredictor.stats().minMargin,
+                            _gapPredictor.stats().safetyMargin - 0.01f);
                         LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
-                              oldMargin * 100.0f, _gapSchedulerStats.safetyMargin * 100.0f,
-                              _gapSchedulerStats.gapSufficient);
+                              oldMargin * 100.0f, _gapPredictor.stats().safetyMargin * 100.0f,
+                              _gapPredictor.stats().gapSufficient);
                     }
                 }
                 _sentDuringGapWindow = false;
@@ -1182,7 +1182,7 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
         // Find the best request to fit in this gap (smallest wire time first)
         // This is checked AFTER we select sendIndex below, but we pre-compute
         // the prediction here so the log message is accurate.
-        _gapSchedulerStats.predictionsUsed++;
+        _gapPredictor.stats().predictionsUsed++;
     }
 
     // Pick the best request to send.
@@ -1273,14 +1273,14 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
         uint32_t wireMs = estimateWireTimeMs(_requestQueue[sendIndex].quantity);
 
         if (actualSilenceMs < requiredSilenceMs) {
-            _gapSchedulerStats.txDeferred++;
+            _gapPredictor.stats().txDeferred++;
             return;
         }
 
         // Last-resort UART check: if bytes arrived between the silence
         // measurement above and now, a foreign frame is starting
         if (_serial.available() > 0) {
-            _gapSchedulerStats.txDeferred++;
+            _gapPredictor.stats().txDeferred++;
             LOG_V("TX deferred: UART RX bytes pending at decision point");
             return;
         }
@@ -1316,14 +1316,14 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
 
         // Gap scheduler stats
         uint32_t wireMs = estimateWireTimeMs(req.quantity);
-        _gapSchedulerStats.totalWireTimeMs += wireMs;
-        _gapSchedulerStats.lastTxMs = millis();
+        _gapPredictor.stats().totalWireTimeMs += wireMs;
+        _gapPredictor.stats().lastTxMs = millis();
         _sentDuringGapWindow = gap.valid;
         if (gap.valid) {
-            _gapSchedulerStats.txInGap++;
-            _gapSchedulerStats.predictionsUsed++;
+            _gapPredictor.stats().txInGap++;
+            _gapPredictor.stats().predictionsUsed++;
         } else {
-            _gapSchedulerStats.txFallback++;
+            _gapPredictor.stats().txFallback++;
         }
 
         // Track our own FC3/FC4 requests in the register map
@@ -1423,7 +1423,7 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
     int pending = _serial.available();
     if (pending > 0) {
         LOG_W("TX aborted: %d bytes pending in UART RX — foreign frame arriving", pending);
-        _gapSchedulerStats.txDeferred++;
+        _gapPredictor.stats().txDeferred++;
         return false;
     }
 
@@ -1930,24 +1930,8 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
             if (predIt != _busPatterns.end()) {
                 predIt->second.recordSuccessorGap(gapMs);
             }
-            // Record transition with gap: predecessor -> this request
-            // Cap outer map to MAX_BUS_PATTERNS predecessors
-            auto txIt = _busTransitions.find(_lastCompletedTxKey);
-            if (txIt != _busTransitions.end()) {
-                // Predecessor already tracked — cap inner map to MAX_BUS_PATTERNS successors
-                if (txIt->second.size() < MAX_BUS_PATTERNS || txIt->second.count(key)) {
-                    txIt->second[key].record(gapMs);
-                }
-            } else if (_busTransitions.size() < MAX_BUS_PATTERNS) {
-                _busTransitions[_lastCompletedTxKey][key].record(gapMs);
-            }
-
-            // Track global minimum gap across ALL transitions.
-            // Used as a floor in canSafelyTransmitInGap to protect against
-            // unobserved successor edges.
-            if (gapMs < _globalMinGapMs) {
-                _globalMinGapMs = gapMs;
-            }
+            // Record transition with gap into GapPredictor (handles caps and global min)
+            _gapPredictor.recordTransition(_lastCompletedTxKey, key, gapMs);
         }
     }
 
@@ -2008,157 +1992,15 @@ void ModbusRTUFeature::recordBusGap(uint32_t gapUs) {
 // ---- Gap-aware TX scheduling ----
 
 GapPrediction ModbusRTUFeature::predictCurrentGap() const {
-    GapPrediction result;
-
-    if (!_hasLastCompletedTx) return result;
-
-    auto predIt = _busTransitions.find(_lastCompletedTxKey);
-    if (predIt == _busTransitions.end()) return result;
-
-    const auto& successors = predIt->second;
-    if (successors.empty()) return result;
-
-    // Sum up total observations across all successors (only edges with ≥2 samples)
-    uint32_t totalSamples = 0;
-    uint32_t usableEdges = 0;
-    for (const auto& kv : successors) {
-        if (kv.second.count >= 2) {
-            totalSamples += kv.second.count;
-            usableEdges++;
-        }
-    }
-
-    if (totalSamples < GAP_MIN_SAMPLES || usableEdges == 0) return result;
-
-    // Most-likely successor prediction with gap confirmation.
-    //
-    // Two-phase approach for bimodal gap distributions:
-    //   1. Compute confirmationMs = min conservative across ALL successors.
-    //      Wait at least this long before transmitting.  If no foreign request
-    //      arrives within confirmationMs, the short-gap successors are ruled out.
-    //   2. Use the most-likely successor's conservative gap for the total
-    //      predicted gap (optimistic but safe after confirmation).
-    //
-    // This avoids both extremes: min-across-all (~10ms, too conservative) and
-    // most-likely-only (~300ms, causes collisions when rare successors occur).
-    const BusTransitionEntry* bestEdge = nullptr;
-    uint32_t bestCount = 0;
-    uint32_t hardMinObserved = UINT32_MAX;
-    uint32_t minConservativeAll = UINT32_MAX;  // confirmation threshold
-
-    for (const auto& kv : successors) {
-        const BusTransitionEntry& te = kv.second;
-        if (te.count < 2) continue;  // need at least 2 samples for stddev
-
-        double mean = te.gapSum / te.count;
-        double variance = (te.gapSumSq / te.count) - (mean * mean);
-        double stddev = (variance > 0) ? sqrt(variance) : 0;
-
-        // Conservative per-edge: mean - 1*stddev, floored at observed minimum
-        double conservative = mean - stddev;
-        if (conservative < (double)te.gapMin) conservative = (double)te.gapMin;
-        if (conservative < 0) conservative = 0;
-        uint32_t conservativeMs = (uint32_t)conservative;
-
-        if (conservativeMs < minConservativeAll) {
-            minConservativeAll = conservativeMs;
-        }
-
-        if (te.count > bestCount) {
-            bestCount = te.count;
-            bestEdge = &te;
-        }
-        if (te.gapMin < hardMinObserved) {
-            hardMinObserved = te.gapMin;
-        }
-    }
-
-    if (!bestEdge) return result;
-
-    double mean = bestEdge->gapSum / bestEdge->count;
-    double variance = (bestEdge->gapSumSq / bestEdge->count) - (mean * mean);
-    double stddev = (variance > 0) ? sqrt(variance) : 0;
-
-    // Conservative estimate for the most-likely (dominant) successor
-    double bestConservative = mean - stddev;
-    if (bestConservative < (double)bestEdge->gapMin) bestConservative = (double)bestEdge->gapMin;
-    if (bestConservative < 0) bestConservative = 0;
-
-    // Apply safety margin to the predicted gap
-    uint32_t predicted = (uint32_t)(bestConservative * (1.0 - (double)_gapSchedulerStats.safetyMargin));
-
-    // Confirmation threshold: wait at least this long to rule out short-gap
-    // successors.  Apply a small buffer (+2ms) to account for timing jitter.
-    uint32_t confirmation = (minConservativeAll != UINT32_MAX) ? (minConservativeAll + 2) : 0;
-
-    result.valid = true;
-    result.predictedGapMs = predicted;
-    result.confirmationMs = confirmation;
-    result.minObservedMs = hardMinObserved;
-    result.sampleCount = totalSamples;
-    return result;
+    // Delegate to GapPredictor using the last completed transaction key
+    if (!_hasLastCompletedTx) return GapPrediction{};
+    return _gapPredictor.predictCurrentGap(_lastCompletedTxKey);
 }
 
 bool ModbusRTUFeature::canSafelyTransmitInGap(uint32_t wireMs) const {
     if (!_hasLastCompletedTx || !_gapWindowActive) return false;
-
-    auto predIt = _busTransitions.find(_lastCompletedTxKey);
-    if (predIt == _busTransitions.end()) return false;
-
-    const auto& successors = predIt->second;
-    if (successors.empty()) return false;
-
     uint32_t elapsedMs = (uint32_t)(millis() - _gapWindowOpenMs);
-
-    // Global minimum gap floor: protect against UNOBSERVED successors.
-    // If ANY transition in the entire map has a gap as short as X ms,
-    // assume any predecessor could have a successor that fast.
-    // Don't transmit until elapsed exceeds the global minimum, ensuring
-    // that even an unseen fast-chain successor would have arrived by now.
-    if (_globalMinGapMs != UINT32_MAX && elapsedMs < _globalMinGapMs) {
-        return false;
-    }
-
-    // Fixed safety buffer for timing jitter (loop delay, processing, etc.)
-    static constexpr uint32_t FIXED_BUFFER_MS = 15;
-    uint32_t safeWireMs = wireMs + FIXED_BUFFER_MS;
-
-    // Check ALL successor edges (including count=1).
-    // Use gapMin for ruling out and for fit checking, but apply a
-    // count-based safety haircut: with few observations, the observed
-    // gapMin might not be the true minimum.  Shrink it proportionally:
-    //   effectiveMin = gapMin * count / (count + K)
-    // K=5: count=3 → 37.5%, count=10 → 66.7%, count=100 → 95.2%
-    static constexpr uint32_t CONFIDENCE_K = 5;
-
-    bool hasAnyEdge = false;
-    bool atLeastOneNotRuledOut = false;
-    for (const auto& kv : successors) {
-        const BusTransitionEntry& te = kv.second;
-        hasAnyEdge = true;
-
-        // Apply confidence haircut to gapMin for low-count edges.
-        uint32_t effectiveMin = (uint32_t)((uint64_t)te.gapMin * te.count / (te.count + CONFIDENCE_K));
-
-        // Rule out: elapsed exceeds gapMin — the successor would have
-        // already sent its request.  (Use raw gapMin for rule-out, since
-        // underestimating gapMin here is SAFE — it keeps edges in play longer.)
-        if (elapsedMs >= te.gapMin) continue;
-
-        atLeastOneNotRuledOut = true;
-
-        // Fit check: TX must complete before the effective minimum gap.
-        if (elapsedMs + safeWireMs > effectiveMin) {
-            return false;  // This successor could collide with our TX
-        }
-    }
-
-    // If ALL successors were ruled out, something is wrong — we should have
-    // seen a foreign request by now, but didn't (e.g., corrupted by a previous
-    // collision).  Don't transmit blindly; the gap state is likely stale.
-    if (!atLeastOneNotRuledOut) return false;
-
-    return hasAnyEdge;
+    return _gapPredictor.canSafelyTransmit(_lastCompletedTxKey, wireMs, elapsedMs);
 }
 
 uint32_t ModbusRTUFeature::estimateWireTimeMs(uint16_t quantity) const {
@@ -2172,18 +2014,19 @@ uint32_t ModbusRTUFeature::estimateWireTimeMs(uint16_t quantity) const {
 }
 
 void ModbusRTUFeature::reportCollision() {
-    _gapSchedulerStats.collisions++;
-    _gapSchedulerStats.gapInsufficient++;
-    _gapSchedulerStats.lastCollisionMs = millis();
+    _gapPredictor.stats().collisions++;
+    _gapPredictor.stats().gapInsufficient++;
+    _gapPredictor.stats().lastCollisionMs = millis();
 
     // Log detailed context about the collision for diagnostics
-    LOG_W("COLLISION: sentInGap=%s txElapsed=%ums txWire=%ums globalMin=%ums",
-          _sentDuringGapWindow ? "yes" : "no", _lastTxElapsedMs, _lastTxWireMs,
-          _globalMinGapMs != UINT32_MAX ? _globalMinGapMs : 0);
+        LOG_W("COLLISION: sentInGap=%s txElapsed=%ums txWire=%ums globalMin=%ums",
+            _sentDuringGapWindow ? "yes" : "no", _lastTxElapsedMs, _lastTxWireMs,
+            _gapPredictor.getGlobalMinGapMs() != UINT32_MAX ? _gapPredictor.getGlobalMinGapMs() : 0);
 
     if (_hasLastCompletedTx) {
-        auto predIt = _busTransitions.find(_lastCompletedTxKey);
-        if (predIt != _busTransitions.end()) {
+        auto const& transitions = _gapPredictor.getBusTransitions();
+        auto predIt = transitions.find(_lastCompletedTxKey);
+        if (predIt != transitions.end()) {
             for (const auto& kv : predIt->second) {
                 const BusTransitionEntry& te = kv.second;
                 LOG_W("  successor gapMin=%u count=%u mean=%.0f",
@@ -2193,15 +2036,15 @@ void ModbusRTUFeature::reportCollision() {
     }
 
     // Increase safety margin by 5% on each collision, up to max
-    float oldMargin = _gapSchedulerStats.safetyMargin;
-    _gapSchedulerStats.safetyMargin = std::min(
-        _gapSchedulerStats.safetyMargin + 0.05f,
-        _gapSchedulerStats.maxMargin
+    float oldMargin = _gapPredictor.stats().safetyMargin;
+    _gapPredictor.stats().safetyMargin = std::min(
+        _gapPredictor.stats().safetyMargin + 0.05f,
+        _gapPredictor.stats().maxMargin
     );
-    if (_gapSchedulerStats.safetyMargin != oldMargin) {
-        _gapSchedulerStats.lastMarginAdjustMs = millis();
+    if (_gapPredictor.stats().safetyMargin != oldMargin) {
+        _gapPredictor.stats().lastMarginAdjustMs = millis();
         LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
-              oldMargin * 100, _gapSchedulerStats.safetyMargin * 100);
+              oldMargin * 100, _gapPredictor.stats().safetyMargin * 100);
     }
 }
 
@@ -2219,9 +2062,7 @@ void ModbusRTUFeature::resetBusPatterns() {
     _hasLastTransactionEnd = false;
     _lastCompletedTxKey = 0;
     _hasLastCompletedTx = false;
-    _globalMinGapMs = UINT32_MAX;
-    _busTransitions.clear();
-    _gapSchedulerStats.reset();
+    _gapPredictor.reset();
     _gapWindowActive = false;
     _gapWindowBudgetMs = 0;
     _gapWindowUsedMs = 0;

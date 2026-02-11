@@ -9,6 +9,7 @@
 #include <functional>
 #include "Feature.h"
 #include "LoggingFeature.h"
+#include "GapPredictor.h"
 
 /**
  * @brief Modbus function codes
@@ -125,98 +126,7 @@ struct BusPatternEntry {
  * between the predecessor's response and the successor's request.
  * This enables per-transition TX window prediction.
  */
-struct BusTransitionEntry {
-    uint32_t count{0};
-    double   gapSum{0};
-    double   gapSumSq{0};
-    uint32_t gapMin{UINT32_MAX};
-    uint32_t gapMax{0};
-
-    void record(uint32_t gapMs) {
-        ++count;
-        gapSum += gapMs;
-        gapSumSq += (double)gapMs * gapMs;
-        if (gapMs < gapMin) gapMin = gapMs;
-        if (gapMs > gapMax) gapMax = gapMs;
-    }
-};
-
-/**
- * @brief Transition map: predecessor key -> (successor key -> transition entry).
- *
- * This creates a weighted Markov chain for the bus polling sequence,
- * where each edge has gap statistics for TX window prediction.
- */
-using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntry>>;
-
-// ---- Gap-aware TX scheduling ----
-
-/**
- * @brief Predicted gap window after observing a foreign transaction.
- *
- * When we see a foreign response complete, we look up the predecessor in the
- * transition map and compute how much idle time is available before the likely
- * next foreign request.  The TX scheduler uses this to decide whether to send
- * our own request(s) into the gap.
- */
-struct GapPrediction {
-    bool    valid{false};          // true if we have enough data to predict
-    uint32_t predictedGapMs{0};   // most-likely successor gap: conservative(best_edge) * (1 - margin)
-    uint32_t confirmationMs{0};   // wait at least this long before transmitting to rule out short-gap successors
-    uint32_t minObservedMs{0};    // hard minimum ever observed across all successor edges
-    uint32_t sampleCount{0};      // total successor observations for this predecessor
-};
-
-/**
- * @brief Statistics for the gap-aware TX scheduler.
- *
- * Tracks prediction accuracy, collision count, and the dynamic safety margin.
- * Exposed via /api/modbus/gap-scheduler for monitoring.
- */
-struct GapSchedulerStats {
-    // TX decisions
-    uint32_t txInGap{0};          // sent into a predicted gap
-    uint32_t txFallback{0};       // sent via silence-based fallback (no prediction)
-    uint32_t txDeferred{0};       // had request ready but gap too small — deferred
-
-    // Prediction quality
-    uint32_t predictionsUsed{0};  // times we used a gap prediction
-    uint32_t gapSufficient{0};    // prediction said OK and subsequent TX succeeded
-    uint32_t gapInsufficient{0};  // prediction said OK but we got a collision/timeout
-    uint32_t gapSkippedSmall{0};  // prediction said gap too small, skipped
-
-    // Collisions: we sent into a gap and a foreign frame appeared before our response
-    uint32_t collisions{0};
-
-    // Dynamic margin
-    float    safetyMargin{0.20f}; // current margin (starts at 20%, adapts)
-    float    initialMargin{0.20f};
-    float    maxMargin{0.60f};
-    float    minMargin{0.10f};
-
-    // Wire time budget
-    uint32_t totalWireTimeMs{0};  // cumulative wire time of our TX
-
-    // Registers read successfully via our own requests
-    uint32_t registersRead{0};
-
-    // Timing
-    unsigned long lastTxMs{0};
-    unsigned long lastCollisionMs{0};
-    unsigned long lastMarginAdjustMs{0};
-    unsigned long startMs{0};           // millis() when stats began (for regs/sec)
-
-    void reset() {
-        txInGap = txFallback = txDeferred = 0;
-        predictionsUsed = gapSufficient = gapInsufficient = gapSkippedSmall = 0;
-        collisions = 0;
-        safetyMargin = initialMargin;
-        totalWireTimeMs = 0;
-        registersRead = 0;
-        lastTxMs = lastCollisionMs = lastMarginAdjustMs = 0;
-        startMs = millis();
-    }
-};
+// Gap prediction and scheduler types are provided by GapPredictor
 
 /**
  * @brief Gap histogram: time between consecutive frame boundaries on the bus.
@@ -701,13 +611,13 @@ public:
     /**
      * @brief Get transition map (predecessor -> successor -> count)
      */
-    const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
-    uint32_t getGlobalMinGapMs() const { return _globalMinGapMs; }
+    const BusTransitionMap& getBusTransitions() const { return _gapPredictor.getBusTransitions(); }
+    uint32_t getGlobalMinGapMs() const { return _gapPredictor.getGlobalMinGapMs(); }
 
     /**
      * @brief Get gap scheduler stats for monitoring
      */
-    const GapSchedulerStats& getGapSchedulerStats() const { return _gapSchedulerStats; }
+    const GapSchedulerStats& getGapSchedulerStats() const { return _gapPredictor.stats(); }
 
     /**
      * @brief Predict the available gap after the most recently completed foreign transaction.
@@ -952,13 +862,11 @@ private:
     bool _hasLastTransactionEnd{false};
 
     // Successor gap + transition tracking (capped: MAX_BUS_PATTERNS outer keys)
-    BusTransitionMap _busTransitions;    // predecessor key -> successor key -> count
+    GapPredictor _gapPredictor;
     uint64_t _lastCompletedTxKey{0};     // pattern key of the last completed (request→response) transaction
     bool _hasLastCompletedTx{false};     // true once first transaction is completed
-    uint32_t _globalMinGapMs{UINT32_MAX}; // minimum gap observed across ALL transitions
-
     // Gap-aware TX scheduler state
-    GapSchedulerStats _gapSchedulerStats;
+    // scheduler stats are available via `_gapPredictor.stats()`
     unsigned long _gapWindowOpenMs{0};   // millis() when the current gap window opened
     bool _gapWindowActive{false};        // true if we're in a predicted gap window
     uint32_t _gapWindowBudgetMs{0};      // predicted available ms in this window
