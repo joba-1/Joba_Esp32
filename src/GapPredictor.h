@@ -98,6 +98,9 @@ class GapPredictor {
 public:
     GapPredictor();
 
+    static constexpr float COLLISION_MARGIN_STEP = 0.01f;  // +1%
+    static constexpr float SUCCESS_MARGIN_STEP = 0.00125f; // -0.125% per success (8 successes = -1%)
+
     void reset();
 
     // Record a transition (predecessor -> successor) observed with gapMs
@@ -114,7 +117,7 @@ public:
                          bool hasLastCompletedTx, uint64_t lastCompletedTxKey);
 
     // Record a successful gap TX to relax safety margin over time.
-    void noteGapSuccess(uint32_t relaxInterval, float relaxStep);
+    void noteGapSuccess();
 
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
     const GapSchedulerStats& stats() const { return _stats; }

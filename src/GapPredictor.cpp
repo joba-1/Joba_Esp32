@@ -157,7 +157,7 @@ void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElap
     }
 
     float oldMargin = _stats.safetyMargin;
-    _stats.safetyMargin = std::min(_stats.safetyMargin + 0.05f, _stats.maxMargin);
+    _stats.safetyMargin = std::min(_stats.safetyMargin + COLLISION_MARGIN_STEP, _stats.maxMargin);
     if (_stats.safetyMargin != oldMargin) {
         _stats.lastMarginAdjustMs = millis();
         LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
@@ -165,16 +165,14 @@ void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElap
     }
 }
 
-void GapPredictor::noteGapSuccess(uint32_t relaxInterval, float relaxStep) {
+void GapPredictor::noteGapSuccess() {
     _stats.gapSufficient++;
 
-    if (relaxInterval == 0) return;
-    if (_stats.gapSufficient % relaxInterval != 0) return;
     if (_stats.safetyMargin <= _stats.minMargin) return;
 
     float oldMargin = _stats.safetyMargin;
-    _stats.safetyMargin = std::max(_stats.minMargin, _stats.safetyMargin - relaxStep);
-    if (_stats.safetyMargin != oldMargin) {
+    _stats.safetyMargin = std::max(_stats.minMargin, _stats.safetyMargin - SUCCESS_MARGIN_STEP);
+    if ((oldMargin - _stats.safetyMargin) >= COLLISION_MARGIN_STEP) {
         LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
               oldMargin * 100.0f, _stats.safetyMargin * 100.0f,
               _stats.gapSufficient);

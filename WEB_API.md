@@ -321,7 +321,7 @@ curl --digest -u admin:<password> http://<device-ip>/api/modbus/gap-scheduler | 
 | `prediction.insufficient` | Predictions that led to a collision/timeout |
 | `collisions.count` | Total detected collisions (timeout during gap window) |
 | `collisions.rate` | Collision rate as percentage of gap TX |
-| `margin.current` | Current dynamic safety margin (starts 20%, +5% per collision, −1% per 50 successes) |
+| `margin.current` | Current dynamic safety margin (starts 20%, +1% per collision, −0.125% per success) |
 | `margin.min` / `margin.max` | Allowed margin range (10%–60%) |
 | `currentGap.valid` | Whether a gap prediction is currently available |
 | `currentGap.predictedMs` | Conservative predicted gap in ms (if valid) |

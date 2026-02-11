@@ -1202,8 +1202,8 @@ The safety margin adapts based on observed outcomes:
 
 | Event | Margin change | Bounds |
 |-------|---------------|--------|
-| Collision detected (timeout during gap window) | +5% | max 60% |
-| Every 50 consecutive successful gap TXes | −1% | min 10% |
+| Collision detected (timeout during gap window) | +1% | max 60% |
+| Each successful gap TX | −0.125% | min 10% |
 
 Starting margin: 20%.
 

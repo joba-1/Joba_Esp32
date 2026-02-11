@@ -662,7 +662,6 @@ private:
     uint32_t _lastTxWireMs{0};            // estimated wire time at TX time
     static constexpr uint32_t GAP_MIN_SAMPLES = 10;  // minimum transition samples before trusting prediction
     static constexpr uint32_t GAP_MIN_USABLE_MS = 20; // minimum usable gap to attempt TX
-    static constexpr uint32_t GAP_RELAX_INTERVAL = 50; // relax margin after this many successful gap TXes
 
 public:
     /**

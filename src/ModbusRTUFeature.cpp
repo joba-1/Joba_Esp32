@@ -747,7 +747,7 @@ void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameL
         _intervalStats.ownSuccess++;
         _gapPredictor.stats().registersRead += _currentRequest.quantity;
         if (_sentDuringGapWindow) {
-                _gapPredictor.noteGapSuccess(GAP_RELAX_INTERVAL, 0.01f);
+                    _gapPredictor.noteGapSuccess();
         }
         _sentDuringGapWindow = false;
     } else {
@@ -992,7 +992,7 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
             _intervalStats.ownSuccess++;
             _gapPredictor.stats().registersRead += _currentRequest.quantity;
             if (_sentDuringGapWindow) {
-                _gapPredictor.noteGapSuccess(GAP_RELAX_INTERVAL, 0.01f);
+                        _gapPredictor.noteGapSuccess();
             }
             _sentDuringGapWindow = false;
         } else {
