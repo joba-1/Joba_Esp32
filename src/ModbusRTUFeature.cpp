@@ -449,21 +449,44 @@ void ModbusRTUFeature::loop() {
     // Check for response timeout
     if (_waitingForResponse && (nowMs - _requestSentTime) > _responseTimeoutMs) {
         _stats.timeouts++;
-        _stats.ownRequestsFailed++;
-        _intervalStats.ownFailed++;
         
         // Throttle individual timeout messages - log at most once per 5 seconds per unit
         // This prevents timeout spam while still providing visibility
         uint16_t unitKey = _lastRequest.unitId;
         unsigned long lastLog = _lastTimeoutPerUnit[unitKey];
         if ((nowMs - lastLog) >= 5000) {  // 5 second throttle per unit
-            LOG_W("Modbus response timeout for unit %d FC 0x%02X reg %d qty %d",
+            LOG_W("Modbus response timeout for unit %d FC 0x%02X reg %d qty %d (retries: %d)",
                   _lastRequest.unitId, _lastRequest.functionCode,
-                  _lastRequest.getStartRegister(), _lastRequest.getQuantity());
+                  _lastRequest.getStartRegister(), _lastRequest.getQuantity(),
+                  _currentRequest.retries);
             _lastTimeoutPerUnit[unitKey] = nowMs;
         }
         
-        // Track consecutive timeouts per unit to trigger backoff (do not globally pause other units).
+        // If we sent this request using gap prediction and it timed out,
+        // it likely collided with the foreign master — increase safety margin
+        if (_sentDuringGapWindow) {
+            _gapPredictor.reportCollision(_sentDuringGapWindow, _lastTxElapsedMs, _lastTxWireMs,
+                                          _hasLastCompletedTx, _lastCompletedTxKey);
+            _sentDuringGapWindow = false;
+        }
+
+        // Re-queue on first timeout (retries == 0) instead of immediately failing
+        if (_currentRequest.retries == 0) {
+            LOG_I("Modbus timeout: re-queuing request (unit %d FC 0x%02X retry 1/1)",
+                  _currentRequest.unitId, _currentRequest.functionCode);
+            _currentRequest.retries = 1;
+            _requestQueue.insert(_requestQueue.begin(), _currentRequest);  // Insert at front for immediate retry
+            _waitingForResponse = false;
+            _hasPendingRequest = false;
+            endActiveTime();
+            return;  // Don't call callback yet, let retry happen
+        }
+
+        // Second timeout (retries == 1): now actually fail and trigger callback
+        _stats.ownRequestsFailed++;
+        _intervalStats.ownFailed++;
+        
+        // Track consecutive timeouts per unit to trigger backoff
         const uint8_t unitId = _currentRequest.unitId;
         TimeoutBackoffState& st = _backoffByUnit[unitId];
         st.consecutiveTimeouts++;
@@ -478,19 +501,10 @@ void ModbusRTUFeature::loop() {
             }
         }
         
-        // Invoke callback on timeout so callers (e.g. tracked raw reads) know the request failed.
-        // Copy callback before clearing state to avoid use-after-clear.
+        // Invoke callback on final timeout so callers know the request failed.
         std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
         if (_currentRequest.callback) {
             callbackCopy = _currentRequest.callback;
-        }
-        
-        // If we sent this request using gap prediction and it timed out,
-        // it likely collided with the foreign master — increase safety margin
-        if (_sentDuringGapWindow) {
-            _gapPredictor.reportCollision(_sentDuringGapWindow, _lastTxElapsedMs, _lastTxWireMs,
-                                          _hasLastCompletedTx, _lastCompletedTxKey);
-            _sentDuringGapWindow = false;
         }
 
         _waitingForResponse = false;
@@ -982,7 +996,18 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
     if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
         !frame.isRequest && frame.unitId == _currentRequest.unitId &&
         fcMatches && byteCountMatches) {
-        isOurResponse = true;
+        // Check strict response timing window to avoid accepting delayed foreign responses
+        uint32_t elapsedMs = (uint32_t)(millis() - _requestSentTime);
+        if (elapsedMs < RESPONSE_MIN_WINDOW_MS || elapsedMs > RESPONSE_MAX_WINDOW_MS) {
+            LOG_W("RX response outside strict window: unit=%d elapsed=%ums (min=%u max=%u)",
+                  frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, RESPONSE_MAX_WINDOW_MS);
+            // Treat as mismatch, don't accept
+        } else {
+            isOurResponse = true;
+        }
+    }
+
+    if (isOurResponse) {
         _waitingForResponse = false;
 
         uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
