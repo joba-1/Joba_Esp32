@@ -947,7 +947,28 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                 byteCountMatches = (frame.getByteCount() == (size_t)_currentRequest.quantity * 2);
             }
             if (frame.isValid && fcMatches && byteCountMatches) {
-                handleOurResponse(frame, frameLen);
+                // Enforce strict timing window before accepting response
+                uint32_t elapsedMs = (uint32_t)(millis() - _requestSentTime);
+                if (elapsedMs < RESPONSE_MIN_WINDOW_MS || elapsedMs > RESPONSE_MAX_WINDOW_MS) {
+                    // Outside allowed window - treat as mismatch and log details
+                    LOG_W("RX response outside strict window: unit=%d elapsed=%ums (min=%u max=%u) req=unit:%u fc:0x%02X reg:%u qty:%u resp=%s",
+                          frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, RESPONSE_MAX_WINDOW_MS,
+                          _currentRequest.unitId, _currentRequest.functionCode,
+                          _currentRequest.startRegister, _currentRequest.quantity,
+                          formatFrameHex(frame).c_str());
+                    // Record mismatch
+                    ResponseMismatch& m = _mismatchHistory[_mismatchIndex];
+                    m.timestamp = millis();
+                    m.expectedUnit = _currentRequest.unitId;
+                    m.actualUnit = frame.unitId;
+                    m.expectedFc = _currentRequest.functionCode;
+                    m.actualFc = frame.functionCode;
+                    m.byteCountMatch = byteCountMatches;
+                    _mismatchIndex = (_mismatchIndex + 1) % MISMATCH_HISTORY_SIZE;
+                    _mismatchCount++;
+                } else {
+                    handleOurResponse(frame, frameLen);
+                }
             } else {
                 // mismatch
                 ResponseMismatch& m = _mismatchHistory[_mismatchIndex];
@@ -1002,18 +1023,10 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
     if (_waitingForResponse && _hasPendingRequest && frame.isValid &&
         !frame.isRequest && frame.unitId == _currentRequest.unitId &&
         fcMatches && byteCountMatches) {
-        // Check strict response timing window to avoid accepting delayed foreign responses
-        uint32_t elapsedMs = (uint32_t)(millis() - _requestSentTime);
-        if (elapsedMs < RESPONSE_MIN_WINDOW_MS || elapsedMs > RESPONSE_MAX_WINDOW_MS) {
-            LOG_W("RX response outside strict window: unit=%d elapsed=%ums (min=%u max=%u) req=unit:%u fc:0x%02X reg:%u qty:%u resp=%s",
-                  frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, RESPONSE_MAX_WINDOW_MS,
-                  _currentRequest.unitId, _currentRequest.functionCode,
-                  _currentRequest.startRegister, _currentRequest.quantity,
-                  formatFrameHex(frame).c_str());
-            // Treat as mismatch, don't accept
-        } else {
-            isOurResponse = true;
-        }
+        // Timing-window enforcement is performed in the scanner dispatch path;
+        // if we've reached here the frame matches the pending request and
+        // may be treated as our response.
+        isOurResponse = true;
     }
 
     if (isOurResponse) {
