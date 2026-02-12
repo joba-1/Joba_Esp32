@@ -427,6 +427,12 @@ public:
                 otherPairing["responsesUnpaired"] = modbus.getStats().otherResponsesUnpaired;
                 otherPairing["exceptionsPaired"] = modbus.getStats().otherExceptionsPaired;
                 otherPairing["exceptionsUnpaired"] = modbus.getStats().otherExceptionsUnpaired;
+                
+                JsonArray foreignQtys = doc["foreignRequestQuantities"].to<JsonArray>();
+                for (uint16_t qty : modbus.getForeignRequestQuantities()) {
+                    foreignQtys.add(qty);
+                }
+                
                 doc["consecutiveTimeouts"] = modbus.getConsecutiveTimeouts();
                 doc["queueingPaused"] = modbus.isQueueingPaused();
                 doc["queueingPauseRemainingMs"] = modbus.getQueueingPauseRemainingMs();

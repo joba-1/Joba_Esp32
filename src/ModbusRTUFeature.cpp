@@ -801,6 +801,12 @@ void ModbusRTUFeature::handleForeignRequest(const ModbusFrame& frame) {
         ModbusRegisterMap& map = ensureRegisterMap(frame.unitId, reqFc);
         map.requestCount++;
         map.lastUpdate = millis();
+        
+        // Track distinct quantities seen from foreign masters
+        uint16_t qty = frame.getQuantity();
+        if (qty > 0) {
+            _foreignRequestQuantities.insert(qty);
+        }
     }
 
     // Re-enable stats gathering now that we've seen the next foreign request cleanly

@@ -6,6 +6,7 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <set>
 #include <functional>
 #include "Feature.h"
 #include "LoggingFeature.h"
@@ -416,6 +417,11 @@ public:
     const GapSchedulerStats& getGapSchedulerStats() const { return _gapPredictor.stats(); }
 
     /**
+     * @brief Get distinct register quantities requested by foreign masters
+     */
+    const std::set<uint16_t>& getForeignRequestQuantities() const { return _foreignRequestQuantities; }
+
+    /**
      * @brief Predict the available gap after the most recently completed foreign transaction.
      *
      * Looks up the last completed transaction key in the transition map and returns
@@ -526,6 +532,7 @@ private:
     // Frame tracking for request/response matching
     ModbusFrame _lastRequest;
     std::map<uint8_t, ModbusFrame> _lastRequestPerUnit;
+    std::set<uint16_t> _foreignRequestQuantities;  // Distinct register quantities seen from foreign masters
     bool _waitingForResponse;
     unsigned long _requestSentTime;
     
