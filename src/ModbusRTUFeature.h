@@ -668,9 +668,9 @@ private:
     uint32_t _lastTxElapsedMs{0};         // gap elapsed at TX time (for collision diagnostics)
     uint32_t _lastTxWireMs{0};            // estimated wire time at TX time
     static constexpr uint32_t GAP_MIN_SAMPLES = 10;  // minimum transition samples before trusting prediction
-    static constexpr uint32_t GAP_MIN_USABLE_MS = 20; // minimum usable gap to attempt TX
-    static constexpr uint32_t RESPONSE_MIN_WINDOW_MS = 10;   // min time to accept response (avoid echo)
-    static constexpr uint32_t RESPONSE_MAX_WINDOW_MS = 1000; // max time to accept response (strict window)
+    static constexpr uint32_t GAP_MIN_USABLE_MS = 20;  // minimum usable gap to attempt TX
+    static constexpr uint32_t RESPONSE_MIN_WINDOW_MS = 10;  // min time to accept response (avoid echo)
+    static constexpr uint32_t RESPONSE_MAX_WINDOW_MS = 200;  // max time to accept response (strict window)
 
 public:
     /**

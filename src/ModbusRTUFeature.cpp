@@ -1005,8 +1005,11 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
         // Check strict response timing window to avoid accepting delayed foreign responses
         uint32_t elapsedMs = (uint32_t)(millis() - _requestSentTime);
         if (elapsedMs < RESPONSE_MIN_WINDOW_MS || elapsedMs > RESPONSE_MAX_WINDOW_MS) {
-            LOG_W("RX response outside strict window: unit=%d elapsed=%ums (min=%u max=%u)",
-                  frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, RESPONSE_MAX_WINDOW_MS);
+            LOG_W("RX response outside strict window: unit=%d elapsed=%ums (min=%u max=%u) req=unit:%u fc:0x%02X reg:%u qty:%u resp=%s",
+                  frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, RESPONSE_MAX_WINDOW_MS,
+                  _currentRequest.unitId, _currentRequest.functionCode,
+                  _currentRequest.startRegister, _currentRequest.quantity,
+                  formatFrameHex(frame).c_str());
             // Treat as mismatch, don't accept
         } else {
             isOurResponse = true;
