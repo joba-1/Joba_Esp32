@@ -99,7 +99,7 @@ public:
     GapPredictor();
 
     static constexpr float COLLISION_MARGIN_STEP = 0.01f;  // +1%
-    static constexpr float SUCCESS_MARGIN_STEP = 0.00125f; // -0.125% per success (8 successes = -1%)
+    static constexpr float SUCCESS_MARGIN_STEP = 0.001f;  // -0.1% per success
 
     void reset();
 
