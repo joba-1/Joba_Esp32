@@ -1576,8 +1576,21 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
     
     setDE(false);  // Back to receive mode
 
+    // Back to receive mode and give transceiver time to settle
     // Mark end-of-TX as last bus activity for accurate silence detection.
     _lastByteTime = micros();
+
+    // Drain any immediate RX bytes (transceiver echo) to avoid treating
+    // our own echo as a foreign response. Limit drain to a reasonable cap.
+    int drained = 0;
+    const int DRAIN_CAP = 512;
+    while (_serial.available() && drained < DRAIN_CAP) {
+        (void)_serial.read();
+        drained++;
+    }
+    if (drained > 0) {
+        LOG_V("Drained %d RX bytes after TX (echo discard)", drained);
+    }
 
     // Refresh empty-buffer tracking after TX and echo discard.
     if (_serial.available() == 0) {
