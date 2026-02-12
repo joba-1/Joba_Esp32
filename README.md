@@ -43,6 +43,9 @@ This firmware transforms your ESP32 into a smart data collection gateway with:
 - **InfluxDB Logging** - Automatic logging of all Modbus register values
 - **HA Integration** - Automatic Home Assistant discovery for each register
 
+- **Response acceptance window** - The firmware enforces a 200 ms response acceptance window; responses arriving later are rejected and logged for diagnostics (includes paired request + response hex).
+- **TX echo handling** - After transmitting a request the firmware drains immediate RX bytes to discard RS485 echo (capped) so echoes are not misinterpreted as foreign responses.
+
 All features are non-blocking and run concurrently via a modular architecture.
 
 ### Supported Modbus Devices

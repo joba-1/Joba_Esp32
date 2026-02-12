@@ -265,6 +265,10 @@ curl --digest -u admin:<password> http://<device-ip>/api/modbus/patterns | pytho
 | `cycle[].gap` | Per-step gap stats: time from end of previous response to start of this request (only after cycle detection + tracking sync) |
 
 **Gathering data:**
+**Note about transactions and timing-window:**
+
+- The `transactionTimes` data counts paired request→response transactions observed on the bus from any master — this includes transmissions originating from this device unless the firmware is built/configured in listen-only mode (`MODBUS_LISTEN_ONLY`).
+- The firmware enforces a strict response acceptance window: responses that arrive more than 200 ms after the request finish are rejected and treated as late. Late responses are logged with a rejection reason and include the paired request details plus a hex dump of the late response for diagnostics.
 
 1. Switch to listen-only mode: set `modbus_listen_only = 1` in `config.ini`, rebuild + uploadfs
 2. Reset stats for a clean collection window:

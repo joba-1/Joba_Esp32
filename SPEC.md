@@ -45,6 +45,8 @@ esp32-firmware/
 │       └── devices/            # Device definition JSON files
 └── SPEC.md
 ```
+ 
+Note: The Modbus RTU implementation enforces a strict response acceptance window (200 ms). Responses that arrive more than 200 ms after a request finish are rejected and recorded for diagnostics. The firmware also performs a short RX drain after transmit to discard RS485 echo bytes, reducing false-positive foreign-response detections.
 
 ## Configuration Management
 
