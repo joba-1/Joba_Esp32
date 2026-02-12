@@ -364,15 +364,6 @@ Displays the decoded value from cache with metadata (validity, queuing status, o
 
 ---
 
-# MQTT Commands
+# MQTT / MQTT Commands
 
-If MQTT is enabled and connected, the device subscribes to:
-
-- `<baseTopic>/cmd/reset`
-- `<baseTopic>/cmd/restart`
-
-Accepted payloads (case-insensitive, trimmed): `1`, `true`, `reset`, `restart`, `reboot`.
-
-When accepted, the device schedules a restart (~250ms delay) and publishes an acknowledgement to:
-
-- `<baseTopic>/status/reset` with payload `scheduled` or `already_scheduled`
+For MQTT topics, command payloads and examples see [MQTT.md](MQTT.md).
