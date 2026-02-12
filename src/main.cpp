@@ -12,6 +12,7 @@
 #include "DataCollectionWeb.h"
 #include "DataCollectionMQTT.h"
 #include "ModbusRTUFeature.h"
+#include "HardwareSerialAdapter.h"
 #include "ModbusDevice.h"
 #include "ModbusWeb.h"
 #include "ModbusIntegration.h"
@@ -134,8 +135,10 @@ MQTTFeature mqtt(
 );
 
 // Modbus RTU feature - monitors bus and handles requests
+// Wrap HardwareSerial in adapter for dependency inversion
+static HardwareSerialAdapter serial2Adapter(Serial2);
 ModbusRTUFeature modbus(
-    Serial2,                    // Hardware serial port
+    serial2Adapter,
     MODBUS_BAUD_RATE,
     MODBUS_SERIAL_CONFIG,
     MODBUS_SERIAL_RX,

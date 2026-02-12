@@ -2,7 +2,7 @@
 #define MODBUS_RTU_FEATURE_H
 
 #include <Arduino.h>
-#include <HardwareSerial.h>
+#include "ISerial.h"
 #include <array>
 #include <vector>
 #include <map>
@@ -78,7 +78,7 @@ public:
      * @param maxQueueSize Maximum pending requests
      * @param responseTimeoutMs Response timeout in ms
      */
-    ModbusRTUFeature(HardwareSerial& serial,
+    ModbusRTUFeature(ISerial& serial,
                      uint32_t baudRate = 9600,
                      uint32_t config = SERIAL_8N1,
                      int8_t rxPin = -1,
@@ -500,7 +500,7 @@ private:
         return (unitId << 8) | functionCode;
     }
     
-    HardwareSerial& _serial;
+    ISerial& _serial;
     uint32_t _baudRate;
     uint32_t _config;
     int8_t _rxPin;

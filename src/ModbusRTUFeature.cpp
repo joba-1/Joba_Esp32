@@ -159,7 +159,7 @@ std::vector<ModbusRTUFeature::UnitBackoffInfo> ModbusRTUFeature::getUnitBackoffI
     return out;
 }
 
-ModbusRTUFeature::ModbusRTUFeature(HardwareSerial& serial,
+ModbusRTUFeature::ModbusRTUFeature(ISerial& serial,
                                    uint32_t baudRate,
                                    uint32_t config,
                                    int8_t rxPin,
