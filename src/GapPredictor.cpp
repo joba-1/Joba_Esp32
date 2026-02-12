@@ -17,7 +17,7 @@ void GapPredictor::reset() {
 }
 
 void GapPredictor::recordTransition(uint64_t predecessorKey, uint64_t successorKey, uint32_t gapMs) {
-    if (predecessorKey == 0) return;
+    if (predecessorKey == 0 || !_statsEnabled) return;
 
     // Cap number of predecessors and successors similarly to original logic
     static constexpr size_t MAX_BUS_PATTERNS = 64;

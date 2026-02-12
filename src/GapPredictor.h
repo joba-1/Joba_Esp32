@@ -119,6 +119,10 @@ public:
     // Record a successful gap TX to relax safety margin over time.
     void noteGapSuccess();
 
+    // Enable/disable stats gathering to avoid polluting data during own TX
+    void setStatsEnabled(bool enabled) { _statsEnabled = enabled; }
+    bool areStatsEnabled() const { return _statsEnabled; }
+
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
     const GapSchedulerStats& stats() const { return _stats; }
     GapSchedulerStats& stats() { return _stats; }
@@ -128,6 +132,7 @@ private:
     BusTransitionMap _busTransitions;
     GapSchedulerStats _stats;
     uint32_t _globalMinGapMs{UINT32_MAX};
+    bool _statsEnabled{true};  // Disable during own TX to avoid polluting foreign master stats
     static constexpr uint32_t GAP_MIN_SAMPLES = 10;
 };
 

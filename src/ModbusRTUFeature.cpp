@@ -737,6 +737,7 @@ void ModbusRTUFeature::handleCrcInvalidFrame(const ModbusFrame& frame, bool resy
 void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameLen) {
     // matched our in-flight request
     _waitingForResponse = false;
+    // Keep stats disabled through our entire TX-response window; will re-enable on next foreign request
     uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
     _busTransactionStats.record(rtt);
     _backoffByUnit.erase(frame.unitId);
@@ -787,6 +788,9 @@ void ModbusRTUFeature::handleForeignRequest(const ModbusFrame& frame) {
         map.requestCount++;
         map.lastUpdate = millis();
     }
+
+    // Re-enable stats gathering now that we've seen the next foreign request cleanly
+    _gapPredictor.setStatsEnabled(true);
 
     _lastRequestPerUnit[frame.unitId] = frame;
     _stats.otherRequestsSeen++;
@@ -1435,6 +1439,13 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
         _lastRequest.isException = false;
         _lastRequest.exceptionCode = 0;
         _lastRequestPerUnit[req.unitId] = _lastRequest;
+
+        // Disable stats gathering during our TX to avoid polluting foreign master patterns
+        // Also clear the previous transaction context so the gap to the next foreign request
+        // doesn't include our TX window
+        _gapPredictor.setStatsEnabled(false);
+        _lastTransactionEndMs = 0;
+        _hasLastTransactionEnd = false;
 
         _requestQueue.erase(_requestQueue.begin() + (ptrdiff_t)sendIndex);
     } else {
