@@ -83,6 +83,46 @@ bool MQTTFeature::publishToBase(const char* subtopic, const char* payload, bool 
     return publish(_topicBuffer, payload, retain);
 }
 
+bool MQTTFeature::publishLarge(const char* subtopic, const char* payload, bool retain) {
+    if (!_connected) return false;
+    const size_t len = strlen(payload);
+    // If payload small enough, publish normally
+    const size_t CHUNK_SIZE = 800; // safe chunk size below PubSubClient buffer
+    if (len <= CHUNK_SIZE) {
+        return publishToBase(subtopic, payload, retain);
+    }
+
+    // Split into parts
+    const unsigned parts = (len + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    char idBuf[16];
+    snprintf(idBuf, sizeof(idBuf), "%u", (unsigned)millis());
+
+    for (unsigned i = 0; i < parts; ++i) {
+        size_t off = i * CHUNK_SIZE;
+        size_t thisLen = (off + CHUNK_SIZE <= len) ? CHUNK_SIZE : (len - off);
+        // Build topic: <base>/<subtopic>/part/<id>/<index>/<parts>
+        int n = snprintf(_topicBuffer, MAX_TOPIC_LEN, "%s/%s/part/%s/%u/%u", _baseTopic, subtopic, idBuf, i + 1, parts);
+        if (n < 0 || (size_t)n >= MAX_TOPIC_LEN) {
+            LOG_W("MQTT publishLarge: topic too long");
+            return false;
+        }
+
+        // Copy payload fragment into temporary buffer
+        // Use a stack buffer sized to CHUNK_SIZE+1
+        char partBuf[CHUNK_SIZE + 1];
+        memcpy(partBuf, payload + off, thisLen);
+        partBuf[thisLen] = '\0';
+
+        bool ok = publish(_topicBuffer, partBuf, (retain && (i + 1 == parts)));
+        if (!ok) {
+            LOG_W("MQTT publishLarge: failed part %u/%u", i + 1, parts);
+            return false;
+        }
+    }
+    LOG_I("MQTT publishLarge: published %u parts for id=%s", parts, idBuf);
+    return true;
+}
+
 bool MQTTFeature::subscribe(const char* topic) {
     if (!_connected) return false;
     return _mqttClient.subscribe(topic);
@@ -106,7 +146,9 @@ void MQTTFeature::mqttCallback(char* topic, byte* payload, unsigned int length) 
         size_t copyLen = (length < sizeof(msgBuf) - 1) ? length : sizeof(msgBuf) - 1;
         memcpy(msgBuf, payload, copyLen);
         msgBuf[copyLen] = '\0';
-        
+        // Log incoming MQTT messages for debugging
+        LOG_I("MQTT RX: topic=%s payload=%s", topic, msgBuf);
+
         _instance->_messageCallback(topic, msgBuf);
     }
 }

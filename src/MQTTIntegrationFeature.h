@@ -74,7 +74,15 @@ public:
             bool ok1 = _mqtt.subscribeToBase("cmd/reset");
             bool ok2 = _mqtt.subscribeToBase("cmd/restart");
             bool ok3 = _mqtt.subscribeToBase("modbus/cmd/raw/read");
-            _cmdSubscribed = (ok1 && ok2 && ok3);
+            bool ok4 = _mqtt.subscribeToBase("modbus/cmd/raw/write");
+            bool ok5 = _mqtt.subscribeToBase("modbus/cmd/write");
+            bool ok6 = _mqtt.subscribeToBase("modbus/cmd/read");
+            bool ok7 = _mqtt.subscribeToBase("modbus/cmd/list_devices");
+            bool ok8 = _mqtt.subscribeToBase("modbus/cmd/list_registers");
+            _cmdSubscribed = (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8);
+            LOG_I("MQTT cmd subscribe results: reset=%s restart=%s rawRead=%s rawWrite=%s write=%s read=%s listDevices=%s listRegisters=%s",
+                ok1 ? "ok" : "fail", ok2 ? "ok" : "fail", ok3 ? "ok" : "fail", ok4 ? "ok" : "fail",
+                ok5 ? "ok" : "fail", ok6 ? "ok" : "fail", ok7 ? "ok" : "fail", ok8 ? "ok" : "fail");
             LOG_I("MQTT cmd subscribed: %s", _cmdSubscribed ? "yes" : "no");
         }
 

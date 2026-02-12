@@ -4,7 +4,7 @@ This document describes MQTT topics and example payloads for commands supported 
 
 Base topic
 - Each device publishes/subscribes under a base topic formed as:
-  `{firmware_name}/{hostname}` (the firmware `mqtt` feature sets this as the base topic).
+  `{firmware_name}/{hostname}` (lowercased, e.g. joba_esp32/joba-esp32-1 ).
 
 Subscribed command topics (examples)
 - `<baseTopic>/cmd/reset` — reboot command
@@ -65,6 +65,14 @@ mosquitto_pub -h <broker> -t "<baseTopic>/modbus/cmd/write" \
   -m '{"id":"dw1","unit":1,"register":"inverter_enable","value":1.0}'
 ```
 
+Decoded read by register name (queue a read for a named register)
+
+```bash
+mosquitto_pub -h <broker> -t "<baseTopic>/modbus/cmd/read" \
+  -m '{"id":"rname1","unit":1,"register":"grid_voltage"}'
+mosquitto_sub -h <broker> -t "<baseTopic>/modbus/resp/read" -v
+```
+
 Reset command via MQTT
 
 ```bash
@@ -110,5 +118,38 @@ mosquitto_pub -h <broker> -t "<baseTopic>/modbus/cmd/list_registers" \
   -m '{"id":"l1","unit":1}'
 mosquitto_sub -h <broker> -t "<baseTopic>/modbus/resp/list_registers" -v
 ```
+
+Multipart responses (large payloads)
+-----------------------------------
+
+Large responses (for example a long `list_registers` JSON) are split by the device into multiple MQTT messages to avoid PubSubClient buffer limits. Parts are published under a per-part topic with the format:
+
+  <baseTopic>/modbus/resp/list_registers/part/<id>/<index>/<parts>
+
+Where:
+- `<id>` is an identifier generated on the device (monotonic-ish string of millis).
+- `<index>` is the 1-based part index.
+- `<parts>` is the total number of parts for this response.
+
+Each part's payload contains a UTF-8 fragment of the original JSON; concatenate parts in index order to reassemble the full JSON. The last part is published with the retain flag when the logical publish requested retention.
+
+To inspect parts with `mosquitto_sub`:
+
+```bash
+mosquitto_sub -h <broker> -t "<baseTopic>/modbus/resp/list_registers/#" -v
+```
+
+Simple Python reassembler
+------------------------
+
+A helper script is provided at `misc/reassemble_mqtt_parts.py` which subscribes to the part topic, collects parts by `<id>`, and writes the reassembled JSON to stdout or a file when complete.
+
+Usage (example):
+
+```bash
+python3 misc/reassemble_mqtt_parts.py --broker <broker> --topic "<baseTopic>/modbus/resp/list_registers/#"
+```
+
+The script will print when a full message is reassembled and optionally save it to disk.
 
 *** End of MQTT.md

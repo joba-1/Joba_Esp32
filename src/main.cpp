@@ -251,6 +251,7 @@ void setup() {
         const String modbusRawReadTopic = mqttBaseTopic + "/modbus/cmd/raw/read";
         const String modbusRawWriteTopic = mqttBaseTopic + "/modbus/cmd/raw/write";
         const String modbusWriteTopic = mqttBaseTopic + "/modbus/cmd/write";
+        const String modbusReadTopic = mqttBaseTopic + "/modbus/cmd/read";
         const String t(topic);
         // Only handle topics under our base topic
         if (!t.startsWith(mqttBaseTopic)) return;
@@ -530,6 +531,76 @@ void setup() {
             return;
         }
 
+        // Decoded read by register name
+        // Topic: <base>/modbus/cmd/read
+        // Payload JSON: {"id":"opt","unit":1,"register":"RegName"}
+        if (t == modbusReadTopic) {
+#if MODBUS_LISTEN_ONLY
+            mqtt.publishToBase("modbus/ack/read", "{\"queued\":false,\"error\":\"listen_only\"}", false);
+            return;
+#else
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, payload);
+            char idBuf[32];
+            if (doc["id"].is<const char*>()) {
+                strncpy(idBuf, doc["id"].as<const char*>(), sizeof(idBuf) - 1);
+                idBuf[sizeof(idBuf) - 1] = '\0';
+            } else {
+                snprintf(idBuf, sizeof(idBuf), "%u", (uint32_t)millis());
+            }
+
+            uint8_t unitId = doc["unit"] | 0;
+            const char* regName = doc["register"].is<const char*>() ? doc["register"].as<const char*>() : nullptr;
+
+            JsonDocument ack;
+            ack["id"] = idBuf;
+            ack["topic"] = (const char*)modbusReadTopic.c_str();
+
+            if (err || unitId == 0 || regName == nullptr) {
+                ack["queued"] = false;
+                ack["error"] = err ? "invalid_json" : "invalid_params";
+                String out;
+                serializeJson(ack, out);
+                mqtt.publishToBase("modbus/ack/read", out.c_str(), false);
+                return;
+            }
+
+            if (!modbusDevices) {
+                ack["queued"] = false;
+                ack["error"] = "devices_unavailable";
+                String out;
+                serializeJson(ack, out);
+                mqtt.publishToBase("modbus/ack/read", out.c_str(), false);
+                return;
+            }
+
+            // ACK (queued true if we accepted the request)
+            ack["queued"] = true;
+            ack["unitId"] = unitId;
+            ack["register"] = regName;
+            String outAck;
+            serializeJson(ack, outAck);
+            mqtt.publishToBase("modbus/ack/read", outAck.c_str(), false);
+
+            bool queued = modbusDevices->readRegister(unitId, regName,
+                [idBuf, regName](bool success, float value) {
+                    JsonDocument resp;
+                    resp["id"] = idBuf;
+                    resp["unitId"] = (uint32_t)0 + 0; // placeholder, unit echoed below if needed
+                    resp["register"] = regName;
+                    resp["success"] = success;
+                    if (success) resp["value"] = value;
+                    String out;
+                    serializeJson(resp, out);
+                    mqtt.publishToBase("modbus/resp/read", out.c_str(), false);
+                });
+
+            // Note: modbusDevices->readRegister returns immediately whether queued; ack already sent
+            (void)queued;
+#endif
+            return;
+        }
+
         // List known Modbus devices (immediate response)
         const String modbusListDevicesTopic = mqttBaseTopic + "/modbus/cmd/list_devices";
         if (t == modbusListDevicesTopic) {
@@ -569,6 +640,7 @@ void setup() {
             }
 
             uint8_t unitId = doc["unit"] | 0;
+            LOG_I("MQTT handler: list_registers id=%s unit=%u", idBuf, (unsigned)unitId);
             if (err || unitId == 0) {
                 JsonDocument nack;
                 nack["id"] = idBuf;
@@ -611,7 +683,18 @@ void setup() {
             }
             String out;
             serializeJson(resp, out);
-            mqtt.publishToBase("modbus/resp/list_registers", out.c_str(), false);
+            LOG_I("Publishing list_registers response (unit=%u) size=%u", (unsigned)unitId, (unsigned)out.length());
+            bool pubOk = mqtt.publishLarge("modbus/resp/list_registers", out.c_str(), false);
+            if (!pubOk) {
+                LOG_W("Failed to publish full list_registers response (unit=%u) size=%u", (unsigned)unitId, (unsigned)out.length());
+                // Fallback: publish a short error so callers know it failed
+                JsonDocument nack;
+                nack["id"] = idBuf;
+                nack["error"] = "publish_failed";
+                String outNack;
+                serializeJson(nack, outNack);
+                mqtt.publishToBase("modbus/resp/list_registers", outNack.c_str(), false);
+            }
             return;
         }
     });

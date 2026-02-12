@@ -27,6 +27,8 @@ public:
     // Publishing
     bool publish(const char* topic, const char* payload, bool retain = false);
     bool publishToBase(const char* subtopic, const char* payload, bool retain = false);
+    // Publish large payloads by splitting into multiple parts when needed
+    bool publishLarge(const char* subtopic, const char* payload, bool retain = false);
     
     // Subscribing
     bool subscribe(const char* topic);
