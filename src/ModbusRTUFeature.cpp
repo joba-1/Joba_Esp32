@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include "TimeUtils.h"
+#include "modbus_helpers.h"
 
 static inline bool timeBefore32(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
@@ -284,23 +285,17 @@ void ModbusRTUFeature::recordCrcErrorContext(const ModbusFrame& badFrame) {
 }
 
 String ModbusRTUFeature::formatFrameHex(const ModbusFrame& frame) const {
-    // unit + fc + payload + crc(2)
-    String result;
-    result.reserve(3 * (2 + frame.dataLen + 2));
-
-    auto appendByte = [&](uint8_t b) {
-        if (result.length() > 0) result += ' ';
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%02X", b);
-        result += buf;
-    };
-
-    appendByte(frame.unitId);
-    appendByte(frame.functionCode);
-    for (size_t i = 0; i < frame.dataLen; i++) appendByte(frame.data[i]);
-    appendByte((uint8_t)(frame.crc & 0xFF));
-    appendByte((uint8_t)((frame.crc >> 8) & 0xFF));
-    return result;
+    // Build a byte array: unit + fc + payload + crc(lo,hi)
+    size_t total = 2 + frame.dataLen + 2;
+    std::vector<uint8_t> buf;
+    buf.reserve(total);
+    buf.push_back(frame.unitId);
+    buf.push_back(frame.functionCode);
+    for (size_t i = 0; i < frame.dataLen; ++i) buf.push_back(frame.data[i]);
+    buf.push_back((uint8_t)(frame.crc & 0xFF));
+    buf.push_back((uint8_t)((frame.crc >> 8) & 0xFF));
+    std::string s = format_hex(buf.data(), buf.size());
+    return String(s.c_str());
 }
 
 uint16_t ModbusRTUFeature::calculateFrameCrc(const ModbusFrame& frame) const {
@@ -1836,20 +1831,8 @@ void ModbusRTUFeature::setDE(bool transmit) {
 }
 
 uint16_t ModbusRTUFeature::calculateCRC(const uint8_t* data, size_t length) const {
-    uint16_t crc = 0xFFFF;
-    
-    for (size_t i = 0; i < length; i++) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; j++) {
-            if (crc & 0x0001) {
-                crc = (crc >> 1) ^ 0xA001;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    
-    return crc;
+    // Delegate to testable, shared implementation
+    return modbus_crc16(data, length);
 }
 
 void ModbusRTUFeature::startActiveTime(bool isOwn) {
@@ -1978,15 +1961,8 @@ void ModbusRTUFeature::checkAndLogWarnings() {
 }
 
 String ModbusRTUFeature::formatHex(const uint8_t* data, size_t length) const {
-    String result;
-    result.reserve(length * 3);  // "XX " per byte, avoids per-byte reallocation
-    for (size_t i = 0; i < length; i++) {
-        if (i > 0) result += ' ';
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%02X", data[i]);
-        result += buf;
-    }
-    return result;
+    std::string s = format_hex(data, length);
+    return String(s.c_str());
 }
 
 // ===== Bus Pattern Analysis =====
