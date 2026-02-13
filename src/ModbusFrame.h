@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstddef>
 
 /**
  * @brief A single Modbus RTU frame (request or response)

@@ -16,31 +16,14 @@
 /**
  * @brief Modbus function codes
  */
-namespace ModbusFC {
-    constexpr uint8_t READ_COILS = 0x01;
-    constexpr uint8_t READ_DISCRETE_INPUTS = 0x02;
-    constexpr uint8_t READ_HOLDING_REGISTERS = 0x03;
-    constexpr uint8_t READ_INPUT_REGISTERS = 0x04;
-    constexpr uint8_t WRITE_SINGLE_COIL = 0x05;
-    constexpr uint8_t WRITE_SINGLE_REGISTER = 0x06;
-    constexpr uint8_t WRITE_MULTIPLE_COILS = 0x0F;
-    constexpr uint8_t WRITE_MULTIPLE_REGISTERS = 0x10;
-}
+#include "ModbusFC.h"
 
 #include "ModbusFrame.h"
 
 /**
  * @brief Raw register data storage for a unit/function code combination
  */
-struct ModbusRegisterMap {
-    uint8_t unitId;
-    uint8_t functionCode;
-    std::map<uint16_t, uint16_t> registers;  // address -> value
-    unsigned long lastUpdate;
-    uint32_t requestCount;
-    uint32_t responseCount;
-    uint32_t errorCount;
-};
+#include "ModbusRegisterMap.h"
 
 #include "BusPatternTracker.h"
 

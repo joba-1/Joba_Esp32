@@ -4,6 +4,7 @@
 #include <cstring>
 #include "TimeUtils.h"
 #include "modbus_helpers.h"
+#include "ModbusRTUFeature_helper.h"
 
 static inline bool timeBefore32(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
@@ -663,60 +664,11 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
 
 // Small parser helpers
 bool ModbusRTUFeature::tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& out) {
-    if (remaining < len) return false;
-    return parseFrame(p, len, out);
+    return ::tryParseAtLen(p, remaining, len, out, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
 }
 
 bool ModbusRTUFeature::determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, size_t& frameLen) {
-    isRequest = false;
-    frameLen = 0;
-    if (remaining < 4) return false;
-
-    uint8_t fc = p[1];
-    static constexpr uint8_t FC3 = ModbusFC::READ_HOLDING_REGISTERS;
-    static constexpr uint8_t FC4 = ModbusFC::READ_INPUT_REGISTERS;
-    static constexpr uint8_t FC3_EX = (uint8_t)(FC3 | 0x80);
-    static constexpr uint8_t FC4_EX = (uint8_t)(FC4 | 0x80);
-    static constexpr uint16_t MAX_REGS_PER_READ = 125;
-    static constexpr uint8_t MAX_BYTECOUNT = 250;
-
-    ModbusFrame tmp;
-
-    // Exceptions fixed length = 5
-    if ((fc == FC3_EX || fc == FC4_EX) && remaining >= 5) {
-        if (tryParseAtLen(p, remaining, 5, tmp) && tmp.isException) {
-            isRequest = false;
-            frameLen = 5;
-            return true;
-        }
-    }
-
-    if (fc == FC3 || fc == FC4) {
-        // Try request first (8 bytes)
-        if (remaining >= 8) {
-            if (tryParseAtLen(p, remaining, 8, tmp) && !tmp.isException && tmp.dataLen == 4) {
-                uint16_t qty = tmp.getQuantity();
-                if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                    isRequest = true;
-                    frameLen = 8;
-                    return true;
-                }
-            }
-        }
-        // Try response
-        if (remaining >= 5) {
-            uint8_t byteCount = p[2];
-            if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
-                size_t respLen = (size_t)byteCount + 5;
-                if (tryParseAtLen(p, remaining, respLen, tmp) && !tmp.isException) {
-                    isRequest = false;
-                    frameLen = respLen;
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
+    return ::determineFrameLength(p, remaining, isRequest, frameLen);
 }
 
 void ModbusRTUFeature::parseFrameAndComputeMetadata(size_t offset, size_t frameLen, ModbusFrame& frame, bool isRequest, uint32_t approxStartMs) {
@@ -1207,85 +1159,12 @@ ModbusRegisterMap& ModbusRTUFeature::ensureRegisterMap(uint8_t unitId, uint8_t f
 }
 
 bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame) {
-    if (length < 4) return false;
-    
-    frame.unitId = data[0];
-    frame.functionCode = data[1];
-    frame.timestamp = millis();
-    frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
-    frame.isRequest = false;
-    
-    // Verify CRC (Modbus: LSB first)
-    uint16_t receivedCrc = (uint16_t)data[length - 2] | ((uint16_t)data[length - 1] << 8);
-    uint16_t calculatedCrc = calculateCRC(data, length - 2);
-
-    const size_t payloadLenRaw = length - 4; // exclude unit, fc, crc(2)
-    const size_t payloadLen = (payloadLenRaw <= ModbusFrame::MAX_DATA_LEN) ? payloadLenRaw : ModbusFrame::MAX_DATA_LEN;
-    
-    if (receivedCrc != calculatedCrc) {
-        frame.isValid = false;
-        frame.crc = receivedCrc;
-        frame.dataLen = (uint16_t)payloadLen;
-        if (payloadLen > 0) memcpy(frame.data.data(), data + 2, payloadLen);
-        frame.isException = false;
-        frame.exceptionCode = 0;
-        return true;  // Return true so caller can count CRC error and log
-    }
-    
-    frame.crc = receivedCrc;
-    frame.isValid = true;
-    
-    // Check for exception
-    if (frame.functionCode & 0x80) {
-        frame.isException = true;
-        frame.exceptionCode = (length > 2) ? data[2] : 0;
-        frame.dataLen = 0;
-    } else {
-        frame.isException = false;
-        frame.exceptionCode = 0;
-        frame.dataLen = (uint16_t)payloadLen;
-        if (payloadLen > 0) memcpy(frame.data.data(), data + 2, payloadLen);
-    }
-    
-    return true;
+    return parseModbusFrame(data, length, frame, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
 }
 
 void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response) {
-    if (!response.isValid || response.isException) return;
-    
-    uint8_t fc = response.functionCode;
-    if (fc != ModbusFC::READ_HOLDING_REGISTERS && 
-        fc != ModbusFC::READ_INPUT_REGISTERS &&
-        fc != ModbusFC::READ_COILS &&
-        fc != ModbusFC::READ_DISCRETE_INPUTS) {
-        return;  // Not a read response
-    }
-    
-    ModbusRegisterMap& regMap = ensureRegisterMap(response.unitId, fc);
-    regMap.responseCount++;
-    regMap.lastUpdate = millis();
-    
-    // Extract register values from response
-    uint16_t startReg = request.getStartRegister();
-    size_t byteCount = response.getByteCount();
-    const uint8_t* regData = response.getRegisterData();
-    
-    if (!regData || byteCount == 0) return;
-    
-    if (isReadFunction(fc)) {
-        // Each register is 2 bytes
-        size_t regCount = byteCount / 2;
-        for (size_t i = 0; i < regCount; i++) {
-            uint16_t value = (regData[i * 2] << 8) | regData[i * 2 + 1];
-            regMap.registers[startReg + i] = value;
-        }
-    } else {
-        // Coils/discrete inputs: 1 bit per coil, packed into bytes
-        for (size_t i = 0; i < byteCount * 8; i++) {
-            uint16_t value = (regData[i / 8] >> (i % 8)) & 0x01;
-            regMap.registers[startReg + i] = value;
-        }
-    }
+    ModbusRegisterMap& regMap = ensureRegisterMap(response.unitId, response.functionCode);
+    updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
 }
 
 void ModbusRTUFeature::processQueue(bool busSilent) {
