@@ -1368,18 +1368,16 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
     // - MIN_GAP_SILENCE_MS (200ms): required before the FIRST TX in a gap.
     //   This ensures we're past inter-request gaps (~10-160ms) and into the
     //   wrap-around gap (~250-1800ms).
-    // - MIN_INTER_TX_SILENCE_MS (100ms): used for subsequent TXes in the same
-    //   gap.  After our TX+response, the bus is briefly idle before the foreign
-    //   master resumes.  100ms gives ample time to detect foreign activity
-    //   starting (a full Modbus request frame = 8 bytes = 8.3ms at 9600 baud,
-    //   so 100ms of silence strongly indicates the bus is still free).
+    // - MIN_INTER_TX_SILENCE_MS (10ms): used for subsequent TXes in the same
+    //   gap.  After our TX+response, 10ms allows for bus settling and brief
+    //   detection of any foreign activity starting.
     //
     // _ownTxInCurrentGap tracks consecutive own TXes.  Reset to 0 on foreign
     // activity; incremented after each successful own TX.
     //
     // Additional safety: UART RX buffer check immediately before TX.
     static constexpr uint32_t MIN_GAP_SILENCE_MS = 200;
-    static constexpr uint32_t MIN_INTER_TX_SILENCE_MS = 100;
+    static constexpr uint32_t MIN_INTER_TX_SILENCE_MS = 10;
 
     // Don't TX until we've observed at least one foreign transaction.
     // At boot, _lastByteTime is from initialization and doesn't reflect
