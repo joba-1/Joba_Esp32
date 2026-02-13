@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <IPAddress.h>
 
+namespace WebServerHelper {
+
 /**
  * @brief Generate the root page HTML
  * @param deviceId Device ID string
@@ -21,5 +23,7 @@ String generateRootPageHtml(const String& deviceId, const String& firmwareName,
  * @return Complete HTML string for the storage browser page
  */
 String generateStoragePageHtml();
+
+} // namespace WebServerHelper
 
 #endif // WEBSERVER_FEATURE_HELPER_H

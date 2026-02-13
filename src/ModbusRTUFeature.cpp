@@ -664,11 +664,11 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
 
 // Small parser helpers
 bool ModbusRTUFeature::tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& out) {
-    return ::tryParseAtLen(p, remaining, len, out, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
+    return ModbusRTUHelper::tryParseAtLen(p, remaining, len, out, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
 }
 
 bool ModbusRTUFeature::determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, size_t& frameLen) {
-    return ::determineFrameLength(p, remaining, isRequest, frameLen);
+    return ModbusRTUHelper::determineFrameLength(p, remaining, isRequest, frameLen);
 }
 
 void ModbusRTUFeature::parseFrameAndComputeMetadata(size_t offset, size_t frameLen, ModbusFrame& frame, bool isRequest, uint32_t approxStartMs) {
@@ -1159,12 +1159,12 @@ ModbusRegisterMap& ModbusRTUFeature::ensureRegisterMap(uint8_t unitId, uint8_t f
 }
 
 bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame) {
-    return parseModbusFrame(data, length, frame, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
+    return ModbusRTUHelper::parseModbusFrame(data, length, frame, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
 }
 
 void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response) {
     ModbusRegisterMap& regMap = ensureRegisterMap(response.unitId, response.functionCode);
-    updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
+    ModbusRTUHelper::updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
 }
 
 void ModbusRTUFeature::processQueue(bool busSilent) {

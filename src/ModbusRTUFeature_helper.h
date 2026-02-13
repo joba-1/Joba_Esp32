@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstddef>
 
+namespace ModbusRTUHelper {
+
 /**
  * @brief Parse a Modbus RTU frame from raw bytes
  * @param data Raw frame data
@@ -48,5 +50,7 @@ bool tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& 
  * @return true if frame length could be determined
  */
 bool determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, size_t& frameLen);
+
+} // namespace ModbusRTUHelper
 
 #endif // MODBUS_RTU_FEATURE_HELPER_H

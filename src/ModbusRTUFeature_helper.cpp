@@ -8,6 +8,8 @@
 static constexpr uint8_t MAX_RTU_UNIT_ID = 247;
 static constexpr size_t MIN_FRAME_SIZE = 4;
 
+namespace ModbusRTUHelper {
+
 // Helper to check if function code is a read operation
 static inline bool isReadFunction(uint8_t fc) {
     return (fc == ModbusFC::READ_HOLDING_REGISTERS || fc == ModbusFC::READ_INPUT_REGISTERS);
@@ -150,3 +152,5 @@ bool determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, s
     }
     return false;
 }
+
+} // namespace ModbusRTUHelper

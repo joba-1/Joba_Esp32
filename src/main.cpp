@@ -261,41 +261,41 @@ void setup() {
         if (!t.startsWith(mqttBaseTopic)) return;
 
         if (t == resetTopic || t == restartTopic) {
-            handleResetCommand(payload, resetTopic, mqtt);
+            MainHelper::handleResetCommand(payload, resetTopic, mqtt);
             return;
         }
 
         if (t == modbusRawReadTopic) {
-            handleModbusRawReadCommand(payload, modbusRawReadTopic, mqtt, modbus);
+            MainHelper::handleModbusRawReadCommand(payload, modbusRawReadTopic, mqtt, modbus);
             return;
         }
 
         if (t == modbusRawWriteTopic) {
-            handleModbusRawWriteCommand(payload, modbusRawWriteTopic, mqtt, modbus);
+            MainHelper::handleModbusRawWriteCommand(payload, modbusRawWriteTopic, mqtt, modbus);
             return;
         }
 
         if (t == modbusWriteTopic) {
-            handleModbusWriteCommand(payload, modbusWriteTopic, mqtt, modbusDevices);
+            MainHelper::handleModbusWriteCommand(payload, modbusWriteTopic, mqtt, modbusDevices);
             return;
         }
 
         if (t == modbusReadTopic) {
-            handleModbusReadCommand(payload, modbusReadTopic, mqtt, modbusDevices);
+            MainHelper::handleModbusReadCommand(payload, modbusReadTopic, mqtt, modbusDevices);
             return;
         }
 
         // List known Modbus devices (immediate response)
         const String modbusListDevicesTopic = mqttBaseTopic + "/modbus/cmd/list_devices";
         if (t == modbusListDevicesTopic) {
-            handleModbusListDevicesCommand(mqtt, modbusDevices);
+            MainHelper::handleModbusListDevicesCommand(mqtt, modbusDevices);
             return;
         }
 
         // List registers for a device by unit ID
         const String modbusListRegistersTopic = mqttBaseTopic + "/modbus/cmd/list_registers";
         if (t == modbusListRegistersTopic) {
-            handleModbusListRegistersCommand(payload, mqtt, modbusDevices);
+            MainHelper::handleModbusListRegistersCommand(payload, mqtt, modbusDevices);
             return;
         }
     });

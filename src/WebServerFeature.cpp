@@ -78,7 +78,7 @@ void WebServerFeature::setupDefaultRoutes() {
         uint32_t uptimeSeconds = millis() / 1000;
         uint32_t freeHeap = ESP.getFreeHeap();
 
-        String html = generateRootPageHtml(deviceId, firmwareName, ipAddress, uptimeSeconds, freeHeap);
+        String html = WebServerHelper::generateRootPageHtml(deviceId, firmwareName, ipAddress, uptimeSeconds, freeHeap);
 
         AsyncResponseStream *response = request->beginResponseStream(F("text/html"));
         response->print(html);
@@ -307,7 +307,7 @@ void WebServerFeature::setupDefaultRoutes() {
             return request->requestAuthentication();
         }
 
-        String html = generateStoragePageHtml();
+        String html = WebServerHelper::generateStoragePageHtml();
         request->send(200, "text/html", html);
     });
     

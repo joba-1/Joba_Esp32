@@ -12,6 +12,8 @@ class ModbusDeviceManager;
 class MQTTFeature;
 class ModbusRTUFeature;
 
+namespace MainHelper {
+
 // Helper functions for MQTT command processing
 void handleResetCommand(const String& payload, const String& resetTopic, MQTTFeature& mqtt);
 
@@ -31,5 +33,7 @@ void handleModbusListDevicesCommand(MQTTFeature& mqtt, ModbusDeviceManager* modb
 
 void handleModbusListRegistersCommand(const String& payload, MQTTFeature& mqtt,
                                      ModbusDeviceManager* modbusDevices);
+
+} // namespace MainHelper
 
 #endif // MAIN_HELPER_H

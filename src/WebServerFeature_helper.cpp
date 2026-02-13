@@ -1,5 +1,7 @@
 #include "WebServerFeature_helper.h"
 
+namespace WebServerHelper {
+
 String generateRootPageHtml(const String& deviceId, const String& firmwareName,
                            const IPAddress& ipAddress, uint32_t uptimeSeconds, uint32_t freeHeap) {
     String title;
@@ -211,3 +213,5 @@ String generateStoragePageHtml() {
 </html>
 )rawliteral");
 }
+
+} // namespace WebServerHelper

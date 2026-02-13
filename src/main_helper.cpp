@@ -6,6 +6,8 @@
 #include "LoggingFeature.h"
 #include "ResetManager.h"
 
+namespace MainHelper {
+
 void handleResetCommand(const String& payload, const String& resetTopic, MQTTFeature& mqtt) {
     String p(payload);
     p.trim();
@@ -430,3 +432,5 @@ void handleModbusListRegistersCommand(const String& payload, MQTTFeature& mqtt,
         mqtt.publishToBase("modbus/resp/list_registers", outNack.c_str(), false);
     }
 }
+
+} // namespace MainHelper

@@ -2,6 +2,8 @@
 #include <vector>
 #include <cstring>
 
+namespace ModbusDeviceHelper {
+
 ModbusDataType parseModbusDataType(const char* str) {
     if (strcasecmp(str, "int16") == 0) return ModbusDataType::INT16;
     if (strcasecmp(str, "uint32_be") == 0) return ModbusDataType::UINT32_BE;
@@ -184,3 +186,5 @@ void applyModbusReadResponseToDevice(ModbusDeviceInstance& device,
         // Note: notification is handled by the caller
     }
 }
+
+} // namespace ModbusDeviceHelper

@@ -6,6 +6,8 @@
 #include <vector>
 #include <cstring>
 
+namespace ModbusDeviceHelper {
+
 /**
  * @brief Parse a data type string into ModbusDataType enum
  */
@@ -44,5 +46,7 @@ void applyModbusReadResponseToDevice(ModbusDeviceInstance& device,
                                      const ModbusFrame& response,
                                      uint32_t nowMs,
                                      uint32_t nowUnix);
+
+} // namespace ModbusDeviceHelper
 
 #endif // MODBUS_DEVICE_HELPER_H

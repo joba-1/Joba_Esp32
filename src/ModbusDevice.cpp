@@ -437,7 +437,7 @@ void ModbusDeviceManager::applyReadResponseToDevice(ModbusDeviceInstance& device
     const uint32_t nowMs = millis();
     const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
 
-    applyModbusReadResponseToDevice(device, functionCode, pollIntervalMs, startAddress, response, nowMs, nowUnix);
+    ModbusDeviceHelper::applyModbusReadResponseToDevice(device, functionCode, pollIntervalMs, startAddress, response, nowMs, nowUnix);
 
     // Notify value changes
     for (const auto& reg : device.deviceType->registers) {
@@ -1108,17 +1108,17 @@ std::vector<String> ModbusDeviceManager::getDeviceTypeNames() const {
 }
 
 ModbusDataType ModbusDeviceManager::parseDataType(const char* str) const {
-    return parseModbusDataType(str);
+    return ModbusDeviceHelper::parseModbusDataType(str);
 }
 
 float ModbusDeviceManager::convertRawToValue(const ModbusRegisterDef& def,
                                              const uint16_t* rawData) const {
-    return convertModbusRawToValue(def, rawData);
+    return ModbusDeviceHelper::convertModbusRawToValue(def, rawData);
 }
 
 std::vector<uint16_t> ModbusDeviceManager::convertValueToRaw(const ModbusRegisterDef& def,
                                                               float value) const {
-    return convertModbusValueToRaw(def, value);
+    return ModbusDeviceHelper::convertModbusValueToRaw(def, value);
 }
 
 void ModbusDeviceManager::notifyValueChange(uint8_t unitId, const char* registerName,
