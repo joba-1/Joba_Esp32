@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include <map>
 #include <cmath>
+#include <cstdarg>
 #include "TimeUtils.h"
 
 /**
@@ -655,204 +656,445 @@ public:
                 // Run cycle detection before responding
                 modbus.detectCycle();
 
-                // Pre-allocate 16KB buffer to avoid cbuf resize failures on ESP32
-                AsyncResponseStream* response = request->beginResponseStream("application/json", 16384);
-
-                const unsigned long nowMs = millis();
-
-                response->print(F("{\"uptimeMs\":"));
-                response->print((uint32_t)nowMs);
-
-                // ---- Byte-level bus stats ----
-                const BusByteStats& bs = modbus.getBusByteStats();
-                {
-                    uint32_t elapsedMs = (bs.lastUpdateMs > bs.startMs) ? (uint32_t)(bs.lastUpdateMs - bs.startMs) : 0;
-                    float bytesPerSec = (elapsedMs > 0) ? ((float)bs.totalBytes * 1000.0f / (float)elapsedMs) : 0.0f;
-                    response->printf(",\"byteStats\":{\"totalBytes\":%u,\"frameBoundaries\":%u,"
-                                     "\"validFrames\":%u,\"invalidFrames\":%u,"
-                                     "\"elapsedMs\":%u,\"bytesPerSec\":%.1f}",
-                                     bs.totalBytes, bs.totalFrameBoundaries,
-                                     bs.validFrames, bs.invalidFrames,
-                                     elapsedMs, bytesPerSec);
-                }
-
-                // ---- Transaction time stats (request → response duration) ----
-                {
-                    const BusTransactionStats& t = modbus.getTransactionStats();
-                    response->printf(",\"transactionTimes\":{\"count\":%u", t.count);
-                    if (t.count > 0) {
-                        double mean = t.sumMs / t.count;
-                        double variance = (t.count > 1)
-                            ? (t.sumSqMs - t.sumMs * t.sumMs / t.count) / (t.count - 1)
-                            : 0.0;
-                        double stddev = (variance > 0) ? sqrt(variance) : 0.0;
-                        response->printf(",\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f",
-                                         t.minMs, t.maxMs, mean, stddev);
-                    }
-                    static const char* txnLabels[] = {
-                        "<10ms","10-20ms","20-50ms","50-100ms","100-200ms","200-500ms","500ms-1s",">=1s"
-                    };
-                    response->print(F(",\"histogram\":["));
-                    for (size_t i = 0; i < BusTransactionStats::NUM_BUCKETS; ++i) {
-                        if (i > 0) response->print(',');
-                        response->printf("{\"label\":\"%s\",\"count\":%u}", txnLabels[i], t.buckets[i]);
-                    }
-                    response->print(F("]}"));
-                }
-
-                // ---- Per-register-range entries ----
-                response->print(F(",\"entries\":["));
-                bool first = true;
-                for (const auto& kv : modbus.getBusPatterns()) {
-                    const BusPatternEntry& e = kv.second;
-                    if (!first) response->print(',');
-                    first = false;
-                    response->printf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u,"
-                                     "\"count\":%u,\"firstSeenMs\":%lu,\"lastSeenMs\":%lu",
-                                     e.unitId, e.functionCode, e.startRegister, e.quantity,
-                                     e.count, e.firstSeenMs, e.lastSeenMs);
-                    if (e.intervalCount > 0) {
-                        double mean = e.intervalSum / e.intervalCount;
-                        double variance = (e.intervalCount > 1)
-                            ? (e.intervalSumSq - e.intervalSum * e.intervalSum / e.intervalCount) / (e.intervalCount - 1)
-                            : 0.0;
-                        double stddev = (variance > 0) ? sqrt(variance) : 0.0;
-                        response->printf(",\"interval\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,"
-                                         "\"meanMs\":%.1f,\"stddevMs\":%.1f}",
-                                         e.intervalCount, e.intervalMin, e.intervalMax,
-                                         mean, stddev);
-                    }
-                    // Successor gap: idle time after this transaction's response
-                    if (e.successorGapCount > 0) {
-                        double sgMean = e.successorGapSum / e.successorGapCount;
-                        double sgVar = (e.successorGapCount > 1)
-                            ? (e.successorGapSumSq - e.successorGapSum * e.successorGapSum / e.successorGapCount) / (e.successorGapCount - 1)
-                            : 0.0;
-                        double sgStd = (sgVar > 0) ? sqrt(sgVar) : 0.0;
-                        response->printf(",\"successorGap\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,"
-                                         "\"meanMs\":%.1f,\"stddevMs\":%.1f}",
-                                         e.successorGapCount, e.successorGapMin, e.successorGapMax,
-                                         sgMean, sgStd);
-                    }
-                    response->print('}');
-                }
-                response->print(']');
-
-                // ---- Inter-frame gap histogram (measured at byte level, in microseconds) ----
-                const BusGapStats& g = modbus.getBusGapStats();
-                response->print(F(",\"gaps\":{"));
-                response->printf("\"count\":%u", g.count);
-                if (g.count > 0) {
-                    double meanUs = g.sumUs / g.count;
-                    double variance = (g.count > 1)
-                        ? (g.sumSqUs - g.sumUs * g.sumUs / g.count) / (g.count - 1)
-                        : 0.0;
-                    double stddevUs = (variance > 0) ? sqrt(variance) : 0.0;
-                    response->printf(",\"minUs\":%u,\"maxUs\":%u,\"meanUs\":%.0f,\"stddevUs\":%.0f,"
-                                     "\"minMs\":%.2f,\"maxMs\":%.2f,\"meanMs\":%.2f",
-                                     g.minUs, g.maxUs, meanUs, stddevUs,
-                                     (float)g.minUs / 1000.0f, (float)g.maxUs / 1000.0f,
-                                     (float)meanUs / 1000.0f);
-                }
-                // Buckets with readable labels
-                response->print(F(",\"histogram\":["));
-                static const char* gapLabels[] = {
+                static const char* kTxnLabels[] = {
+                    "<10ms","10-20ms","20-50ms","50-100ms","100-200ms","200-500ms","500ms-1s",">=1s"
+                };
+                static const char* kGapLabels[] = {
                     "<1ms","1-3ms","3-5ms","5-10ms","10-20ms","20-50ms",
                     "50-100ms","100-200ms","200-500ms","500ms-1s","1-5s",">=5s"
                 };
-                for (size_t i = 0; i < BusGapStats::NUM_BUCKETS; ++i) {
-                    if (i > 0) response->print(',');
-                    response->printf("{\"label\":\"%s\",\"count\":%u}", gapLabels[i], g.buckets[i]);
-                }
-                response->print(F("]}"));
 
-                // ---- Detected cycle with per-step gap stats ----
-                const auto& cycle = modbus.getDetectedCycle();
-                const auto& stepGaps = modbus.getCycleStepGaps();
-                response->printf(",\"cyclePosition\":%d", modbus.getCycleTrackingPos());
-                response->print(F(",\"cycle\":["));
-                for (size_t i = 0; i < cycle.size(); ++i) {
-                    if (i > 0) response->print(',');
-                    const BusCycleEntry& c = cycle[i];
-                    response->printf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u",
-                                     c.unitId, c.functionCode, c.startRegister, c.quantity);
-                    if (i < stepGaps.size() && stepGaps[i].count > 0) {
-                        const CycleStepStats& sg = stepGaps[i];
-                        double sgMean = sg.sumMs / sg.count;
-                        double sgVar = (sg.count > 1)
-                            ? (sg.sumSqMs - sg.sumMs * sg.sumMs / sg.count) / (sg.count - 1)
-                            : 0.0;
-                        double sgStddev = (sgVar > 0) ? sqrt(sgVar) : 0.0;
-                        response->printf(",\"gap\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,"
-                                         "\"meanMs\":%.1f,\"stddevMs\":%.1f}",
-                                         sg.count, sg.minMs, sg.maxMs, sgMean, sgStddev);
-                    }
-                    response->print('}');
-                }
-                response->print(F("]"));
+                struct PatternCtx {
+                    int stage = 0;
+                    int entryStage = 0;
+                    int transStage = 0;
+                    bool firstEntry = true;
+                    bool firstTxnBucket = true;
+                    bool firstGapBucket = true;
+                    bool firstCycle = true;
+                    bool firstTransition = true;
+                    bool firstSucc = true;
+                    size_t txnBucket = 0;
+                    size_t gapBucket = 0;
+                    size_t cycleIdx = 0;
+                    size_t succIdx = 0;
+                    const BusPatternEntry* currentEntry = nullptr;
+                    const BusPatternEntry* currentPred = nullptr;
+                    BusPatternMap::const_iterator entryIt;
+                    BusPatternMap::const_iterator entryEnd;
+                    BusTransitionMap::const_iterator transIt;
+                    BusTransitionMap::const_iterator transEnd;
+                    const BusPatternMap* patterns = nullptr;
+                    const BusTransitionMap* transitions = nullptr;
+                    const std::vector<BusCycleEntry>* cycle = nullptr;
+                    const std::vector<CycleStepStats>* stepGaps = nullptr;
+                    struct SuccEntry { uint64_t key; const BusTransitionEntry* te; };
+                    SuccEntry top[4] = {};
+                    size_t topN = 0;
+                    char temp[512];
+                    size_t tempLen = 0;
+                    size_t tempPos = 0;
+                };
 
-                // ---- Transitions: which request follows which? ----
-                {
-                    const BusTransitionMap& transitions = modbus.getBusTransitions();
-                    const auto& patterns = modbus.getBusPatterns();
-                    response->print(F(",\"transitions\":["));
-                    bool firstTx = true;
-                    for (const auto& pred : transitions) {
-                        // Find predecessor pattern info
-                        auto predPat = patterns.find(pred.first);
-                        if (predPat == patterns.end()) continue;
-                        const BusPatternEntry& pe = predPat->second;
+                PatternCtx* ctx = new PatternCtx();
+                ctx->patterns = &modbus.getBusPatterns();
+                ctx->transitions = &modbus.getBusTransitions();
+                ctx->cycle = &modbus.getDetectedCycle();
+                ctx->stepGaps = &modbus.getCycleStepGaps();
+                ctx->entryIt = ctx->patterns->begin();
+                ctx->entryEnd = ctx->patterns->end();
+                ctx->transIt = ctx->transitions->begin();
+                ctx->transEnd = ctx->transitions->end();
 
-                        // Find top successors by count (limit to top 4 to save bandwidth)
-                        struct SuccEntry { uint64_t key; const BusTransitionEntry* te; };
-                        SuccEntry top[4] = {};
-                        size_t topN = 0;
-                        for (const auto& succ : pred.second) {
-                            if (topN < 4) {
-                                top[topN++] = {succ.first, &succ.second};
-                            } else {
-                                // Replace smallest
-                                size_t minIdx = 0;
-                                for (size_t j = 1; j < 4; j++) {
-                                    if (top[j].te->count < top[minIdx].te->count) minIdx = j;
-                                }
-                                if (succ.second.count > top[minIdx].te->count) {
-                                    top[minIdx] = {succ.first, &succ.second};
-                                }
-                            }
+                auto filler = [ctx, &modbus](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+                    (void)index;
+                    size_t written = 0;
+
+                    auto flushTemp = [&]() {
+                        if (ctx->tempPos < ctx->tempLen && written < maxLen) {
+                            size_t avail = ctx->tempLen - ctx->tempPos;
+                            size_t space = maxLen - written;
+                            size_t toCopy = avail < space ? avail : space;
+                            memcpy(buffer + written, ctx->temp + ctx->tempPos, toCopy);
+                            ctx->tempPos += toCopy;
+                            written += toCopy;
+                            if (ctx->tempPos >= ctx->tempLen) { ctx->tempLen = 0; ctx->tempPos = 0; }
+                        }
+                    };
+
+                    auto emitf = [&](const char* fmt, ...) {
+                        va_list ap;
+                        va_start(ap, fmt);
+                        int n = vsnprintf(ctx->temp, sizeof(ctx->temp), fmt, ap);
+                        va_end(ap);
+                        if (n < 0) ctx->tempLen = 0;
+                        else if ((size_t)n >= sizeof(ctx->temp)) ctx->tempLen = sizeof(ctx->temp) - 1;
+                        else ctx->tempLen = (size_t)n;
+                        ctx->tempPos = 0;
+                    };
+
+                    flushTemp();
+                    if (written > 0) return written;
+
+                    const size_t maxSteps = 8;
+                    for (size_t step = 0; step < maxSteps; ++step) {
+                        if (ctx->tempLen != 0) {
+                            flushTemp();
+                            if (written > 0) return written;
                         }
 
-                        if (!firstTx) response->print(',');
-                        firstTx = false;
-                        response->printf("{\"from\":{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u},\"to\":[",
-                                         pe.unitId, pe.functionCode, pe.startRegister, pe.quantity);
-                        bool firstSucc = true;
-                        for (size_t i = 0; i < topN; i++) {
-                            auto succPat = patterns.find(top[i].key);
-                            if (succPat == patterns.end()) continue;
-                            const BusPatternEntry& se = succPat->second;
-                            const BusTransitionEntry& te = *top[i].te;
-                            if (!firstSucc) response->print(',');
-                            firstSucc = false;
-                            response->printf("{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u,\"count\":%u",
-                                             se.unitId, se.functionCode, se.startRegister, se.quantity, te.count);
-                            if (te.count > 0) {
-                                double gMean = te.gapSum / te.count;
-                                double gVar = (te.count > 1)
-                                    ? (te.gapSumSq - te.gapSum * te.gapSum / te.count) / (te.count - 1)
+                        if (ctx->stage == 0) {
+                            emitf("{\"uptimeMs\":%lu", (unsigned long)millis());
+                            ctx->stage = 1;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 1) {
+                            const BusByteStats& bs = modbus.getBusByteStats();
+                            uint32_t elapsedMs = (bs.lastUpdateMs > bs.startMs) ? (uint32_t)(bs.lastUpdateMs - bs.startMs) : 0;
+                            float bytesPerSec = (elapsedMs > 0) ? ((float)bs.totalBytes * 1000.0f / (float)elapsedMs) : 0.0f;
+                            emitf(",\"byteStats\":{\"totalBytes\":%u,\"frameBoundaries\":%u,\"validFrames\":%u,\"invalidFrames\":%u,\"elapsedMs\":%u,\"bytesPerSec\":%.1f}",
+                                  bs.totalBytes, bs.totalFrameBoundaries, bs.validFrames, bs.invalidFrames, elapsedMs, bytesPerSec);
+                            ctx->stage = 2;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 2) {
+                            const BusTransactionStats& t = modbus.getTransactionStats();
+                            if (t.count > 0) {
+                                double mean = t.sumMs / t.count;
+                                double variance = (t.count > 1)
+                                    ? (t.sumSqMs - t.sumMs * t.sumMs / t.count) / (t.count - 1)
                                     : 0.0;
-                                double gStd = (gVar > 0) ? sqrt(gVar) : 0.0;
-                                response->printf(",\"gap\":{\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f}",
-                                                 te.gapMin, te.gapMax, gMean, gStd);
+                                double stddev = (variance > 0) ? sqrt(variance) : 0.0;
+                                emitf(",\"transactionTimes\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f,\"histogram\":[",
+                                      t.count, t.minMs, t.maxMs, mean, stddev);
+                            } else {
+                                emitf(",\"transactionTimes\":{\"count\":%u,\"histogram\":[", t.count);
                             }
-                            response->print('}');
+                            ctx->firstTxnBucket = true;
+                            ctx->txnBucket = 0;
+                            ctx->stage = 3;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
                         }
-                        response->print("]}");
-                    }
-                    response->print(']');
-                }
 
-                response->print('}');
+                        if (ctx->stage == 3) {
+                            const BusTransactionStats& t = modbus.getTransactionStats();
+                            if (ctx->txnBucket >= BusTransactionStats::NUM_BUCKETS) {
+                                emitf("]}");
+                                ctx->stage = 4;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+                            const char* prefix = ctx->firstTxnBucket ? "" : ",";
+                            ctx->firstTxnBucket = false;
+                            emitf("%s{\"label\":\"%s\",\"count\":%u}",
+                                  prefix, kTxnLabels[ctx->txnBucket], t.buckets[ctx->txnBucket]);
+                            ctx->txnBucket++;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 4) {
+                            emitf(",\"entries\":[");
+                            ctx->stage = 5;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 5) {
+                            if (!ctx->currentEntry) {
+                                if (ctx->entryIt == ctx->entryEnd) {
+                                    emitf("]");
+                                    ctx->stage = 6;
+                                    flushTemp();
+                                    if (written > 0) return written;
+                                    continue;
+                                }
+                                ctx->currentEntry = &ctx->entryIt->second;
+                                ctx->entryStage = 0;
+                            }
+
+                            const BusPatternEntry& e = *ctx->currentEntry;
+                            if (ctx->entryStage == 0) {
+                                if (!ctx->firstEntry) {
+                                    emitf(",");
+                                    ctx->entryStage = 1;
+                                    flushTemp();
+                                    if (written > 0) return written;
+                                    continue;
+                                }
+                                ctx->firstEntry = false;
+                                ctx->entryStage = 1;
+                                continue;
+                            }
+
+                            if (ctx->entryStage == 1) {
+                                emitf("{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u,\"count\":%u,\"firstSeenMs\":%lu,\"lastSeenMs\":%lu",
+                                      e.unitId, e.functionCode, e.startRegister, e.quantity,
+                                      e.count, (unsigned long)e.firstSeenMs, (unsigned long)e.lastSeenMs);
+                                if (e.intervalCount > 0) ctx->entryStage = 2;
+                                else if (e.successorGapCount > 0) ctx->entryStage = 3;
+                                else ctx->entryStage = 4;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+
+                            if (ctx->entryStage == 2) {
+                                double mean = e.intervalSum / e.intervalCount;
+                                double variance = (e.intervalCount > 1)
+                                    ? (e.intervalSumSq - e.intervalSum * e.intervalSum / e.intervalCount) / (e.intervalCount - 1)
+                                    : 0.0;
+                                double stddev = (variance > 0) ? sqrt(variance) : 0.0;
+                                emitf(",\"interval\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f}",
+                                      e.intervalCount, e.intervalMin, e.intervalMax, mean, stddev);
+                                ctx->entryStage = (e.successorGapCount > 0) ? 3 : 4;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+
+                            if (ctx->entryStage == 3) {
+                                double sgMean = e.successorGapSum / e.successorGapCount;
+                                double sgVar = (e.successorGapCount > 1)
+                                    ? (e.successorGapSumSq - e.successorGapSum * e.successorGapSum / e.successorGapCount) / (e.successorGapCount - 1)
+                                    : 0.0;
+                                double sgStd = (sgVar > 0) ? sqrt(sgVar) : 0.0;
+                                emitf(",\"successorGap\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f}",
+                                      e.successorGapCount, e.successorGapMin, e.successorGapMax, sgMean, sgStd);
+                                ctx->entryStage = 4;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+
+                            emitf("}");
+                            ctx->currentEntry = nullptr;
+                            ctx->entryStage = 0;
+                            ++ctx->entryIt;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 6) {
+                            const BusGapStats& g = modbus.getBusGapStats();
+                            if (g.count > 0) {
+                                double meanUs = g.sumUs / g.count;
+                                double variance = (g.count > 1)
+                                    ? (g.sumSqUs - g.sumUs * g.sumUs / g.count) / (g.count - 1)
+                                    : 0.0;
+                                double stddevUs = (variance > 0) ? sqrt(variance) : 0.0;
+                                emitf(",\"gaps\":{\"count\":%u,\"minUs\":%u,\"maxUs\":%u,\"meanUs\":%.0f,\"stddevUs\":%.0f,\"minMs\":%.2f,\"maxMs\":%.2f,\"meanMs\":%.2f,\"histogram\":[",
+                                      g.count, g.minUs, g.maxUs, meanUs, stddevUs,
+                                      (float)g.minUs / 1000.0f, (float)g.maxUs / 1000.0f, (float)meanUs / 1000.0f);
+                            } else {
+                                emitf(",\"gaps\":{\"count\":%u,\"histogram\":[", g.count);
+                            }
+                            ctx->firstGapBucket = true;
+                            ctx->gapBucket = 0;
+                            ctx->stage = 7;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 7) {
+                            const BusGapStats& g = modbus.getBusGapStats();
+                            if (ctx->gapBucket >= BusGapStats::NUM_BUCKETS) {
+                                emitf("]}");
+                                ctx->stage = 8;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+                            const char* prefix = ctx->firstGapBucket ? "" : ",";
+                            ctx->firstGapBucket = false;
+                            emitf("%s{\"label\":\"%s\",\"count\":%u}",
+                                  prefix, kGapLabels[ctx->gapBucket], g.buckets[ctx->gapBucket]);
+                            ctx->gapBucket++;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 8) {
+                            emitf(",\"cyclePosition\":%d,\"cycle\":[", modbus.getCycleTrackingPos());
+                            ctx->firstCycle = true;
+                            ctx->cycleIdx = 0;
+                            ctx->stage = 9;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 9) {
+                            if (ctx->cycleIdx >= ctx->cycle->size()) {
+                                emitf("]");
+                                ctx->stage = 10;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+
+                            const BusCycleEntry& c = (*ctx->cycle)[ctx->cycleIdx];
+                            const char* prefix = ctx->firstCycle ? "" : ",";
+                            ctx->firstCycle = false;
+                            if (ctx->cycleIdx < ctx->stepGaps->size() && (*ctx->stepGaps)[ctx->cycleIdx].count > 0) {
+                                const CycleStepStats& sg = (*ctx->stepGaps)[ctx->cycleIdx];
+                                double sgMean = sg.sumMs / sg.count;
+                                double sgVar = (sg.count > 1)
+                                    ? (sg.sumSqMs - sg.sumMs * sg.sumMs / sg.count) / (sg.count - 1)
+                                    : 0.0;
+                                double sgStddev = (sgVar > 0) ? sqrt(sgVar) : 0.0;
+                                emitf("%s{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u,\"gap\":{\"count\":%u,\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f}}",
+                                      prefix, c.unitId, c.functionCode, c.startRegister, c.quantity,
+                                      sg.count, sg.minMs, sg.maxMs, sgMean, sgStddev);
+                            } else {
+                                emitf("%s{\"unitId\":%u,\"fc\":%u,\"startReg\":%u,\"qty\":%u}",
+                                      prefix, c.unitId, c.functionCode, c.startRegister, c.quantity);
+                            }
+                            ctx->cycleIdx++;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 10) {
+                            emitf(",\"transitions\":[");
+                            ctx->firstTransition = true;
+                            ctx->transStage = 0;
+                            ctx->stage = 11;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+
+                        if (ctx->stage == 11) {
+                            if (ctx->transStage == 0) {
+                                ctx->currentPred = nullptr;
+                                ctx->topN = 0;
+                                while (ctx->transIt != ctx->transEnd) {
+                                    auto predPat = ctx->patterns->find(ctx->transIt->first);
+                                    if (predPat == ctx->patterns->end()) {
+                                        ++ctx->transIt;
+                                        continue;
+                                    }
+                                    ctx->currentPred = &predPat->second;
+                                    for (const auto& succ : ctx->transIt->second) {
+                                        if (ctx->topN < 4) {
+                                            ctx->top[ctx->topN++] = {succ.first, &succ.second};
+                                        } else {
+                                            size_t minIdx = 0;
+                                            for (size_t j = 1; j < 4; j++) {
+                                                if (ctx->top[j].te->count < ctx->top[minIdx].te->count) minIdx = j;
+                                            }
+                                            if (succ.second.count > ctx->top[minIdx].te->count) {
+                                                ctx->top[minIdx] = {succ.first, &succ.second};
+                                            }
+                                        }
+                                    }
+                                    ctx->succIdx = 0;
+                                    ctx->firstSucc = true;
+                                    ctx->transStage = 1;
+                                    break;
+                                }
+
+                                if (!ctx->currentPred) {
+                                    emitf("]}");
+                                    ctx->stage = 99;
+                                    flushTemp();
+                                    if (written > 0) return written;
+                                    continue;
+                                }
+                            }
+
+                            if (ctx->transStage == 1) {
+                                if (!ctx->firstTransition) {
+                                    emitf(",");
+                                    ctx->transStage = 2;
+                                    flushTemp();
+                                    if (written > 0) return written;
+                                    continue;
+                                }
+                                ctx->firstTransition = false;
+                                ctx->transStage = 2;
+                                continue;
+                            }
+
+                            if (ctx->transStage == 2) {
+                                const BusPatternEntry& pe = *ctx->currentPred;
+                                emitf("{\"from\":{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u},\"to\":[",
+                                      pe.unitId, pe.functionCode, pe.startRegister, pe.quantity);
+                                ctx->transStage = 3;
+                                flushTemp();
+                                if (written > 0) return written;
+                                continue;
+                            }
+
+                            if (ctx->transStage == 3) {
+                                while (ctx->succIdx < ctx->topN) {
+                                    auto succPat = ctx->patterns->find(ctx->top[ctx->succIdx].key);
+                                    if (succPat == ctx->patterns->end()) {
+                                        ctx->succIdx++;
+                                        continue;
+                                    }
+                                    const BusPatternEntry& se = succPat->second;
+                                    const BusTransitionEntry& te = *ctx->top[ctx->succIdx].te;
+                                    const char* prefix = ctx->firstSucc ? "" : ",";
+                                    ctx->firstSucc = false;
+                                    if (te.count > 0) {
+                                        double gMean = te.gapSum / te.count;
+                                        double gVar = (te.count > 1)
+                                            ? (te.gapSumSq - te.gapSum * te.gapSum / te.count) / (te.count - 1)
+                                            : 0.0;
+                                        double gStd = (gVar > 0) ? sqrt(gVar) : 0.0;
+                                        emitf("%s{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u,\"count\":%u,\"gap\":{\"minMs\":%u,\"maxMs\":%u,\"meanMs\":%.1f,\"stddevMs\":%.1f}}",
+                                              prefix, se.unitId, se.functionCode, se.startRegister, se.quantity, te.count,
+                                              te.gapMin, te.gapMax, gMean, gStd);
+                                    } else {
+                                        emitf("%s{\"unit\":%u,\"fc\":%u,\"reg\":%u,\"qty\":%u,\"count\":%u}",
+                                              prefix, se.unitId, se.functionCode, se.startRegister, se.quantity, te.count);
+                                    }
+                                    ctx->succIdx++;
+                                    flushTemp();
+                                    if (written > 0) return written;
+                                    break;
+                                }
+
+                                if (ctx->succIdx >= ctx->topN) {
+                                    ctx->transStage = 4;
+                                }
+                                continue;
+                            }
+
+                            emitf("]}");
+                            ++ctx->transIt;
+                            ctx->transStage = 0;
+                            flushTemp();
+                            if (written > 0) return written;
+                            continue;
+                        }
+                    }
+
+                    if (ctx->stage == 99 && ctx->tempLen == 0) {
+                        delete ctx;
+                        return 0;
+                    }
+                    return written;
+                };
+
+                AsyncWebServerResponse* response = request->beginChunkedResponse("application/json", filler);
                 request->send(response);
             });
 
