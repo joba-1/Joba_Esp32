@@ -656,6 +656,12 @@ public:
                 // Run cycle detection before responding
                 modbus.detectCycle();
 
+                // Parse limit parameter
+                size_t maxPatterns = 50;
+                if (request->hasParam("limit")) {
+                    maxPatterns = (size_t)atoi(request->getParam("limit")->value().c_str());
+                }
+
                 static const char* kTxnLabels[] = {
                     "<10ms","10-20ms","20-50ms","50-100ms","100-200ms","200-500ms","500ms-1s",">=1s"
                 };
@@ -678,6 +684,8 @@ public:
                     size_t gapBucket = 0;
                     size_t cycleIdx = 0;
                     size_t succIdx = 0;
+                    size_t maxPatterns = 50;
+                    size_t patternCount = 0;
                     const BusPatternEntry* currentEntry = nullptr;
                     const BusPatternEntry* currentPred = nullptr;
                     BusPatternMap::const_iterator entryIt;
@@ -697,6 +705,7 @@ public:
                 };
 
                 PatternCtx* ctx = new PatternCtx();
+                ctx->maxPatterns = maxPatterns;
                 ctx->patterns = &modbus.getBusPatterns();
                 ctx->transitions = &modbus.getBusTransitions();
                 ctx->cycle = &modbus.getDetectedCycle();
@@ -813,7 +822,7 @@ public:
 
                         if (ctx->stage == 5) {
                             if (!ctx->currentEntry) {
-                                if (ctx->entryIt == ctx->entryEnd) {
+                                if (ctx->entryIt == ctx->entryEnd || ctx->patternCount >= ctx->maxPatterns) {
                                     emitf("]");
                                     ctx->stage = 6;
                                     flushTemp();
@@ -882,6 +891,7 @@ public:
                             ctx->currentEntry = nullptr;
                             ctx->entryStage = 0;
                             ++ctx->entryIt;
+                            ctx->patternCount++;
                             flushTemp();
                             if (written > 0) return written;
                             continue;

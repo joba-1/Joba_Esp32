@@ -1377,7 +1377,7 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
     //
     // Additional safety: UART RX buffer check immediately before TX.
     static constexpr uint32_t MIN_GAP_SILENCE_MS = 200;
-    static constexpr uint32_t MIN_INTER_TX_SILENCE_MS = 10;
+    static constexpr uint32_t MIN_INTER_TX_SILENCE_MS = 70;
 
     // Don't TX until we've observed at least one foreign transaction.
     // At boot, _lastByteTime is from initialization and doesn't reflect
@@ -1598,14 +1598,16 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
     _busSilent = false;
     
     // Log TX with hex dump for debugging bus issues
-    char hexBuf[64];
-    size_t hexLen = 0;
-    size_t totalLen = _txFrameLen + 2; // +2 for CRC
-    for (size_t i = 0; i < _txFrameLen && hexLen < 58; i++) {
-        hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X ", _txFrameBuffer[i]);
+    if (LOG_D_ACTIVE()) {
+        char hexBuf[64];
+        size_t hexLen = 0;
+        size_t totalLen = _txFrameLen + 2; // +2 for CRC
+        for (size_t i = 0; i < _txFrameLen && hexLen < 58; i++) {
+            hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X ", _txFrameBuffer[i]);
+        }
+        hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X %02X", crc & 0xFF, crc >> 8);
+        LOG_D("TX[%u]: %s", totalLen, hexBuf);
     }
-    hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X %02X", crc & 0xFF, crc >> 8);
-    LOG_I("TX[%u]: %s", totalLen, hexBuf);
     return true;
 }
 

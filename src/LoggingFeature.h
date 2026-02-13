@@ -115,10 +115,15 @@ private:
 };
 
 // Global convenience macros
+#define LOG_E_ACTIVE() (LoggingFeature::getInstance() && (LoggingFeature::getInstance()->getSerialLogLevel() >= LOG_LEVEL_ERROR || (LoggingFeature::getInstance()->isSyslogEnabled() && LoggingFeature::getInstance()->getSyslogLogLevel() >= LOG_LEVEL_ERROR)))
 #define LOG_E(...) do { if (LoggingFeature::getInstance()) LoggingFeature::getInstance()->error(__VA_ARGS__); } while(0)
+#define LOG_W_ACTIVE() (LoggingFeature::getInstance() && (LoggingFeature::getInstance()->getSerialLogLevel() >= LOG_LEVEL_WARN || (LoggingFeature::getInstance()->isSyslogEnabled() && LoggingFeature::getInstance()->getSyslogLogLevel() >= LOG_LEVEL_WARN)))
 #define LOG_W(...) do { if (LoggingFeature::getInstance()) LoggingFeature::getInstance()->warn(__VA_ARGS__); } while(0)
+#define LOG_I_ACTIVE() (LoggingFeature::getInstance() && (LoggingFeature::getInstance()->getSerialLogLevel() >= LOG_LEVEL_INFO || (LoggingFeature::getInstance()->isSyslogEnabled() && LoggingFeature::getInstance()->getSyslogLogLevel() >= LOG_LEVEL_INFO)))
 #define LOG_I(...) do { if (LoggingFeature::getInstance()) LoggingFeature::getInstance()->info(__VA_ARGS__); } while(0)
+#define LOG_D_ACTIVE() (LoggingFeature::getInstance() && (LoggingFeature::getInstance()->getSerialLogLevel() >= LOG_LEVEL_DEBUG || (LoggingFeature::getInstance()->isSyslogEnabled() && LoggingFeature::getInstance()->getSyslogLogLevel() >= LOG_LEVEL_DEBUG)))
 #define LOG_D(...) do { if (LoggingFeature::getInstance()) LoggingFeature::getInstance()->debug(__VA_ARGS__); } while(0)
+#define LOG_V_ACTIVE() (LoggingFeature::getInstance() && (LoggingFeature::getInstance()->getSerialLogLevel() >= LOG_LEVEL_VERBOSE || (LoggingFeature::getInstance()->isSyslogEnabled() && LoggingFeature::getInstance()->getSyslogLogLevel() >= LOG_LEVEL_VERBOSE)))
 #define LOG_V(...) do { if (LoggingFeature::getInstance()) LoggingFeature::getInstance()->verbose(__VA_ARGS__); } while(0)
 
 #endif // LOGGING_FEATURE_H
