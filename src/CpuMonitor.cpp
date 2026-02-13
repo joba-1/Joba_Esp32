@@ -49,6 +49,10 @@ namespace CpuMonitor {
         s_loopEndUs = s_windowStartUs;
     }
 
+    // Note: the implementation below is intentionally lightweight and
+    // uses simple micros()/millis() arithmetic. It is safe to call from
+    // the main loop and avoids heap allocations.
+
     void markLoopStart() {
         init();
         const uint32_t now = (uint32_t)micros();

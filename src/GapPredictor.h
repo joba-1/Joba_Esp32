@@ -32,6 +32,15 @@ struct BusTransitionEntry {
     }
 };
 
+/**
+ * @brief Record an observed gap sample for this transition.
+ *
+ * Updates aggregated counters and moment sums used later to compute
+ * mean/variance and conservative estimates for scheduling.
+ *
+ * @param gapMs observed gap in milliseconds
+ */
+
 using BusTransitionMap = std::map<uint64_t, std::map<uint64_t, BusTransitionEntry>>;
 
 /**
@@ -85,6 +94,14 @@ struct GapSchedulerStats {
 };
 
 /**
+ * @brief Reset runtime statistics for the gap scheduler.
+ *
+ * Clears counters and resets the safety margin back to the configured
+ * `initialMargin`. The `startMs` field is set in runtime code using
+ * `millis()` where real time is available.
+ */
+
+/**
  * @brief Predicts gaps and provides safety checks for transmitting in a gap.
  *
  * The class stores per-transition histograms and exposes:
@@ -96,30 +113,85 @@ struct GapSchedulerStats {
  */
 class GapPredictor {
 public:
+    /**
+     * @brief Construct a GapPredictor and initialize runtime statistics.
+     *
+     * The implementation initializes the internal `GapSchedulerStats` and
+     * records the current `millis()` as the start time.
+     */
     GapPredictor();
 
     static constexpr float COLLISION_MARGIN_STEP = 0.01f;  // +1%
-    static constexpr float SUCCESS_MARGIN_STEP = 0.001f;  // -0.1% per success
+    static constexpr float SUCCESS_MARGIN_STEP = 0.002f;  // -0.2% per success
 
+    /**
+     * @brief Clear learned data and reset runtime statistics.
+     *
+     * Clears the transition map, resets the global minimum gap and
+     * reinitializes scheduler statistics. `startMs` will be set using
+     * `millis()` in the implementation.
+     */
     void reset();
 
     // Record a transition (predecessor -> successor) observed with gapMs
+    /**
+     * @brief Feed an observed predecessor -> successor gap into the model.
+     *
+     * @param predecessorKey Encoded predecessor identifier (non-zero).
+     * @param successorKey Encoded successor identifier.
+     * @param gapMs Observed gap in milliseconds between transactions.
+     */
     void recordTransition(uint64_t predecessorKey, uint64_t successorKey, uint32_t gapMs);
 
     // Predict gap after given predecessor key
+    /**
+     * @brief Predict a conservative gap after the given predecessor.
+     *
+     * Returns a `GapPrediction` structure containing a conservative
+     * predicted gap (reduced by safety margin), a confirmation threshold
+     * and sample counts. If insufficient data is available the result
+     * will have `valid == false`.
+     */
     GapPrediction predictCurrentGap(uint64_t predecessorKey) const;
 
     // Check whether a TX of wireMs can safely transmit given elapsedMs since window open
+    /**
+     * @brief Quick heuristic to check whether a transmission fits safely.
+     *
+     * The method uses per-edge minima, a small fixed buffer and the global
+     * minimum gap to conservatively decide whether a planned transmission
+     * (wireMs) is likely to complete given `elapsedMs` since the window
+     * opened.
+     */
     bool canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, uint32_t elapsedMs) const;
 
     // Record a collision event (our TX was stepped on). Pass contextual info for logging.
+    /**
+     * @brief Notify the predictor that our transmission collided with another.
+     *
+     * Adjusts internal safety margins and records collision timestamps for
+     * diagnostic purposes.
+     */
     void reportCollision(bool sentDuringGapWindow, uint32_t lastTxElapsedMs, uint32_t lastTxWireMs,
                          bool hasLastCompletedTx, uint64_t lastCompletedTxKey);
 
     // Record a successful gap TX to relax safety margin over time.
+    /**
+     * @brief Inform the predictor that a transmission completed successfully
+     *        within the predicted gap.
+     *
+     * This allows the scheduler to slowly relax the safety margin after
+     * repeated successful gap transmissions.
+     */
     void noteGapSuccess();
 
     // Enable/disable stats gathering to avoid polluting data during own TX
+    /**
+     * @brief Enable or disable runtime statistics gathering.
+     *
+     * Disable when the device is performing its own transmissions to avoid
+     * polluting learned statistics about foreign masters.
+     */
     void setStatsEnabled(bool enabled) { _statsEnabled = enabled; }
     bool areStatsEnabled() const { return _statsEnabled; }
 

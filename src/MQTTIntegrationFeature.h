@@ -18,6 +18,17 @@
  * Separating these from main.cpp into a Feature gives per-feature CPU
  * timing via CpuMonitor / ResetDiagnostics.
  */
+/**
+ * @brief Glue feature that runs MQTT-related integration tasks
+ *
+ * Responsibilities:
+ * - Publish Home Assistant autodiscovery for configured sensors and Modbus
+ * - Subscribe to command topics and maintain subscriptions across reconnects
+ * - Periodically publish Modbus device state to MQTT
+ *
+ * The feature is non-owning: `ModbusDeviceManager` and sensor configs are
+ * provided via `configure()` or `setModbusDevices()`.
+ */
 class MQTTIntegrationFeature : public Feature {
 public:
     MQTTIntegrationFeature(MQTTFeature& mqtt,
@@ -33,7 +44,16 @@ public:
         , _statePublishIntervalMs(statePublishIntervalMs)
     {}
 
-    /// Call after dynamic values (deviceId, baseTopic, modbusDevices) are available
+    /**
+     * @brief Provide dynamic configuration values
+     *
+     * This must be called once the runtime values such as `baseTopic`,
+     * `deviceId` and the `ModbusDeviceManager` instance are available.
+     *
+     * @param baseTopic Base MQTT topic used for publishes/subscribes
+     * @param deviceId Unique device identifier string
+     * @param modbusDevices Pointer to ModbusDeviceManager (non-owning)
+     */
     void configure(const char* baseTopic, const char* deviceId,
                    ModbusDeviceManager* modbusDevices) {
         _baseTopic = baseTopic;
@@ -41,6 +61,9 @@ public:
         _modbusDevices = modbusDevices;
     }
 
+    /**
+     * @brief No-op setup; work is performed from `loop()` once MQTT is ready
+     */
     void setup() override {
         // Nothing to do — all work is deferred to loop() waiting for MQTT
     }

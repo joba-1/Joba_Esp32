@@ -2,16 +2,21 @@
 
 #include <Arduino.h>
 
-// Minimal InfluxDB Line Protocol escaping helpers.
-//
-// Influx line protocol requires escaping the following characters in tag keys and tag values:
-//   - commas (',')
-//   - equals ('=')
-//   - spaces (' ')
-//
-// Many implementations also escape backslashes to avoid ambiguous sequences.
+/**
+ * @file InfluxLineProtocol.h
+ * @brief Small helpers for InfluxDB Line Protocol escaping
+ *
+ * Provides minimal helpers to escape measurement names and tag keys/values
+ * so they may be safely emitted using InfluxDB line protocol. Functions are
+ * intentionally lightweight and return `String` for easy use in the firmware.
+ */
 namespace InfluxLineProtocol {
 
+/**
+ * @brief Escape a tag key/value for InfluxDB line protocol
+ * @param s NUL-terminated C string to escape
+ * @return Escaped string as `String`
+ */
 inline String escapeTag(const char* s) {
     if (!s) return String();
 
@@ -26,17 +31,24 @@ inline String escapeTag(const char* s) {
     return out;
 }
 
+/**
+ * @brief Convenience overload for `escapeTag` accepting `String`
+ */
 inline String escapeTag(const String& s) {
     return escapeTag(s.c_str());
 }
 
+/**
+ * @brief Escape a measurement name for InfluxDB line protocol
+ * @param s NUL-terminated C string measurement name
+ * @return Escaped measurement as `String`
+ */
 inline String escapeMeasurement(const char* s) {
     if (!s) return String();
 
     String out;
     while (*s) {
         const char c = *s++;
-        // For measurement names: escape commas and spaces (and backslash for safety).
         if (c == '\\' || c == ',' || c == ' ') {
             out += '\\';
         }

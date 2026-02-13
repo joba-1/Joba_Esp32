@@ -39,6 +39,9 @@ ModbusDeviceManager::ScopedLock::ScopedLock(SemaphoreHandle_t mutex)
     }
 }
 
+/**
+ * @brief ScopedLock destructor releases the held semaphore.
+ */
 ModbusDeviceManager::ScopedLock::~ScopedLock() {
     if (_mutex) {
         (void)xSemaphoreGiveRecursive(_mutex);
@@ -65,6 +68,11 @@ ModbusDeviceManager::ScopedLock ModbusDeviceManager::scopedLock() const {
     return ScopedLock(_mutex);
 }
 
+/**
+ * @brief Handle an observed Modbus frame on the bus (requests and responses).
+ * @param frame The observed Modbus frame.
+ * @param isRequest True if the frame is a request, false if a response.
+ */
 void ModbusDeviceManager::handleObservedFrame(const ModbusFrame& frame, bool isRequest) {
     auto _guard = scopedLock();
     // Track last seen request per unit (used to infer address range for a later response)
@@ -387,6 +395,15 @@ void ModbusDeviceManager::rebuildPollBatches(ModbusDeviceInstance& device) {
         if (a.interval != b.interval) return a.interval < b.interval;
         return a.start < b.start;
     });
+
+    /**
+     * @brief Apply a read response frame to the device cache and notify changes.
+     * @param device Device instance to update.
+     * @param functionCode Modbus function code of the response.
+     * @param pollIntervalMs Poll interval associated with this read window.
+     * @param startAddress Start register address of the returned window.
+     * @param response The ModbusFrame containing the response.
+     */
 
     // Merge into windows
     uint8_t curFc = segs[0].fc;
@@ -1113,16 +1130,25 @@ ModbusDataType ModbusDeviceManager::parseDataType(const char* str) const {
 
 float ModbusDeviceManager::convertRawToValue(const ModbusRegisterDef& def,
                                              const uint16_t* rawData) const {
+    /**
+     * @brief Convert raw Modbus words to a float using the helper implementation.
+     */
     return ModbusDeviceHelper::convertModbusRawToValue(def, rawData);
 }
 
 std::vector<uint16_t> ModbusDeviceManager::convertValueToRaw(const ModbusRegisterDef& def,
                                                               float value) const {
+    /**
+     * @brief Convert a float value into Modbus 16-bit words using the helper.
+     */
     return ModbusDeviceHelper::convertModbusValueToRaw(def, value);
 }
 
 void ModbusDeviceManager::notifyValueChange(uint8_t unitId, const char* registerName,
                                              float value, const char* unit) {
+    /**
+     * @brief Call the registered `ValueChangeCallback` with resolved device name.
+     */
     if (_valueChangeCallback) {
         auto it = _devices.find(unitId);
         if (it != _devices.end()) {
@@ -1132,6 +1158,12 @@ void ModbusDeviceManager::notifyValueChange(uint8_t unitId, const char* register
     }
 }
 
+/**
+ * @brief Render current device values to InfluxDB line protocol for a unit.
+ * @param unitId Device unit ID.
+ * @param measurement InfluxDB measurement name.
+ * @return String containing newline-separated line-protocol points.
+ */
 String ModbusDeviceManager::toLineProtocol(uint8_t unitId, const char* measurement) const {
     auto it = _devices.find(unitId);
     if (it == _devices.end()) return "";
@@ -1167,6 +1199,11 @@ String ModbusDeviceManager::toLineProtocol(uint8_t unitId, const char* measureme
     return lines;
 }
 
+/**
+ * @brief Render all devices' current values to InfluxDB line protocol.
+ * @param measurement InfluxDB measurement name.
+ * @return Vector of line-protocol strings (one per register value).
+ */
 std::vector<String> ModbusDeviceManager::allToLineProtocol(const char* measurement) const {
     std::vector<String> result;
     

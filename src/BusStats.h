@@ -7,6 +7,11 @@
 #include <Arduino.h>
 
 /**
+ * @file BusStats.h
+ * @brief Lightweight structures for tracking Modbus bus timing and traffic stats
+ */
+
+/**
  * @brief Inter-frame gap histogram and statistics
  *
  * `BusGapStats` records the silence durations observed between consecutive
@@ -26,6 +31,10 @@ struct BusGapStats {
     uint32_t minUs{UINT32_MAX};
     uint32_t maxUs{0};
 
+    /**
+     * @brief Record an observed inter-frame gap in microseconds
+     * @param gapUs Gap duration in microseconds
+     */
     void record(uint32_t gapUs) {
         ++count;
         sumUs += gapUs;
@@ -37,6 +46,9 @@ struct BusGapStats {
         }
     }
 
+    /**
+     * @brief Reset all counters to initial state
+     */
     void reset() { *this = BusGapStats{}; }
 };
 
@@ -45,6 +57,9 @@ struct BusGapStats {
  *
  * `BusByteStats` tracks raw byte/frame counts and simple frame validity
  * counters useful for diagnostics and estimating traffic volume.
+ *
+ * @details The struct maintains timing anchors (`startMs` / `lastUpdateMs`) so
+ * that throughput and rates can be computed by consumers.
  */
 struct BusByteStats {
     uint32_t totalBytes{0};
@@ -54,6 +69,10 @@ struct BusByteStats {
     unsigned long startMs{0};
     unsigned long lastUpdateMs{0};
 
+    /**
+     * @brief Reset counters and set timing anchors
+     * @return void
+     */
     void reset() {
         *this = BusByteStats{};
         startMs = millis();
@@ -61,6 +80,13 @@ struct BusByteStats {
     }
 };
 
+/**
+ * @brief Transaction duration statistics (request→response)
+ *
+ * `BusTransactionStats` aggregates round-trip durations (ms) for paired
+ * request→response transactions. This helps estimate minimum wire time
+ * required for our own requests to fit into observed gaps.
+ */
 /**
  * @brief Transaction duration statistics (request→response)
  *
@@ -78,6 +104,10 @@ struct BusTransactionStats {
     uint32_t minMs{UINT32_MAX};
     uint32_t maxMs{0};
 
+    /**
+     * @brief Record an observed transaction duration in milliseconds
+     * @param durationMs Duration in milliseconds
+     */
     void record(uint32_t durationMs) {
         ++count;
         sumMs += durationMs;
@@ -89,6 +119,10 @@ struct BusTransactionStats {
         }
     }
 
+    /**
+     * @brief Reset all counters
+        * @return void
+        */
     void reset() { *this = BusTransactionStats{}; }
 };
 

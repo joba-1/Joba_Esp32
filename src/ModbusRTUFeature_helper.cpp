@@ -24,6 +24,10 @@ bool parseModbusFrame(const uint8_t* data, size_t length, ModbusFrame& frame, ui
     frame.unixTimestamp = unixTimestamp;
     frame.isRequest = false;
 
+    // Attach timestamps
+    frame.timestamp = timestampMs;
+    frame.unixTimestamp = unixTimestamp;
+
     // Verify CRC (Modbus: LSB first)
     uint16_t receivedCrc = (uint16_t)data[length - 2] | ((uint16_t)data[length - 1] << 8);
     uint16_t calculatedCrc = modbus_crc16(data, length - 2);

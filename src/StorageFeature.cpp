@@ -2,12 +2,20 @@
 #include "LoggingFeature.h"
 #include <ArduinoJson.h>
 
+/**
+ * @file StorageFeature.cpp
+ * @brief Implementation of LittleFS wrapper helpers
+ */
+
 StorageFeature::StorageFeature(bool formatOnFail)
     : _formatOnFail(formatOnFail)
     , _mounted(false)
 {
 }
 
+/**
+ * @brief Mount LittleFS and optionally format on failure
+ */
 void StorageFeature::setup() {
     if (_mounted) return;
     

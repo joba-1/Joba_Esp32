@@ -6,7 +6,11 @@
 #include "Feature.h"
 
 /**
+ * @file WiFiManagerFeature.h
  * @brief WiFi connection management with captive portal for configuration
+ *
+ * Wraps `WiFiManager` to provide non-blocking configuration portal support
+ * and simple reconnect logic used by the firmware.
  */
 class WiFiManagerFeature : public Feature {
 public:
@@ -23,7 +27,14 @@ public:
     const char* getName() const override { return "WiFiManager"; }
     bool isReady() const override { return _connected; }
     
+    /**
+     * @brief True when WiFi is currently connected
+     */
     bool isConnected() const;
+
+    /**
+     * @brief Return current IP address as string or "0.0.0.0" when offline
+     */
     String getIPAddress() const;
     
     // Setters for dynamic configuration

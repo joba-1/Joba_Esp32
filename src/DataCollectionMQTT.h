@@ -7,6 +7,12 @@
 #include "MQTTFeature.h"
 
 /**
+ * @file DataCollectionMQTT.h
+ * @brief Helpers to publish DataCollection entries to MQTT with Home Assistant
+ * autodiscovery support.
+ */
+
+/**
  * @brief Home Assistant device classes for sensors
  */
 namespace HADeviceClass {
@@ -30,13 +36,16 @@ namespace HADeviceClass {
 
 /**
  * @brief Sensor field configuration for Home Assistant
+ *
+ * This small POD describes how a single field from the DataCollection is
+ * represented to Home Assistant during autodiscovery.
  */
 struct HASensorConfig {
-    const char* fieldName;           // Field name in DataCollection
-    const char* displayName;         // Human-readable name
-    const char* deviceClass;         // HA device class (or nullptr)
-    const char* unit;                // Unit of measurement
-    const char* icon;                // MDI icon (optional, nullptr for default)
+    const char* fieldName;           /**< Field name in DataCollection */
+    const char* displayName;         /**< Human-readable name */
+    const char* deviceClass;         /**< HA device class (or nullptr) */
+    const char* unit;                /**< Unit of measurement */
+    const char* icon;                /**< MDI icon (optional, nullptr for default) */
 };
 
 /**
@@ -46,16 +55,19 @@ class DataCollectionMQTT {
 public:
     /**
      * @brief Register a data collection with Home Assistant autodiscovery
-     * 
-     * @param mqtt MQTT feature instance
+     *
+     * Publishes discovery messages for each configured sensor so Home
+     * Assistant can automatically create entities.
+     *
+     * @param mqtt MQTT feature instance (must be connected)
      * @param collectionName Name for topics (e.g., "sensors")
      * @param sensorConfigs Array of sensor configurations
-     * @param configCount Number of sensor configurations
-     * @param deviceName Device name shown in HA
-     * @param deviceId Unique device identifier
-     * @param manufacturer Device manufacturer
-     * @param model Device model
-     * @param swVersion Software version
+     * @param configCount Number of sensor configurations in the array
+     * @param deviceName Device name shown in Home Assistant UI
+     * @param deviceId Unique device identifier used in discovery topics
+     * @param manufacturer Device manufacturer (optional)
+     * @param model Device model (optional)
+     * @param swVersion Software version string (optional)
      */
     static void publishDiscovery(
         MQTTFeature* mqtt,
@@ -122,6 +134,12 @@ public:
     
     /**
      * @brief Publish the latest data from a collection to MQTT
+     *
+     * @tparam T element type stored in the DataCollection
+     * @tparam N capacity of the DataCollection
+     * @param mqtt MQTT feature instance
+     * @param collection The DataCollection to publish
+     * @param collectionName Topic suffix used for state publishing
      */
     template<typename T, size_t N>
     static void publishLatest(
@@ -140,7 +158,13 @@ public:
     }
     
     /**
-     * @brief Publish all data from a collection as JSON array
+     * @brief Publish all data from a collection as a JSON array
+     *
+     * @tparam T element type stored in the DataCollection
+     * @tparam N capacity of the DataCollection
+     * @param mqtt MQTT feature instance
+     * @param collection The DataCollection to publish
+     * @param collectionName Topic suffix used for history publishing
      */
     template<typename T, size_t N>
     static void publishAll(
@@ -158,6 +182,15 @@ public:
     
     /**
      * @brief Remove discovery config (call before changing config)
+     *
+     * Publishes empty retained payloads to the discovery topics which instruct
+     * Home Assistant to remove previously discovered entities.
+     *
+     * @param mqtt MQTT feature instance
+     * @param collectionName Collection name used when discovery topics were created
+     * @param sensorConfigs Array of sensor configurations
+     * @param configCount Number of sensor configurations
+     * @param deviceId Device identifier used in discovery topics
      */
     static void removeDiscovery(
         MQTTFeature* mqtt,

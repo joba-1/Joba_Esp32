@@ -11,12 +11,12 @@
 #include "InfluxLineProtocol.h"
 
 /**
- * @brief Helper class to integrate Modbus devices with InfluxDB and MQTT/Home Assistant
- * 
- * Provides:
- * - Automatic Home Assistant autodiscovery for all Modbus registers
- * - MQTT state publishing for device values
- * - InfluxDB line protocol generation and queueing
+ * @brief Integrates Modbus devices with external systems
+ *
+ * Convenience helper that publishes Home Assistant autodiscovery payloads,
+ * pushes device state to MQTT and formats/queues InfluxDB Line Protocol
+ * for device values. All methods are static helpers to keep call sites
+ * straightforward from the firmware.
  */
 class ModbusIntegration {
 public:
@@ -191,6 +191,21 @@ public:
 private:
     /**
      * @brief Publish Home Assistant discovery for a single register
+     *
+     * Builds the discovery JSON payload for Home Assistant and publishes it
+     * as a retained message on the HA discovery topic. The generated
+     * payload contains `device` metadata, `state_topic` (the topic where
+     * `publishRegisterValue()` will publish numeric values), `unit_of_measurement`
+     * when available and optional `device_class` / `state_class` hints.
+     *
+     * @param mqtt MQTT feature instance (must be connected)
+     * @param device The Modbus device instance owning the register
+     * @param reg Register definition describing name/unit/etc
+     * @param baseTopic Base MQTT topic used for state topics
+     * @param deviceId Unique device identifier used for discovery keys
+     * @param manufacturer Manufacturer string used in the `device` block
+     * @param model Model string used in the `device` block
+     * @param swVersion Software/firmware version used in the `device` block
      */
     static void publishRegisterDiscovery(MQTTFeature* mqtt,
                                           const ModbusDeviceInstance& device,
@@ -265,7 +280,15 @@ private:
     }
     
     /**
-     * @brief Infer Home Assistant device class from unit string
+     * @brief Infer Home Assistant `device_class` from a unit string
+     *
+     * Returns a best-effort device_class that Home Assistant understands.
+     * If no sensible mapping exists the function returns `nullptr` to
+     * indicate the property should be omitted.
+     *
+     * @param unit Unit string (e.g. "V", "W", "°C")
+     * @return Pointer to a static NUL-terminated device_class string,
+     *         or `nullptr` when unspecified.
      */
     static const char* inferDeviceClass(const char* unit) {
         if (!unit || strlen(unit) == 0) return nullptr;
@@ -319,7 +342,16 @@ private:
     }
     
     /**
-     * @brief Infer Home Assistant state class from register name
+     * @brief Infer Home Assistant `state_class` from a register name
+     *
+     * Many energy counters and totals should be exposed as
+     * "total_increasing" while instantaneous measurements are
+     * "measurement". This helper performs a simple heuristic on the
+     * register name.
+     *
+     * @param name Register name (NUL-terminated)
+     * @return Pointer to a static NUL-terminated state_class string or
+     *         `nullptr` when no preference is determined.
      */
     static const char* inferStateClass(const char* name) {
         if (!name) return nullptr;

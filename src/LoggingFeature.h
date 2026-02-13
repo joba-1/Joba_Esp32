@@ -27,8 +27,9 @@
 #define SYSLOG_SEVERITY_DEBUG      7
 
 /**
+ * @file LoggingFeature.h
  * @brief Centralized logging feature with serial and syslog output
- * 
+ *
  * Supports:
  * - Separate log levels for serial and syslog
  * - Boot log level that transitions to runtime level after specified time
@@ -71,6 +72,9 @@ public:
     
     /**
      * @brief Get singleton instance for global logging
+     *
+     * The project keeps a single `LoggingFeature` instance which is
+     * accessible via `getInstance()` for use by the `LOG_*` macros.
      */
     static LoggingFeature* getInstance();
     

@@ -5,8 +5,9 @@
 #include <Arduino.h>
 
 /**
+ * @file LEDFeature.h
  * @brief LED indicator feature
- * 
+ *
  * Controls an LED to indicate system activity:
  * - Stays on during setup phase
  * - Pulses briefly when data is received/transmitted

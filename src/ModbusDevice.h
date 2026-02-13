@@ -119,7 +119,15 @@ class ModbusDeviceManager {
 public:
     class ScopedLock {
     public:
+        /**
+         * @brief RAII wrapper that takes a FreeRTOS semaphore on construction
+         *        and releases it on destruction.
+         * @param mutex Semaphore handle to take/release.
+         */
         explicit ScopedLock(SemaphoreHandle_t mutex);
+        /**
+         * @brief Releases the held semaphore if any.
+         */
         ~ScopedLock();
 
         ScopedLock(const ScopedLock&) = delete;
@@ -131,6 +139,15 @@ public:
         SemaphoreHandle_t _mutex;
     };
 
+    /**
+     * @brief Acquire the internal mutex and return a RAII `ScopedLock` instance.
+     *
+     * Usage:
+     * {
+     *   auto guard = manager.scopedLock();
+     *   // protected access
+     * }
+     */
     ScopedLock scopedLock() const;
 
     /**
@@ -322,11 +339,21 @@ private:
                                    uint32_t pollIntervalMs,
                                    uint16_t startAddress,
                                    const ModbusFrame& response);
-
+    /**
+     * @brief Convert an array of raw 16-bit Modbus words into a floating value
+     *        using the provided register definition.
+     */
     float convertRawToValue(const ModbusRegisterDef& def, const uint16_t* rawData) const;
+    /**
+     * @brief Convert a floating value into an array of 16-bit Modbus words
+     *        according to the register definition (endianness/length).
+     */
     std::vector<uint16_t> convertValueToRaw(const ModbusRegisterDef& def, float value) const;
     const ModbusRegisterDef* findRegister(const ModbusDeviceType* type, const char* name) const;
     ModbusDataType parseDataType(const char* str) const;
+    /**
+     * @brief Invoke the registered value-change callback (if any) in a safe manner.
+     */
     void notifyValueChange(uint8_t unitId, const char* registerName, float value, const char* unit);
     
     ModbusRTUFeature& _modbus;

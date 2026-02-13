@@ -6,12 +6,11 @@
 #include "LoggingFeature.h"
 
 /**
- * @brief Feature wrapper around ModbusDeviceManager::loop().
+ * @brief Feature wrapper delegating to `ModbusDeviceManager`
  *
- * The manager is created late (after storage is ready), so we accept a
- * pointer that may be null initially.  setup() is a no-op because
- * initialization happens in main.cpp's setup() where storage, device
- * types and mappings are loaded.
+ * This `Feature` forwards `loop()` to the referenced `ModbusDeviceManager`.
+ * The manager is created after storage is ready, therefore the constructor
+ * accepts a reference to a pointer which may be null until initialization.
  */
 class ModbusDeviceFeature : public Feature {
 public:
@@ -30,7 +29,7 @@ public:
     bool isReady() const override { return _manager != nullptr; }
 
 private:
-    ModbusDeviceManager*& _manager;   // reference to pointer — follows late init
+    ModbusDeviceManager*& _manager;   /**< reference to pointer — follows late init */
 };
 
 #endif // MODBUS_DEVICE_FEATURE_H
