@@ -145,17 +145,6 @@ void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElap
           sentDuringGapWindow ? "yes" : "no", lastTxElapsedMs, lastTxWireMs,
           _globalMinGapMs != UINT32_MAX ? _globalMinGapMs : 0);
 
-    if (hasLastCompletedTx) {
-        auto predIt = _busTransitions.find(lastCompletedTxKey);
-        if (predIt != _busTransitions.end()) {
-            for (const auto& kv : predIt->second) {
-                const BusTransitionEntry& te = kv.second;
-                LOG_W("  successor gapMin=%u count=%u mean=%.0f",
-                      te.gapMin, te.count, te.count > 0 ? te.gapSum / te.count : 0.0);
-            }
-        }
-    }
-
     float oldMargin = _stats.safetyMargin;
     _stats.safetyMargin = std::min(_stats.safetyMargin + COLLISION_MARGIN_STEP, _stats.maxMargin);
     if (_stats.safetyMargin != oldMargin) {
