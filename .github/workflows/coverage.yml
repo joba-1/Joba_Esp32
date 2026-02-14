@@ -50,8 +50,13 @@ jobs:
           name: coverage-info
           path: coverage/coverage.info.filtered
 
-      - name: Send to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage/coverage.info.filtered
+      - name: Send to Codecov (optional)
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "Uploading coverage to Codecov"
+            curl -s https://codecov.io/bash | bash -s -- -f coverage/coverage.info.filtered -t "$CODECOV_TOKEN"
+          else
+            echo "CODECOV_TOKEN not set; skipping Codecov upload"
+          fi
