@@ -1,0 +1,13 @@
+[geninfo]
+output_format = lcov
+
+[genhtml]
+legend = 1
+title = Joba_Esp32 coverage
+demangle-cpp = 1
+
+[lcov]
+ignore = /usr/*,*/.pio/*,*/test/*
+
+[geninfo]
+; ignore-unused-exclude will be handled via lcov CLI --ignore-errors when invoked

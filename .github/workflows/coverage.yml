@@ -1,0 +1,46 @@
+name: Coverage
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - '.github/workflows/coverage.yml'
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lcov gcovr build-essential python3-pip
+          pip3 install platformio
+
+      - name: Run coverage script
+        env:
+          PIO_NONINTERACTIVE: 1
+        run: |
+          chmod +x scripts/coverage/run_coverage.sh
+          ./scripts/coverage/run_coverage.sh native
+
+      - name: Upload coverage HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: coverage/html
+
+      - name: Upload lcov info
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-info
+          path: coverage/coverage.info.filtered
+
+      - name: Send to Codecov
+        if: secrets.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/coverage.info.filtered

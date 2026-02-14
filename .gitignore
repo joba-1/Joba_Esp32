@@ -17,3 +17,9 @@ misc/gap_data.jsonl
 
 # Doxygen generated docs
 docs/doxygen/
+
+# Coverage reports
+coverage/html/
+coverage.info
+coverage.info.filtered
+
