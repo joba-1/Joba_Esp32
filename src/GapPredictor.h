@@ -3,6 +3,8 @@
 
 #include <map>
 #include <cstdint>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 /**
  * @file GapPredictor.h
@@ -198,6 +200,10 @@ public:
     const BusTransitionMap& getBusTransitions() const { return _busTransitions; }
     const GapSchedulerStats& stats() const { return _stats; }
     GapSchedulerStats& stats() { return _stats; }
+    /**
+     * @brief Return a thread-safe snapshot copy of current stats.
+     */
+    GapSchedulerStats snapshotStats() const;
     uint32_t getGlobalMinGapMs() const { return _globalMinGapMs; }
 
 private:
@@ -206,6 +212,7 @@ private:
     uint32_t _globalMinGapMs{UINT32_MAX};
     bool _statsEnabled{true};  // Disable during own TX to avoid polluting foreign master stats
     static constexpr uint32_t GAP_MIN_SAMPLES = 10;
+    mutable SemaphoreHandle_t _mutex{nullptr};
 };
 
 #endif // GAP_PREDICTOR_H

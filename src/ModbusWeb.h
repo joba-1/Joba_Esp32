@@ -1143,7 +1143,7 @@ public:
             [&modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
-                const auto& gs = modbus.getGapSchedulerStats();
+                auto gs = modbus.getGapSchedulerStats();
                 auto gap = modbus.predictCurrentGap();
                 uint32_t totalTx = gs.txInGap + gs.txFallback;
                 float gapPct = totalTx > 0 ? (gs.txInGap * 100.0f / totalTx) : 0;

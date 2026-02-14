@@ -18,6 +18,8 @@
 GapPredictor::GapPredictor() {
     _stats.reset();
     _stats.startMs = millis();
+    // Create mutex for thread-safe access from web server tasks
+    _mutex = xSemaphoreCreateMutex();
 }
 
 /**
@@ -27,10 +29,19 @@ GapPredictor::GapPredictor() {
  * `startMs` is updated to the current `millis()` value.
  */
 void GapPredictor::reset() {
-    _busTransitions.clear();
-    _globalMinGapMs = UINT32_MAX;
-    _stats.reset();
-    _stats.startMs = millis();
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        _busTransitions.clear();
+        _globalMinGapMs = UINT32_MAX;
+        _stats.reset();
+        _stats.startMs = millis();
+        xSemaphoreGive(_mutex);
+    } else {
+        // fallback without lock (shouldn't normally happen)
+        _busTransitions.clear();
+        _globalMinGapMs = UINT32_MAX;
+        _stats.reset();
+        _stats.startMs = millis();
+    }
 }
 
 /**
@@ -49,16 +60,30 @@ void GapPredictor::recordTransition(uint64_t predecessorKey, uint64_t successorK
 
     static constexpr size_t MAX_BUS_PATTERNS = 64;
 
-    auto it = _busTransitions.find(predecessorKey);
-    if (it != _busTransitions.end()) {
-        if (it->second.size() < MAX_BUS_PATTERNS || it->second.count(successorKey)) {
-            it->second[successorKey].record(gapMs);
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        auto it = _busTransitions.find(predecessorKey);
+        if (it != _busTransitions.end()) {
+            if (it->second.size() < MAX_BUS_PATTERNS || it->second.count(successorKey)) {
+                it->second[successorKey].record(gapMs);
+            }
+        } else if (_busTransitions.size() < MAX_BUS_PATTERNS) {
+            _busTransitions[predecessorKey][successorKey].record(gapMs);
         }
-    } else if (_busTransitions.size() < MAX_BUS_PATTERNS) {
-        _busTransitions[predecessorKey][successorKey].record(gapMs);
-    }
 
-    if (gapMs < _globalMinGapMs) _globalMinGapMs = gapMs;
+        if (gapMs < _globalMinGapMs) _globalMinGapMs = gapMs;
+        xSemaphoreGive(_mutex);
+    } else {
+        // best-effort fallback without lock
+        auto it = _busTransitions.find(predecessorKey);
+        if (it != _busTransitions.end()) {
+            if (it->second.size() < MAX_BUS_PATTERNS || it->second.count(successorKey)) {
+                it->second[successorKey].record(gapMs);
+            }
+        } else if (_busTransitions.size() < MAX_BUS_PATTERNS) {
+            _busTransitions[predecessorKey][successorKey].record(gapMs);
+        }
+        if (gapMs < _globalMinGapMs) _globalMinGapMs = gapMs;
+    }
 }
 
 /**
@@ -76,10 +101,15 @@ GapPrediction GapPredictor::predictCurrentGap(uint64_t predecessorKey) const {
     GapPrediction result;
     if (predecessorKey == 0) return result;
 
+    // Lock during prediction to avoid concurrent modification from recorder
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return result; // unable to lock - return empty prediction
+    }
+
     auto predIt = _busTransitions.find(predecessorKey);
-    if (predIt == _busTransitions.end()) return result;
+    if (predIt == _busTransitions.end()) { xSemaphoreGive(_mutex); return result; }
     const auto& successors = predIt->second;
-    if (successors.empty()) return result;
+    if (successors.empty()) { xSemaphoreGive(_mutex); return result; }
 
     // Collect simple sample counts across successor edges. We require a
     // minimum number of samples (GAP_MIN_SAMPLES) distributed across at
@@ -128,7 +158,7 @@ GapPrediction GapPredictor::predictCurrentGap(uint64_t predecessorKey) const {
         if (te.gapMin < hardMinObserved) hardMinObserved = te.gapMin;
     }
 
-    if (!bestEdge) return result;
+    if (!bestEdge) { xSemaphoreGive(_mutex); return result; }
 
     // Compute the conservative prediction from the chosen best edge and
     // apply the runtime safety margin. The safety margin is a fraction
@@ -152,6 +182,7 @@ GapPrediction GapPredictor::predictCurrentGap(uint64_t predecessorKey) const {
     result.confirmationMs = confirmation;
     result.minObservedMs = hardMinObserved;
     result.sampleCount = totalSamples;
+    xSemaphoreGive(_mutex);
     return result;
 }
 
@@ -171,12 +202,16 @@ GapPrediction GapPredictor::predictCurrentGap(uint64_t predecessorKey) const {
 bool GapPredictor::canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, uint32_t elapsedMs) const {
     if (predecessorKey == 0) return false;
 
-    auto predIt = _busTransitions.find(predecessorKey);
-    if (predIt == _busTransitions.end()) return false;
-    const auto& successors = predIt->second;
-    if (successors.empty()) return false;
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return false;
+    }
 
-    if (_globalMinGapMs != UINT32_MAX && elapsedMs < _globalMinGapMs) return false;
+    auto predIt = _busTransitions.find(predecessorKey);
+    if (predIt == _busTransitions.end()) { xSemaphoreGive(_mutex); return false; }
+    const auto& successors = predIt->second;
+    if (successors.empty()) { xSemaphoreGive(_mutex); return false; }
+
+    if (_globalMinGapMs != UINT32_MAX && elapsedMs < _globalMinGapMs) { xSemaphoreGive(_mutex); return false; }
 
     // Conservative buffer added to planned wire time to account for
     // small timing jitter and processing overhead. The `CONFIDENCE_K`
@@ -211,7 +246,8 @@ bool GapPredictor::canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, u
         }
     }
 
-    if (!atLeastOneNotRuledOut) return false;
+    if (!atLeastOneNotRuledOut) { xSemaphoreGive(_mutex); return false; }
+    xSemaphoreGive(_mutex);
     return hasAnyEdge;
 }
 
@@ -229,9 +265,15 @@ bool GapPredictor::canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, u
  */
 void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElapsedMs, uint32_t lastTxWireMs,
                          bool hasLastCompletedTx, uint64_t lastCompletedTxKey) {
-    _stats.collisions++;
-    _stats.gapInsufficient++;
-    _stats.lastCollisionMs = millis();
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        _stats.collisions++;
+        _stats.gapInsufficient++;
+        _stats.lastCollisionMs = millis();
+    } else {
+        _stats.collisions++;
+        _stats.gapInsufficient++;
+        _stats.lastCollisionMs = millis();
+    }
 
     LOG_W("COLLISION: sentInGap=%s txElapsed=%ums txWire=%ums globalMin=%ums",
         sentDuringGapWindow ? "yes" : "no", lastTxElapsedMs, lastTxWireMs,
@@ -239,11 +281,12 @@ void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElap
 
     float oldMargin = _stats.safetyMargin;
     _stats.safetyMargin = std::min(_stats.safetyMargin + COLLISION_MARGIN_STEP, _stats.maxMargin);
-    if (_stats.safetyMargin != oldMargin) {
-      _stats.lastMarginAdjustMs = millis();
-      LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
-          oldMargin * 100, _stats.safetyMargin * 100);
-    }
+        if (_stats.safetyMargin != oldMargin) {
+            _stats.lastMarginAdjustMs = millis();
+            LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
+                    oldMargin * 100, _stats.safetyMargin * 100);
+        }
+        if (_mutex) xSemaphoreGive(_mutex);
 }
 
 /**
@@ -253,15 +296,31 @@ void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElap
  * less conservative after repeated successful gap transmissions.
  */
 void GapPredictor::noteGapSuccess() {
-    _stats.gapSufficient++;
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        _stats.gapSufficient++;
 
-    if (_stats.safetyMargin <= _stats.minMargin) return;
+        if (_stats.safetyMargin <= _stats.minMargin) { xSemaphoreGive(_mutex); return; }
 
-    float oldMargin = _stats.safetyMargin;
-    _stats.safetyMargin = std::max(_stats.minMargin, _stats.safetyMargin - SUCCESS_MARGIN_STEP);
-    if ((oldMargin - _stats.safetyMargin) >= COLLISION_MARGIN_STEP) {
-        LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
-              oldMargin * 100.0f, _stats.safetyMargin * 100.0f,
-              _stats.gapSufficient);
+        float oldMargin = _stats.safetyMargin;
+        _stats.safetyMargin = std::max(_stats.minMargin, _stats.safetyMargin - SUCCESS_MARGIN_STEP);
+        if ((oldMargin - _stats.safetyMargin) >= COLLISION_MARGIN_STEP) {
+            LOG_I("Gap scheduler: margin relaxed %.0f%% -> %.0f%% after %u successful gap TXes",
+                  oldMargin * 100.0f, _stats.safetyMargin * 100.0f,
+                  _stats.gapSufficient);
+        }
+        xSemaphoreGive(_mutex);
+    } else {
+        _stats.gapSufficient++;
     }
+}
+
+GapSchedulerStats GapPredictor::snapshotStats() const {
+    GapSchedulerStats copy;
+    if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        copy = _stats;
+        xSemaphoreGive(_mutex);
+    } else {
+        copy = _stats;
+    }
+    return copy;
 }

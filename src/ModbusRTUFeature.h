@@ -397,7 +397,7 @@ public:
     /**
      * @brief Get gap scheduler stats for monitoring
      */
-    const GapSchedulerStats& getGapSchedulerStats() const { return _gapPredictor.stats(); }
+    GapSchedulerStats getGapSchedulerStats() const { return _gapPredictor.snapshotStats(); }
 
     /**
      * @brief Get distinct register quantities requested by foreign masters
