@@ -9,22 +9,7 @@
 #include "ModbusRTUFeature.h"
 #include "LoggingFeature.h"
 
-/**
- * @brief Create a compact 64-bit key for a polling pattern.
- *
- * The encoded layout is: [unitId:8][functionCode:8][startRegister:16][quantity:16]
- * placed into the high-to-low 64-bit fields. This key is used as the map
- * index for compact pattern lookup.
- *
- * @param unitId Modbus unit identifier
- * @param fc Function code (7-bit normalized)
- * @param startReg Start register address
- * @param qty Quantity of registers requested
- * @return 64-bit encoded pattern key
- */
-static inline uint64_t makeBusPatternKey(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty) {
-    return ((uint64_t)unitId << 40) | ((uint64_t)fc << 32) | ((uint64_t)startReg << 16) | qty;
-}
+// Use the canonical encoder defined in `BusPatternTracker.h`.
 
 /**
  * @brief Construct and reset internal state.
@@ -71,7 +56,7 @@ RecordResult BusPatternTracker::recordFrame(const ModbusFrame& frame,
 
     uint16_t startReg = frame.getStartRegister();
     uint16_t qty      = frame.getQuantity();
-    uint64_t key      = makeBusPatternKey(frame.unitId, fc, startReg, qty);
+    uint64_t key      = encodePatternKey(frame.unitId, fc, startReg, qty);
 
     auto it = _busPatterns.find(key);
     if (it == _busPatterns.end()) {
@@ -143,7 +128,7 @@ RecordResult BusPatternTracker::recordFrame(const ModbusFrame& frame,
         } else {
             size_t pos = (size_t)_cycleTrackingPos;
             const BusCycleEntry& expected = _detectedCycle[pos];
-            uint64_t expectedKey = makeBusPatternKey(expected.unitId, expected.functionCode,
+            uint64_t expectedKey = encodePatternKey(expected.unitId, expected.functionCode,
                                                       expected.startRegister, expected.quantity);
             if (expectedKey == key) {
                 if (frame.timestamp > lastTransactionEndMs) {

@@ -56,6 +56,18 @@ struct BusPatternEntry {
 };
 
 /**
+ * @brief Utility: encode a pattern key from identity fields.
+ *
+ * The implementation file provides a matching decoder. The key is a
+ * compact 64-bit value combining `unitId`, `functionCode`, `startRegister`
+ * and `quantity` suitable for map lookups. The layout (high->low) is:
+ * [unitId:8][functionCode:8][startRegister:16][quantity:16]
+ */
+static inline uint64_t encodePatternKey(uint8_t unitId, uint8_t functionCode, uint16_t startRegister, uint16_t quantity) {
+    return ((uint64_t)unitId << 40) | ((uint64_t)functionCode << 32) | ((uint64_t)startRegister << 16) | (uint64_t)quantity;
+}
+
+/**
  * @brief Compact identifier for a cycle step (used when a polling cycle is detected).
  */
 struct BusCycleEntry {

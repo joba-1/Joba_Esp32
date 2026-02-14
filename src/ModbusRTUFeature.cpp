@@ -859,7 +859,7 @@ void ModbusRTUFeature::handleForeignResponse(const ModbusFrame& frame, size_t fr
 
                 uint16_t startReg = (req.data[0] << 8) | req.data[1];
                 uint16_t qty      = (req.data[2] << 8) | req.data[3];
-                _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
+                _lastCompletedTxKey = encodePatternKey(req.unitId, req.functionCode, startReg, qty);
                 _hasLastCompletedTx = true;
                 _lastTransactionEndMs = respEndMs;
                 _hasLastTransactionEnd = true;
@@ -1157,7 +1157,7 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
 
                 uint16_t startReg = (req.data[0] << 8) | req.data[1];
                 uint16_t qty      = (req.data[2] << 8) | req.data[3];
-                _lastCompletedTxKey = makeBusPatternKey(req.unitId, req.functionCode, startReg, qty);
+                _lastCompletedTxKey = encodePatternKey(req.unitId, req.functionCode, startReg, qty);
                 _hasLastCompletedTx = true;
                 _lastTransactionEndMs = respEndMs;
                 _hasLastTransactionEnd = true;

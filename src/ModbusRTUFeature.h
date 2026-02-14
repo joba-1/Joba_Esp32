@@ -735,9 +735,6 @@ private:
     uint32_t _mismatchCount{0};
 
     // ---- Bus pattern analysis ----
-    static uint64_t makeBusPatternKey(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty) {
-        return ((uint64_t)unitId << 40) | ((uint64_t)fc << 32) | ((uint64_t)startReg << 16) | qty;
-    }
     BusGapStats _busGapStats;               // inter-frame gaps measured at byte level
     BusByteStats _busByteStats;             // raw byte-level diagnostics
     unsigned long _lastFrameBoundaryUs{0};  // micros() of last byte of previous frame chunk
