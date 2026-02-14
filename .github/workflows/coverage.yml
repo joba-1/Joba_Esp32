@@ -30,6 +30,15 @@ jobs:
           pip3 install --upgrade pip
           pip3 install platformio
 
+      - name: Create config.ini from template
+        run: |
+          if [ -f config.ini.template ]; then
+            cp config.ini.template config.ini
+            echo "Created config.ini from template"
+          else
+            echo "config.ini.template not found; proceeding without config.ini"
+          fi
+
       - name: Run native tests and coverage
         env:
           PIO_NONINTERACTIVE: 1
