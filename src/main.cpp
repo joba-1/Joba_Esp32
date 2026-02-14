@@ -31,6 +31,13 @@
 // ============================================
 
 static void markOtaAppValidIfPendingVerify() {
+    /**
+     * @brief If the running partition is in PENDING_VERIFY state, mark the
+     *        application as valid to prevent OTA rollback.
+     *
+     * This is called early in `setup()` so that freshly-updated images are
+     * preserved when the firmware's behavior is considered stable.
+     */
     const esp_partition_t* running = esp_ota_get_running_partition();
     if (!running) return;
 
@@ -201,6 +208,13 @@ const size_t featureCount = sizeof(features) / sizeof(features[0]);
 
 // Callback for SensorCollectionFeature — fills a reading with sensor values
 static void fillSensorReading(SensorData& reading) {
+    /**
+     * @brief Populate a single `SensorData` entry with current measurements.
+     * @param reading Reference to a pre-allocated SensorData to fill.
+     *
+     * Currently this generates simulated values; replace with real sensor
+     * acquisition as needed.
+     */
     strncpy(reading.location, deviceId.c_str(), sizeof(reading.location) - 1);
     reading.temperature = 22.5 + (random(-20, 20) / 10.0f);  // Simulated
     reading.humidity = 55.0 + (random(-100, 100) / 10.0f);   // Simulated
@@ -209,6 +223,12 @@ static void fillSensorReading(SensorData& reading) {
           reading.temperature, reading.humidity, reading.rssi);
 }
 
+/**
+ * @brief Main Arduino `setup()` routine.
+ *
+ * Initializes diagnostic counters, features (network, storage, web, MQTT,
+ * Modbus, etc.), configures dynamic IDs and registers callbacks.
+ */
 void setup() {
     // Capture reset reason + boot counter early for diagnostics.
     ResetDiagnostics::init();
@@ -400,6 +420,12 @@ void setup() {
     ResetDiagnostics::setBreadcrumb("setup", "done");
 }
 
+/**
+ * @brief Main Arduino `loop()` routine.
+ *
+ * Iterates over all registered `Feature` instances and records per-feature
+ * CPU usage via `ResetDiagnostics` and `CpuMonitor`.
+ */
 void loop() {
     CpuMonitor::markLoopStart();
 

@@ -2,6 +2,11 @@
 #include "LoggingFeature.h"
 #include <WiFi.h>
 
+/**
+ * @file WiFiManagerFeature.cpp
+ * @brief Implementation wrapping `WiFiManager` with non-blocking behavior
+ */
+
 WiFiManagerFeature::WiFiManagerFeature(const char* apName, const char* apPassword, uint16_t configPortalTimeout)
     : _apName(apName)
     , _apPassword(apPassword)
@@ -13,6 +18,9 @@ WiFiManagerFeature::WiFiManagerFeature(const char* apName, const char* apPasswor
 {
 }
 
+/**
+ * @brief Initialize WiFiManager and start a non-blocking connection attempt
+ */
 void WiFiManagerFeature::setup() {
     if (_setupDone) return;
     
@@ -41,6 +49,9 @@ void WiFiManagerFeature::setup() {
     LOG_I("WiFi connection initiated, AP name: %s", _apName);
 }
 
+/**
+ * @brief Periodic handler: process manager and manage reconnects
+ */
 void WiFiManagerFeature::loop() {
     // Process WiFiManager (needed for non-blocking mode)
     _wifiManager.process();

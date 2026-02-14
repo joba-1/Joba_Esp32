@@ -5,16 +5,20 @@
 #include <WiFi.h>
 
 /**
- * @brief Device identification helper
- * 
- * Generates unique device identifiers based on firmware name and either:
- * - Manual instance number (DEVICE_INSTANCE > 0)
- * - Last 3 bytes of MAC address (DEVICE_INSTANCE == 0)
+ * @file DeviceInfo.h
+ * @brief Helpers to generate device identifiers and credentials
+ *
+ * `DeviceInfo` centralizes small helpers for producing stable device IDs,
+ * hostnames and default passwords derived from firmware constants and the
+ * device MAC address. These helpers are deterministic and safe to call
+ * from early initialization code.
  */
 class DeviceInfo {
 public:
     /**
      * @brief Get unique device ID (e.g., "MyProject-A1B2C3" or "MyProject-1")
+     *
+     * The value is cached on first call.
      */
     static String getDeviceId() {
         static String deviceId = generateDeviceId();

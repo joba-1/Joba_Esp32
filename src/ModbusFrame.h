@@ -29,21 +29,37 @@ struct ModbusFrame {
     bool isException;               // Exception response (FC | 0x80)
     uint8_t exceptionCode;
 
+    /**
+     * @brief Extract start register from request payload
+     * @return 16-bit start register or 0 when not available
+     */
     uint16_t getStartRegister() const {
         if (dataLen >= 2) return (data[0] << 8) | data[1];
         return 0;
     }
 
+    /**
+     * @brief Extract quantity field from request payload
+     * @return 16-bit quantity or 0 when not available
+     */
     uint16_t getQuantity() const {
         if (dataLen >= 4) return (data[2] << 8) | data[3];
         return 0;
     }
 
+    /**
+     * @brief Get byte-count from a register read response payload
+     * @return number of payload bytes (not including the byte-count field)
+     */
     size_t getByteCount() const {
         if (dataLen >= 1) return data[0];
         return 0;
     }
 
+    /**
+     * @brief Return pointer to the register payload (after the byte-count)
+     * @return pointer to payload or nullptr when not present
+     */
     const uint8_t* getRegisterData() const {
         if (dataLen > 1) return &data[1];
         return nullptr;

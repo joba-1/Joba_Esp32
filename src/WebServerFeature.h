@@ -6,7 +6,11 @@
 #include "Feature.h"
 
 /**
- * @brief Async web server for REST API and web interface
+ * @brief Async web server feature
+ *
+ * Hosts the REST API endpoints and several human-friendly HTML pages used for
+ * debugging and monitoring. Uses `ESPAsyncWebServer` and supports optional
+ * basic authentication.
  */
 class WebServerFeature : public Feature {
 public:
@@ -23,27 +27,35 @@ public:
     bool isReady() const override { return _ready; }
     
     /**
-     * @brief Get access to the underlying AsyncWebServer
+     * @brief Get access to the underlying `AsyncWebServer`
+     * @return Pointer to the server instance (nullptr until `setup()` runs)
      */
     AsyncWebServer* getServer();
     
     /**
-     * @brief Add a handler to the server
+     * @brief Add a pre-built handler to the server
+     * @param handler Pointer to an `AsyncWebHandler` instance
      */
     void addHandler(AsyncWebHandler* handler);
     
     /**
      * @brief Register a route handler
+     * @param uri Request path (e.g., "/api/status")
+     * @param method HTTP methods to accept
+     * @param onRequest Handler function invoked for matching requests
      */
     void on(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest);
     
     /**
-     * @brief Check if authentication is required and valid
+     * @brief Check basic auth credentials on the request
+     * @param request Request to authenticate
+     * @return true when auth is not required or credentials are valid
      */
     bool authenticate(AsyncWebServerRequest* request);
     
     /**
      * @brief Set password for basic auth
+     * @param password NUL-terminated password string
      */
     void setPassword(const char* password) { 
         _password = password;

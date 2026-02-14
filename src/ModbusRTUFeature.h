@@ -442,33 +442,147 @@ public:
     void detectCycle();
 
 private:
+    /**
+     * @brief Read incoming serial data, buffer it and process complete frames.
+     *
+     * This is the top-level RX handler invoked from `loop()`; it extracts
+     * complete frames and dispatches them to parsing/handling helpers.
+     */
     void processReceivedData();
     // Helpers extracted from the large processReceivedData() function
+    /**
+     * @brief Attempt to extract complete frames from the RX buffer.
+     * @return Number of frames extracted.
+     */
     size_t extractFramesFromRxBuffer();
+
+    /**
+     * @brief Handle a frame that has been parsed from the RX buffer.
+     * @param frame Parsed ModbusFrame structure.
+     * @param isRequest True if the frame is a request, false if response.
+     * @param frameLen Length of the raw frame in bytes.
+     */
     void handleParsedFrame(const ModbusFrame& frame, bool isRequest, size_t frameLen);
     // Further decomposition helpers (small, focused units)
+    /**
+     * @brief Try to parse a frame at a specific length from buffer pointer `p`.
+     * @return True on successful parse and CRC check.
+     */
     bool tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& out);
+
+    /**
+     * @brief Determine expected frame length from the current buffer content.
+     * @param p Pointer to buffer start, remaining bytes available.
+     * @param remaining Number of bytes available at `p`.
+     * @param isRequest Output flag set to true if parsed frame appears to be a request.
+     * @param frameLen Output length in bytes if detected.
+     * @return True if a plausible length could be determined.
+     */
     bool determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, size_t& frameLen);
+
+    /**
+     * @brief Parse raw bytes at `offset` and compute metadata (timestamps, CRC, unit/fc).
+     */
     void parseFrameAndComputeMetadata(size_t offset, size_t frameLen, ModbusFrame& frame, bool isRequest, uint32_t approxStartMs);
+
+    /**
+     * @brief Handle CRC-invalid frames and attempt resynchronization when allowed.
+     */
     void handleCrcInvalidFrame(const ModbusFrame& frame, bool resyncAllowed);
+
+    /**
+     * @brief Handle a response that originated from this device's own request.
+     */
     void handleOurResponse(const ModbusFrame& frame, size_t frameLen);
+
+    /**
+     * @brief Handle a request sent by another master on the bus.
+     */
     void handleForeignRequest(const ModbusFrame& frame);
+
+    /**
+     * @brief Handle a response sent by another device (not our request).
+     */
     void handleForeignResponse(const ModbusFrame& frame, size_t frameLen);
+
+    /**
+     * @brief Finish processing of a frame and notify registered callbacks.
+     */
     void finishFrameProcessingAndNotify(const ModbusFrame& frame, bool isRequest);
+
+    /**
+     * @brief Advance scan index through RX buffer and return number of bytes consumed.
+     */
     size_t scanAndAdvanceIndex();
+
+    /**
+     * @brief Parse a raw Modbus frame from `data` into `frame`.
+     */
     bool parseFrame(const uint8_t* data, size_t length, ModbusFrame& frame);
+
+    /**
+     * @brief Append `frame` into the recent frame history ring buffer.
+     */
     void recordFrameToHistory(const ModbusFrame& frame);
+
+    /**
+     * @brief Record CRC error context for diagnostics.
+     */
     void recordCrcErrorContext(const ModbusFrame& badFrame);
+
+    /**
+     * @brief Ensure a ModbusRegisterMap exists for `unitId`/`functionCode` and return it.
+     */
     ModbusRegisterMap& ensureRegisterMap(uint8_t unitId, uint8_t functionCode);
+
+    /**
+     * @brief Update stored register map based on request/response pair.
+     */
     void updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response);
+
+    /**
+     * @brief Process the outgoing request queue, optionally when bus is silent.
+     */
     void processQueue(bool busSilent = false);
+
+    /**
+     * @brief Send the provided pending request onto the bus, return true if transmitted.
+     */
     bool sendRequest(const ModbusPendingRequest& request);
+
+    /**
+     * @brief Attempt to send the already-prepared frame buffer; returns false if aborted.
+     */
     bool sendFrameFromBuffer();  // Uses static _txFrameBuffer; returns false if aborted
+
+    /**
+     * @brief Send a vector-backed raw frame (legacy wrapper around sendRawFrame).
+     */
     void sendFrame(const std::vector<uint8_t>& frame);  // Legacy wrapper for sendRawFrame
+
+    /**
+     * @brief Calculate CRC16 for `data` of `length` bytes.
+     */
     uint16_t calculateCRC(const uint8_t* data, size_t length) const;
+
+    /**
+     * @brief Drive DE/RE pin to enable/disable RS485 transmitter.
+     */
     void setDE(bool transmit);
+
+    /**
+     * @brief Check internal warning thresholds and log if exceeded.
+     */
     void checkAndLogWarnings();
+
+    /**
+     * @brief Mark start of active communication interval (own or other).
+     */
     void startActiveTime(bool isOwn);
+
+    /**
+     * @brief Mark end of active communication interval.
+     */
     void endActiveTime();
     
     /**

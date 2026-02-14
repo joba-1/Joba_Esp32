@@ -3,6 +3,11 @@
 #include <time.h>
 #include <WiFi.h>
 
+/**
+ * @file LoggingFeature.cpp
+ * @brief Implementation of `LoggingFeature`
+ */
+
 // Static instance pointer
 LoggingFeature* LoggingFeature::_instance = nullptr;
 
@@ -33,6 +38,9 @@ LoggingFeature::LoggingFeature(uint32_t baudRate,
     _instance = this;
 }
 
+/**
+ * @brief Initialize serial (and announce syslog configuration)
+ */
 void LoggingFeature::setup() {
     if (_ready) return;
     
@@ -60,6 +68,9 @@ void LoggingFeature::setup() {
     Serial.println();
 }
 
+/**
+ * @brief Periodic handler to update boot-phase state
+ */
 void LoggingFeature::loop() {
     // Check if boot phase has ended
     if (_inBootPhase && (millis() - _bootStartTime >= _bootDurationMs)) {
@@ -73,6 +84,9 @@ LoggingFeature* LoggingFeature::getInstance() {
     return _instance;
 }
 
+/**
+ * @brief Get a printable timestamp for logs
+ */
 String LoggingFeature::getTimestamp() {
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 0)) {
@@ -104,6 +118,9 @@ uint8_t LoggingFeature::logLevelToSyslogSeverity(uint8_t level) {
     }
 }
 
+/**
+ * @brief Write formatted message to Serial respecting log level
+ */
 void LoggingFeature::logToSerial(uint8_t level, const char* levelStr, const char* message) {
     if (level > _serialLogLevel || _serialLogLevel == LOG_LEVEL_OFF) return;
     
@@ -113,6 +130,9 @@ void LoggingFeature::logToSerial(uint8_t level, const char* levelStr, const char
     Serial.println(message);
 }
 
+/**
+ * @brief Send a message to configured syslog server (RFC 3164-like)
+ */
 void LoggingFeature::logToSyslog(uint8_t level, const char* message) {
     if (!_syslogEnabled) return;
     if (level > _syslogLogLevel || _syslogLogLevel == LOG_LEVEL_OFF) return;
@@ -144,6 +164,9 @@ void LoggingFeature::logToSyslog(uint8_t level, const char* message) {
     _udp.endPacket();
 }
 
+/**
+ * @brief Core logging routine that formats and dispatches messages
+ */
 void LoggingFeature::log(uint8_t level, const char* levelStr, const char* format, va_list args) {
     if (!_ready) return;
     

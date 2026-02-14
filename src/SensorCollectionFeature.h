@@ -11,12 +11,15 @@
 #include <WiFi.h>
 
 /**
- * @brief Feature wrapper for periodic sensor data collection.
+ * @brief Feature wrapper for periodic sensor data collection
  *
- * Owns the periodic timer + DataCollection::loop() persistence call that
- * previously lived as inline code in main.cpp's loop().  The actual
- * DataCollection instance and struct definition remain in main.cpp;
- * this feature just references them.
+ * Manages periodic sampling, buffering and forwarding of sensor readings.
+ * This template takes the user-defined measurement struct `T` and a ring
+ * buffer capacity. It owns the periodic timer that triggers sampling and
+ * calls into `DataCollection::loop()` to perform persistence/housekeeping.
+ *
+ * The concrete `DataCollection<T, Capacity>` instance is provided by the
+ * caller (typically from `main.cpp`) and is not owned by the feature.
  *
  * @tparam T         Sensor data struct type
  * @tparam Capacity  DataCollection ring buffer size
@@ -27,13 +30,15 @@ public:
     using CollectFunc = void (*)(T& reading);
 
     /**
-     * @param collection     The DataCollection instance to manage
-     * @param influxDB       InfluxDB feature for queuing line protocol
-     * @param mqtt           MQTT feature for publishing latest values
-     * @param led            LED feature for activity pulse
-     * @param collectFunc    Function that fills a T reading with sensor values
+     * @brief Construct a SensorCollectionFeature
+     *
+     * @param collection     Reference to a `DataCollection<T, Capacity>` buffer
+     * @param influxDB       `InfluxDBFeature` used to queue line-protocol
+     * @param mqtt           `MQTTFeature` used to publish latest values
+     * @param led            `LEDFeature` used to pulse activity indicator
+     * @param collectFunc    Function pointer that fills a `T` reading
      * @param collectionName Topic/measurement name (e.g. "sensors")
-     * @param intervalMs     Collection interval (default 60s)
+     * @param intervalMs     Collection interval in milliseconds (default 60s)
      */
     SensorCollectionFeature(DataCollection<T, Capacity>& collection,
                             InfluxDBFeature& influxDB,
@@ -51,8 +56,22 @@ public:
         , _intervalMs(intervalMs)
     {}
 
+    /**
+     * @brief No-op setup; the feature is ready immediately
+     *
+     * Initialization is expected to be handled by the caller; this feature
+     * only schedules periodic collection in `loop()`.
+     */
     void setup() override {}
 
+    /**
+     * @brief Periodic collection tick invoked from main loop
+     *
+     * Triggers sampling at the configured `_intervalMs`, stores the reading
+     * in the ring buffer, queues an InfluxDB line and publishes the latest
+     * via MQTT. Also calls `_collection.loop()` to allow persistence or
+     * housekeeping.
+     */
     void loop() override {
         // Periodic data collection
         if (millis() - _lastCollection >= _intervalMs) {
@@ -68,6 +87,12 @@ public:
     bool isReady() const override { return true; }
 
 private:
+    /**
+     * @brief Perform a single collection cycle
+     *
+     * This builds a `T` reading via `_collectFunc`, enqueues it to
+     * `_collection`, queues the InfluxDB line and publishes via MQTT.
+     */
     void collect() {
         T reading;
         memset(&reading, 0, sizeof(reading));

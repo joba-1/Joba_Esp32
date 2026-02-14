@@ -7,6 +7,16 @@
 #include "StorageFeature.h"
 #include "TimeUtils.h"
 
+/**
+ * @file DataCollection.h
+ * @brief Ring-buffered data collection with JSON and InfluxDB serialization
+ *
+ * The `DataCollection<T>` template stores a small in-memory circular buffer of
+ * structures of type `T`. It provides helpers to serialize the entries to
+ * JSON (for HTTP/MQTT) and to InfluxDB line-protocol. Persistence to the
+ * filesystem is optionally supported via `StorageFeature`.
+ */
+
 #ifndef FIRMWARE_NAME
 #define FIRMWARE_NAME "ESP32-Firmware"
 #endif
@@ -15,29 +25,45 @@
 #define FIRMWARE_VERSION "1.1.0"
 #endif
 
-// Field types for schema definition
+/**
+ * @brief Field types used in a schema description
+ *
+ * Describes the in-memory representation of a single field inside the
+ * user-defined data structure `T` used by `DataCollection<T>`.
+ */
 enum class FieldType { 
     INT8, INT16, INT32, UINT8, UINT16, UINT32, 
     FLOAT, DOUBLE, BOOL, STRING 
 };
 
-// InfluxDB field classification
+/**
+ * @brief InfluxDB classification for a field
+ *
+ * Determines how a field is emitted when converting an entry to InfluxDB
+ * line-protocol: as a tag (indexed string), a value field, the timestamp,
+ * or skipped entirely.
+ */
 enum class InfluxType { 
-    TAG,        // Indexed string field
-    FIELD,      // Value field
-    TIMESTAMP,  // Unix timestamp (nanoseconds)
-    SKIP        // Don't include in line protocol
+    TAG,        /**< Indexed string field */
+    FIELD,      /**< Value field */
+    TIMESTAMP,  /**< Unix timestamp (seconds) — emitted as nanoseconds in protocol */
+    SKIP        /**< Don't include in line protocol */
 };
 
 /**
  * @brief Field descriptor for schema definition
+ *
+ * Users define an array of `FieldDescriptor` describing how to interpret
+ * the raw bytes of `T` for JSON and InfluxDB serialization. `offset` is
+ * the byte offset (use `offsetof`) and `size` is only used for string
+ * fields to limit copying.
  */
 struct FieldDescriptor {
-    const char* name;       // Field name
-    FieldType type;         // Data type
-    InfluxType influxType;  // How to handle in InfluxDB
-    size_t offset;          // Offset in struct (use offsetof())
-    size_t size;            // Size for STRING type
+    const char* name;       /**< Field name */
+    FieldType type;         /**< Data type */
+    InfluxType influxType;  /**< How to handle in InfluxDB */
+    size_t offset;          /**< Offset in struct (use offsetof()) */
+    size_t size;            /**< Size for STRING type */
 };
 
 // Helper macros for field definition

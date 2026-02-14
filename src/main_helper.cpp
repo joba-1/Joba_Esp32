@@ -7,7 +7,12 @@
 #include "ResetManager.h"
 
 namespace MainHelper {
-
+/**
+ * @brief Handle an MQTT-triggered reset command.
+ * @param payload MQTT payload string (accepted: "1", "true", "reset", ...).
+ * @param resetTopic Topic the command arrived on.
+ * @param mqtt MQTTFeature used to publish acknowledgment/result.
+ */
 void handleResetCommand(const String& payload, const String& resetTopic, MQTTFeature& mqtt) {
     String p(payload);
     p.trim();
@@ -21,6 +26,13 @@ void handleResetCommand(const String& payload, const String& resetTopic, MQTTFea
     mqtt.publishToBase("status/reset", scheduled ? "scheduled" : "already_scheduled", false);
 }
 
+/**
+ * @brief Parse and execute a raw Modbus read command received via MQTT.
+ * @param payload JSON payload with fields like `unit`, `address`, `count`, `fc`.
+ * @param modbusRawReadTopic Topic for raw read commands.
+ * @param mqtt MQTTFeature used to send ACK/response messages.
+ * @param modbus ModbusRTUFeature used to queue the actual Modbus read.
+ */
 void handleModbusRawReadCommand(const String& payload, const String& modbusRawReadTopic,
                                MQTTFeature& mqtt, ModbusRTUFeature& modbus) {
 #if MODBUS_LISTEN_ONLY
@@ -130,6 +142,13 @@ void handleModbusRawReadCommand(const String& payload, const String& modbusRawRe
 #endif
 }
 
+/**
+ * @brief Parse and execute a raw Modbus write command received via MQTT.
+ * @param payload JSON payload describing `unit`, `address` and `value(s)`.
+ * @param modbusRawWriteTopic Topic for raw write commands.
+ * @param mqtt MQTTFeature used to send ACK/response messages.
+ * @param modbus ModbusRTUFeature used to queue the actual Modbus write.
+ */
 void handleModbusRawWriteCommand(const String& payload, const String& modbusRawWriteTopic,
                                 MQTTFeature& mqtt, ModbusRTUFeature& modbus) {
 #if MODBUS_LISTEN_ONLY
@@ -211,6 +230,13 @@ void handleModbusRawWriteCommand(const String& payload, const String& modbusRawW
 #endif
 }
 
+/**
+ * @brief Handle a high-level Modbus write command that targets named registers.
+ * @param payload JSON payload containing `unit`, `register` and `value`.
+ * @param modbusWriteTopic Topic where write command was received.
+ * @param mqtt MQTTFeature used to send ACK/response messages.
+ * @param modbusDevices ModbusDeviceManager for resolving device/register by name.
+ */
 void handleModbusWriteCommand(const String& payload, const String& modbusWriteTopic,
                              MQTTFeature& mqtt, ModbusDeviceManager* modbusDevices) {
 #if MODBUS_LISTEN_ONLY
@@ -274,6 +300,13 @@ void handleModbusWriteCommand(const String& payload, const String& modbusWriteTo
 #endif
 }
 
+/**
+ * @brief Handle a high-level Modbus read command that targets named registers.
+ * @param payload JSON payload containing `unit` and `register` to read.
+ * @param modbusReadTopic Topic where read command was received.
+ * @param mqtt MQTTFeature used to send ACK/response messages.
+ * @param modbusDevices ModbusDeviceManager for resolving device/register by name.
+ */
 void handleModbusReadCommand(const String& payload, const String& modbusReadTopic,
                             MQTTFeature& mqtt, ModbusDeviceManager* modbusDevices) {
 #if MODBUS_LISTEN_ONLY
@@ -341,6 +374,11 @@ void handleModbusReadCommand(const String& payload, const String& modbusReadTopi
 #endif
 }
 
+/**
+ * @brief Publish a list of known Modbus devices over MQTT.
+ * @param mqtt MQTTFeature used for publishing.
+ * @param modbusDevices ModbusDeviceManager providing device information.
+ */
 void handleModbusListDevicesCommand(MQTTFeature& mqtt, ModbusDeviceManager* modbusDevices) {
     if (!modbusDevices) {
         mqtt.publishToBase("modbus/resp/list_devices", "{\"error\":\"devices_unavailable\"}", false);
@@ -363,6 +401,12 @@ void handleModbusListDevicesCommand(MQTTFeature& mqtt, ModbusDeviceManager* modb
     mqtt.publishToBase("modbus/resp/list_devices", out.c_str(), false);
 }
 
+/**
+ * @brief Publish the register list for a given device over MQTT.
+ * @param payload Payload containing `id` and `unit` fields to identify request.
+ * @param mqtt MQTTFeature used for publishing.
+ * @param modbusDevices ModbusDeviceManager providing device/register metadata.
+ */
 void handleModbusListRegistersCommand(const String& payload, MQTTFeature& mqtt,
                                      ModbusDeviceManager* modbusDevices) {
     JsonDocument doc;

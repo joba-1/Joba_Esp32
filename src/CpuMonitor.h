@@ -18,36 +18,53 @@
  *     float usage = CpuMonitor::usagePercent();
  */
 namespace CpuMonitor {
-    // Initialize the monitor. Safe to call multiple times.
+    /**
+     * @brief Initialize the CPU monitor subsystem
+     *
+     * Safe to call multiple times; prepares internal timing buffers.
+     */
     void init();
 
-    // Call at the START of each main loop iteration.
-    // The time since last markLoopEnd() is counted as idle time.
+    /**
+     * @brief Mark the start of a main-loop iteration
+     *
+     * Call at the very beginning of `loop()`. The time between the previous
+     * `markLoopEnd()` and this call is accounted as idle time.
+     */
     void markLoopStart();
 
-    // Call at the END of each main loop iteration.
-    // The time since markLoopStart() is counted as busy time.
+    /**
+     * @brief Mark the end of a main-loop iteration
+     *
+     * Call at the end of `loop()`. The time between the matching
+     * `markLoopStart()` and this call is counted as busy time.
+     */
     void markLoopEnd();
 
-    // Returns average CPU usage (0.0 - 100.0) over the measurement window.
+    /**
+     * @brief Average CPU usage percentage over the configured window
+     * @return Value in range 0.0 - 100.0
+     */
     float usagePercent();
 
-    // Returns total busy time in the current/last window (microseconds).
+    /** @return Total busy time in current/last window (microseconds) */
     uint32_t busyTimeUs();
 
-    // Returns total idle time in the current/last window (microseconds).
+    /** @return Total idle time in current/last window (microseconds) */
     uint32_t idleTimeUs();
 
-    // Returns the loop count during the current/last measurement window.
+    /** @return Loop iterations counted in current/last window */
     uint32_t loopCount();
 
-    // Returns average loop duration in microseconds (busy time / loop count).
+    /** @return Average loop duration in microseconds (busyTime / loopCount) */
     uint32_t avgLoopDurationUs();
 
-    // Reset all accumulated stats.
+    /** @brief Reset accumulated statistics and timers */
     void reset();
 
-    // Enable periodic logging of CPU stats at specified interval (milliseconds).
-    // Set interval to 0 to disable. Default: disabled.
+    /**
+     * @brief Enable/disable periodic logging of CPU stats
+     * @param intervalMs Interval in milliseconds; 0 to disable
+     */
     void setLogInterval(uint32_t intervalMs);
 }

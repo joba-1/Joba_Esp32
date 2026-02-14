@@ -1,17 +1,44 @@
+/**
+ * @file BusPatternTracker.cpp
+ * @brief Implementation of bus polling pattern detection and cycle tracking.
+ */
+
 #include "BusPatternTracker.h"
 #include <algorithm>
 
 #include "ModbusRTUFeature.h"
 #include "LoggingFeature.h"
 
+/**
+ * @brief Create a compact 64-bit key for a polling pattern.
+ *
+ * The encoded layout is: [unitId:8][functionCode:8][startRegister:16][quantity:16]
+ * placed into the high-to-low 64-bit fields. This key is used as the map
+ * index for compact pattern lookup.
+ *
+ * @param unitId Modbus unit identifier
+ * @param fc Function code (7-bit normalized)
+ * @param startReg Start register address
+ * @param qty Quantity of registers requested
+ * @return 64-bit encoded pattern key
+ */
 static inline uint64_t makeBusPatternKey(uint8_t unitId, uint8_t fc, uint16_t startReg, uint16_t qty) {
     return ((uint64_t)unitId << 40) | ((uint64_t)fc << 32) | ((uint64_t)startReg << 16) | qty;
 }
 
+/**
+ * @brief Construct and reset internal state.
+ */
 BusPatternTracker::BusPatternTracker() {
     reset();
 }
 
+/**
+ * @brief Clear all tracked patterns, sequence buffers and detected cycle info.
+ *
+ * This resets the compact pattern map, clears any previously detected
+ * cycle description and resets the circular sequence buffer pointers.
+ */
 void BusPatternTracker::reset() {
     _busPatterns.clear();
     _detectedCycle.clear();
@@ -21,11 +48,20 @@ void BusPatternTracker::reset() {
     _cycleTrackingPos = -1;
 }
 
+/**
+ * @brief Record an observed request frame and update pattern statistics.
+ *
+ * If a predecessor -> successor transition is observed (based on the
+ * provided `lastCompletedTxKey` and timing), the returned `RecordResult`
+ * will contain the transition information suitable for forwarding to
+ * `GapPredictor`.
+ */
 RecordResult BusPatternTracker::recordFrame(const ModbusFrame& frame,
                                             uint32_t minInterframeMs,
                                             bool hasLastCompletedTx,
                                             uint64_t lastCompletedTxKey,
                                             unsigned long lastTransactionEndMs) {
+
     RecordResult res;
     if (!frame.isRequest || !frame.isValid) return res;
 
@@ -82,12 +118,18 @@ RecordResult BusPatternTracker::recordFrame(const ModbusFrame& frame,
         }
     }
 
-    // Cycle sequence tracking
+    // Cycle sequence tracking: append the observed key into the circular
+    // buffer used to later attempt cycle detection. `_cycleSeqCount` grows
+    // indefinitely but only the last `CYCLE_SEQ_SIZE` items are stored.
     _cycleSeq[_cycleSeqIndex] = key;
     _cycleSeqIndex = (_cycleSeqIndex + 1) % CYCLE_SEQ_SIZE;
     _cycleSeqCount++;
 
-    // Cycle position tracking for gap prediction
+    // Cycle position tracking for gap prediction. If a cycle has been
+    // previously detected, attempt to align the current incoming frames
+    // with the cycle steps and record per-step successor gaps when they
+    // occur at the expected positions. If alignment is lost, the
+    // `_cycleTrackingPos` is reset and later re-searched.
     if (!_detectedCycle.empty()) {
         if (_cycleTrackingPos < 0) {
             for (size_t ci = 0; ci < _detectedCycle.size(); ci++) {
@@ -131,6 +173,14 @@ RecordResult BusPatternTracker::recordFrame(const ModbusFrame& frame,
     return res;
 }
 
+/**
+ * @brief Attempt to detect a repeating polling cycle from the recent sequence.
+ *
+ * Scans the circular sequence buffer and looks for a repeating prefix that
+ * matches the subsequent elements with high probability. If a cycle is
+ * detected, the compact cycle description is stored in `_detectedCycle`
+ * and per-step statistics are initialized.
+ */
 void BusPatternTracker::detectCycle() {
     _detectedCycle.clear();
 

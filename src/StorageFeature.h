@@ -6,7 +6,12 @@
 #include "Feature.h"
 
 /**
+ * @file StorageFeature.h
  * @brief LittleFS filesystem wrapper feature
+ *
+ * Provides convenient helpers for reading/writing files and basic directory
+ * operations used by other features (DataCollection, Modbus JSON storage,
+ * web API file listings, etc.).
  */
 class StorageFeature : public Feature {
 public:

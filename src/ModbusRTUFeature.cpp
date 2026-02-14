@@ -106,6 +106,13 @@ void ModbusRTUFeature::suspend() {
     LOG_I("ModbusRTU suspended");
 }
 
+/**
+ * @brief Resume Modbus processing after a previous suspend.
+ *
+ * Re-synchronizes timing, clears RX buffers and prepares the driver to
+ * resume normal operation.
+ */
+
 void ModbusRTUFeature::resume() {
     if (!_suspended) return;
     _suspended = false;
@@ -125,6 +132,14 @@ void ModbusRTUFeature::resume() {
     
     LOG_I("ModbusRTU resumed");
 }
+
+/**
+ * @brief Perform Modbus RTU feature setup (open serial, configure pins).
+ *
+ * Initializes UART, DE/RE pin (if configured), internal timing and
+ * statistics. Safe to call multiple times; subsequent calls when already
+ * ready are no-ops.
+ */
 
 uint32_t ModbusRTUFeature::getUnitQueueingPauseRemainingMs(uint8_t unitId) const {
     if (!isUnitQueueingPaused(unitId)) return 0;
@@ -354,6 +369,14 @@ void ModbusRTUFeature::setup() {
     _gapPredictor.stats().startMs = millis();
     _ready = true;
 }
+
+/**
+ * @brief Main periodic processing for Modbus RTU feature.
+ *
+ * Handles RX buffering, frame extraction, transmission arbitration and
+ * response timeouts. This function should be non-blocking and is invoked
+ * frequently from the main `loop()`.
+ */
 
 void ModbusRTUFeature::loop() {
     if (!_ready) return;
@@ -620,6 +643,13 @@ void ModbusRTUFeature::loop() {
     }
 }
 
+
+/**
+ * @brief Handle buffered RX bytes and extract complete Modbus frames.
+ *
+ * This function is invoked when a 3.5-char silence is detected; it
+ * delegates to parsing helpers and then clears the RX buffer.
+ */
 void ModbusRTUFeature::processReceivedData() {
     if (_rxBuffer.size() < 4) {
         if (_rxBuffer.size() > 0) onFrameBoundary(_rxBuffer.size());
@@ -662,6 +692,14 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
     return _rxBuffer.size();
 }
 
+/**
+ * @brief Attempt to parse and handle frames from the RX buffer.
+ *
+ * Uses `scanAndAdvanceIndex()` to find frames, validate CRC and dispatch
+ * responses/requests to appropriate handlers.
+ * @return Number of bytes left in RX buffer after processing.
+ */
+
 // Small parser helpers
 bool ModbusRTUFeature::tryParseAtLen(const uint8_t* p, size_t remaining, size_t len, ModbusFrame& out) {
     return ModbusRTUHelper::tryParseAtLen(p, remaining, len, out, (uint32_t)millis(), TimeUtils::nowUnixSecondsOrZero());
@@ -695,6 +733,12 @@ void ModbusRTUFeature::handleCrcInvalidFrame(const ModbusFrame& frame, bool resy
     _inResync = true;
 }
 
+/**
+ * @brief Handle a frame that was parsed from the RX buffer.
+ *
+ * This performs matching against pending requests, or forwards foreign
+ * frames to the foreign request/response handlers.
+ */
 void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameLen) {
     // matched our in-flight request
     _waitingForResponse = false;
@@ -1167,6 +1211,11 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
     ModbusRTUHelper::updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
 }
 
+/**
+ * @brief Process the outgoing request queue: select a request and attempt to send it.
+ *
+ * This performs gap-aware scheduling and enforces per-unit backoff.
+ */
 void ModbusRTUFeature::processQueue(bool busSilent) {
     if (_requestQueue.empty()) return;
 
@@ -1373,6 +1422,8 @@ void ModbusRTUFeature::processQueue(bool busSilent) {
 }
 
 bool ModbusRTUFeature::sendRequest(const ModbusPendingRequest& request) {
+
+    
     // Use static TX buffer instead of heap allocation
     _txFrameLen = 0;
     

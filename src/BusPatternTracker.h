@@ -112,14 +112,42 @@ struct RecordResult {
  */
 class BusPatternTracker {
 public:
+    /**
+     * @brief Construct a BusPatternTracker and initialize internal state.
+     */
     BusPatternTracker();
+
+    /**
+     * @brief Clear all tracked patterns and reset internal buffers.
+     */
     void reset();
+
+    /**
+     * @brief Attempt to detect a repeating polling cycle from recent history.
+     *
+     * When a cycle is found, `_detectedCycle` and `_cycleStepGaps` are
+     * populated with compact descriptions and per-step statistics.
+     */
     void detectCycle();
 
-    // Record a request frame. The caller provides the measurement floor and
-    // info about the previous completed transaction so the tracker can
-    // compute successor gaps and detect transitions. Returns a RecordResult
-    // which the caller may use to forward the transition to GapPredictor.
+    /**
+     * @brief Record a request frame and update pattern statistics.
+     *
+     * The caller should invoke this for each observed request frame. The
+     * tracker updates per-pattern counters, computes inter-arrival
+     * intervals and may detect a predecessor->successor transition.
+     *
+     * @param frame Observed `ModbusFrame` request.
+     * @param minInterframeMs Minimum inter-frame threshold (measurement floor)
+     *        to filter spurious small gaps.
+     * @param hasLastCompletedTx True when information about the last
+     *        completed transaction is available.
+     * @param lastCompletedTxKey Encoded key of the last completed transaction
+     *        (used to locate predecessor statistics).
+     * @param lastTransactionEndMs Uptime in ms when the last transaction ended.
+     * @return RecordResult Contains `hasTransition==true` when a valid
+     *         predecessor->successor transition was observed.
+     */
     RecordResult recordFrame(const ModbusFrame& frame,
                              uint32_t minInterframeMs,
                              bool hasLastCompletedTx,
@@ -127,6 +155,12 @@ public:
                              unsigned long lastTransactionEndMs);
 
     using TransitionCallback = std::function<void(uint64_t predecessorKey, uint64_t successorKey, uint32_t gapMs)>;
+    /**
+     * @brief Set an optional callback invoked when a transition is discovered.
+     *
+     * The callback receives `predecessorKey`, `successorKey` and the
+     * observed `gapMs` so callers can forward transitions to `GapPredictor`.
+     */
     void setTransitionCallback(TransitionCallback cb) { _transitionCb = cb; }
 
     const BusPatternMap& getBusPatterns() const { return _busPatterns; }

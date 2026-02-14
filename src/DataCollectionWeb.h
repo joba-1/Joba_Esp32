@@ -3,16 +3,18 @@
 
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
+#include <functional>
 #include "DataCollection.h"
 #include "WebServerFeature.h"
 
 /**
- * @brief Helper to register web endpoints for a DataCollection
- * 
- * Registers two endpoints per collection:
- * - /api/<name>         - JSON API returning all data
- * - /api/<name>/latest  - JSON API returning latest entry
- * - /view/<name>        - HTML table view with auto-refresh
+ * @file DataCollectionWeb.h
+ * @brief Helper utilities to expose a DataCollection over HTTP
+ *
+ * This helper registers three endpoints per collection:
+ * - `/api/<name>`       - JSON API returning all data
+ * - `/api/<name>/latest`- JSON API returning the latest entry
+ * - `/view/<name>`      - HTML table view with auto-refresh
  */
 class DataCollectionWeb {
 public:
@@ -20,10 +22,10 @@ public:
      * @brief Register web endpoints for a data collection
      * @param server AsyncWebServer instance
      * @param basePath Base path for endpoints (e.g., "sensors" -> /api/sensors, /view/sensors)
-     * @param getJsonCallback Callback that returns JSON string of all data
-     * @param getLatestJsonCallback Callback that returns JSON string of latest entry
-     * @param getSchemaCallback Callback that returns field names as JSON array
-     * @param refreshIntervalMs Auto-refresh interval for HTML view (default 5000ms)
+     * @param getJsonCallback Callback returning JSON string of all data
+     * @param getLatestJsonCallback Callback returning JSON string of the latest entry
+     * @param getSchemaCallback Callback returning field names as a JSON array string
+     * @param refreshIntervalMs Auto-refresh interval for HTML view (milliseconds, default 5000)
      */
     // Register endpoints using a raw AsyncWebServer instance (no auth check)
     static void registerEndpoints(
@@ -63,7 +65,12 @@ public:
         });
     }
 
-    // Register endpoints using WebServerFeature (enforces auth if enabled)
+    /**
+     * @brief Register endpoints using WebServerFeature (enforces auth if enabled)
+     *
+     * Same parameters as the raw `registerEndpoints` overload but uses the
+     * project's `WebServerFeature` to perform optional authentication checks.
+     */
     static void registerEndpoints(
         WebServerFeature& serverFeature,
         const char* basePath,
@@ -107,6 +114,8 @@ public:
     
     /**
      * @brief Convenience method to register endpoints for a DataCollection instance
+     * @tparam T element type stored in the DataCollection
+     * @tparam N capacity of the DataCollection
      */
     template<typename T, size_t N>
     static void registerCollection(
@@ -161,12 +170,27 @@ public:
 
 private:
     template<typename T, size_t N>
+    /**
+     * @brief Attempt to produce a JSON array of field/column names for the
+     * given collection.
+     *
+     * Currently the project-level DataCollection schema is not exposed here,
+     * so this returns an empty array. The HTML view will render without it.
+     *
+     * @return JSON array string of field names (e.g., "[\"time\",\"value\"]")
+     */
     static String getFieldNames(DataCollection<T, N>& collection) {
-        // This would require access to schema, which we don't have here
-        // Return empty array - the HTML will handle it
         return "[]";
     }
     
+    /**
+     * @brief Stream an HTML table view for the collection to the client.
+     *
+     * @param request AsyncWebServerRequest to write the response to
+     * @param name Human-readable collection name used in headings
+     * @param apiPath API path this view will poll for JSON data
+     * @param refreshIntervalMs Auto-refresh interval in milliseconds
+     */
     static void streamHtmlView(AsyncWebServerRequest* request, const char* name, const char* apiPath, uint32_t refreshIntervalMs) {
         AsyncResponseStream *response = request->beginResponseStream(F("text/html"));
         response->print(F("<!DOCTYPE html>\n<html>\n<head>\n"

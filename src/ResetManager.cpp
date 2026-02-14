@@ -4,6 +4,15 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+/**
+ * @file ResetManager.cpp
+ * @brief Safe restart scheduling helper.
+ *
+ * Provides a non-blocking API to schedule a delayed restart. The implementation
+ * creates a small FreeRTOS task to delay and then call `ESP.restart()` so that
+ * callers can return HTTP/MQTT responses prior to reboot.
+ */
+
 namespace {
     volatile bool g_restartScheduled = false;
 

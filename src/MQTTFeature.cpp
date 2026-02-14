@@ -1,5 +1,14 @@
 #include "MQTTFeature.h"
 
+/**
+ * @file MQTTFeature.cpp
+ * @brief MQTT wrapper implementation with reconnect and publish helpers.
+ *
+ * Implements connection management, bounded-topic construction and
+ * chunked publishing for large payloads. All helpers avoid heap
+ * allocations in hot paths by using instance or stack buffers.
+ */
+
 MQTTFeature* MQTTFeature::_instance = nullptr;
 
 MQTTFeature::MQTTFeature(const char* server, uint16_t port,
@@ -76,6 +85,10 @@ bool MQTTFeature::publish(const char* topic, const char* payload, bool retain) {
     if (!_connected) return false;
     return _mqttClient.publish(topic, payload, retain);
 }
+
+// Note: publishToBase/publishLarge intentionally avoid heap allocations and
+// use a stack or instance buffer to construct topics and fragments. This
+// keeps per-message memory usage bounded for embedded constraints.
 
 bool MQTTFeature::publishToBase(const char* subtopic, const char* payload, bool retain) {
     // Use instance buffer instead of heap allocation

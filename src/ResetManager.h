@@ -5,10 +5,23 @@
 
 class ResetManager {
 public:
-    // Schedules an ESP restart after delayMs. Returns false if a restart is already scheduled.
+    /**
+     * @brief Schedule a device restart
+     *
+     * Requests a restart after `delayMs` milliseconds. If a restart is
+     * already scheduled this returns false and does not modify the pending
+     * request.
+     *
+     * @param delayMs Milliseconds delay until restart
+     * @param reason Short reason string recorded for diagnostic purposes
+     * @return true when the restart was successfully scheduled
+     */
     static bool scheduleRestart(uint32_t delayMs, const char* reason);
 
-    // Returns true if a restart has been scheduled but not executed yet.
+    /**
+     * @brief Query whether a restart is pending
+     * @return true when a restart has been scheduled and not yet executed
+     */
     static bool isRestartScheduled();
 };
 

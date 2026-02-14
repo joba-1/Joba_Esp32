@@ -1,10 +1,15 @@
 #include "ModbusDevice_helper.h"
 #include <vector>
-#include <cstring>
+#include <string.h>
 
 namespace ModbusDeviceHelper {
 
 ModbusDataType parseModbusDataType(const char* str) {
+    /**
+     * @brief Parse a case-insensitive type name into a ModbusDataType enum.
+     * @param str Null-terminated C string containing the type name (e.g. "uint32_be").
+     * @return Corresponding ModbusDataType, or ModbusDataType::UINT16 as default.
+     */
     if (strcasecmp(str, "int16") == 0) return ModbusDataType::INT16;
     if (strcasecmp(str, "uint32_be") == 0) return ModbusDataType::UINT32_BE;
     if (strcasecmp(str, "uint32_le") == 0) return ModbusDataType::UINT32_LE;
@@ -18,6 +23,12 @@ ModbusDataType parseModbusDataType(const char* str) {
 }
 
 float convertModbusRawToValue(const ModbusRegisterDef& def, const uint16_t* rawData) {
+    /**
+     * @brief Convert raw Modbus register words into a floating-point value.
+     * @param def Register definition describing dataType, length, conversionFactor and offset.
+     * @param rawData Pointer to an array of 16-bit words (big-endian on wire) to read from.
+     * @return Converted floating value after applying conversionFactor and offset.
+     */
     float rawValue = 0;
 
     switch (def.dataType) {
@@ -74,6 +85,13 @@ float convertModbusRawToValue(const ModbusRegisterDef& def, const uint16_t* rawD
 }
 
 std::vector<uint16_t> convertModbusValueToRaw(const ModbusRegisterDef& def, float value) {
+    /**
+     * @brief Convert a floating-point `value` to a vector of Modbus 16-bit words
+     *        suitable for writing, according to the register definition.
+     * @param def Register definition describing target representation and length.
+     * @param value The floating value to convert into raw register words.
+     * @return Vector of 16-bit words padded to `def.length`.
+     */
     // Apply reverse conversion
     float rawValue = (value - def.offset) / def.conversionFactor;
 
@@ -145,6 +163,21 @@ void applyModbusReadResponseToDevice(ModbusDeviceInstance& device,
                                      const ModbusFrame& response,
                                      uint32_t nowMs,
                                      uint32_t nowUnix) {
+    /**
+     * @brief Apply a Modbus read response frame to the device's cached values.
+     *
+     * This will convert the response bytes to 16-bit words and update any
+     * register entries in `device.currentValues` that fall into the returned
+     * read window and match the function code and poll interval.
+     *
+     * @param device Device instance to update.
+     * @param functionCode Modbus function code for the read (e.g. 0x03).
+     * @param pollIntervalMs Poll interval associated with this batch read.
+     * @param startAddress Start register address of the returned window.
+     * @param response The ModbusFrame containing response bytes and metadata.
+     * @param nowMs Current time in milliseconds (millis()).
+     * @param nowUnix Current Unix timestamp in seconds, or 0 if unavailable.
+     */
     if (!device.deviceType) return;
     if (!response.isValid || response.isException) return;
 

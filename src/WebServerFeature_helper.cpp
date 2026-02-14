@@ -4,6 +4,17 @@ namespace WebServerHelper {
 
 String generateRootPageHtml(const String& deviceId, const String& firmwareName,
                            const IPAddress& ipAddress, uint32_t uptimeSeconds, uint32_t freeHeap) {
+/**
+ * @brief Build the HTML for the root (home) page served by the web UI.
+ *
+ * This helper composes a compact single-page HTML document that links to
+ * the various JSON APIs and interactive views (modbus, storage, sensors,
+ * OTA). The returned `String` is suitable for sending via
+ * `AsyncWebServerResponse::print()`; it is deliberately generated as a
+ * single `String` to avoid heap fragmentation in the caller.
+ *
+ * Parameters are used to show device identity and basic runtime metrics.
+ */
     String title;
     if (deviceId.startsWith(firmwareName)) {
         title = deviceId;
@@ -121,6 +132,14 @@ String generateRootPageHtml(const String& deviceId, const String& firmwareName,
 }
 
 String generateStoragePageHtml() {
+/**
+ * @brief Produce the HTML for the storage browser view.
+ *
+ * Returns a raw literal HTML document containing client-side JavaScript
+ * which calls the `/api/storage/list` and `/api/storage/file` endpoints.
+ * The function returns a `String` created from a raw literal to keep the
+ * implementation compact and avoid runtime string concatenation.
+ */
     return F(R"rawliteral(
 <!DOCTYPE html>
 <html>

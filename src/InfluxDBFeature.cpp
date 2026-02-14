@@ -4,6 +4,15 @@
 #include <lwip/dns.h>
 #include <lwip/ip_addr.h>
 
+/**
+ * @file InfluxDBFeature.cpp
+ * @brief Backgrounded InfluxDB line-protocol uploader implementation
+ *
+ * Implements batching, DNS resolution caching and a background task to
+ * upload data without blocking the main loop. The public API is exposed
+ * via `InfluxDBFeature` methods defined in the header.
+ */
+
 // InfluxDB 2.x constructor
 InfluxDBFeature::InfluxDBFeature(const char* serverUrl,
                                  const char* org,
@@ -68,6 +77,12 @@ InfluxDBFeature InfluxDBFeature::createV1(const char* serverUrl,
                            retentionPolicy, batchIntervalMs, batchSize, true);
 }
 
+/**
+ * @brief Initialize InfluxDB feature and start background upload task
+ *
+ * Resolves the configured server (when possible), allocates synchronization
+ * primitives and starts a pinned FreeRTOS task to perform HTTP uploads.
+ */
 void InfluxDBFeature::setup() {
     if (_ready) return;
     
@@ -116,6 +131,12 @@ void InfluxDBFeature::setup() {
     _ready = true;
 }
 
+/**
+ * @brief Periodic handler: decide whether an upload should be triggered
+ *
+ * Triggers when batch size or interval conditions are met and WiFi is
+ * available. The actual upload is handed off to a background task.
+ */
 void InfluxDBFeature::loop() {
     if (!_enabled || !_ready) return;
     if (_buffer.empty()) return;
@@ -138,6 +159,10 @@ void InfluxDBFeature::loop() {
     }
 }
 
+/**
+ * @brief Queue one or more InfluxDB line-protocol lines for upload
+ * @param lineProtocol One or more lines separated by '\n'
+ */
 void InfluxDBFeature::queue(const String& lineProtocol) {
     if (!_enabled) return;
     if (lineProtocol.length() == 0) return;
@@ -175,6 +200,10 @@ void InfluxDBFeature::queue(const String& lineProtocol) {
     LOG_V("InfluxDB: queued %u lines, buffer size: %u", 1, _buffer.size());
 }
 
+/**
+ * @brief Assemble batch payload and hand it to the background task
+ * @return true when handoff succeeded (or nothing to do)
+ */
 bool InfluxDBFeature::upload() {
     if (!_enabled || _buffer.empty()) return true;
     if (WiFi.status() != WL_CONNECTED) {
@@ -226,6 +255,11 @@ bool InfluxDBFeature::upload() {
     }
 }
 
+/**
+ * @brief Perform the HTTP POST to InfluxDB (synchronous; used by background task)
+ * @param data Line-protocol payload
+ * @return true on success
+ */
 bool InfluxDBFeature::sendData(const String& data) {
     HTTPClient http;
     
@@ -282,6 +316,12 @@ bool InfluxDBFeature::sendData(const String& data) {
 
 // ---------- DNS caching ----------
 
+/**
+ * @brief Resolve server hostname to IP and construct a numeric upload URL
+ *
+ * This avoids DNS lookups on every upload by caching an IP-based URL when
+ * DNS resolution succeeds. Falls back to the original URL otherwise.
+ */
 void InfluxDBFeature::resolveAndCacheUrl() {
     // Parse hostname from _serverUrl (format: "http://hostname:port" or "http://ip:port")
     String urlStr(_serverUrl);
@@ -343,6 +383,10 @@ void InfluxDBFeature::resolveAndCacheUrl() {
 
 // ---------- Background upload task ----------
 
+/**
+ * @brief FreeRTOS task function responsible for performing HTTP uploads
+ * @param param Pointer to `InfluxDBFeature` instance
+ */
 void InfluxDBFeature::uploadTaskFunc(void* param) {
     auto* self = static_cast<InfluxDBFeature*>(param);
     
@@ -413,6 +457,9 @@ void InfluxDBFeature::uploadTaskFunc(void* param) {
     }
 }
 
+/**
+ * @brief Compute approximate number of bytes pending in the in-memory buffer
+ */
 size_t InfluxDBFeature::pendingBytes() const {
     size_t total = 0;
     for (const String& line : _buffer) {

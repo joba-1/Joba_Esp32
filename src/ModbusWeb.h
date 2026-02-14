@@ -31,28 +31,51 @@ public:
                       ModbusDeviceManager& devices) {
         auto* webServer = server.getServer();
 
+        /**
+         * @brief Tracked result for a raw read request
+         *
+         * Used by the `/api/modbus/raw/readTracked` endpoint to store
+         * lifecycle and payload information for a queued read so callers
+         * can poll `/api/modbus/raw/result` for the final response.
+         */
         struct TrackedRawReadResult {
-            uint32_t id{0};
-            uint32_t createdMs{0};
-            uint32_t completedMs{0};
-            uint8_t unitId{0};
-            uint8_t functionCode{0};
-            uint16_t address{0};
-            uint16_t count{0};
-            bool queued{false};
-            bool completed{false};
-            bool success{false};
-            bool isException{false};
-            uint8_t exceptionCode{0};
-            uint16_t crc{0};
-            String dataHex;
-            String registerDataHex;
-            std::vector<uint16_t> words;
+            uint32_t id{0};                      /**< unique request id */
+            uint32_t createdMs{0};               /**< request creation time (millis) */
+            uint32_t completedMs{0};             /**< completion time (millis) if completed */
+            uint8_t unitId{0};                   /**< Modbus unit id */
+            uint8_t functionCode{0};             /**< Modbus function code (as sent) */
+            uint16_t address{0};                 /**< start register/address */
+            uint16_t count{0};                   /**< quantity requested */
+            bool queued{false};                  /**< was the request accepted into queue */
+            bool completed{false};               /**< did a response arrive */
+            bool success{false};                 /**< response success (not exception) */
+            bool isException{false};             /**< response was Modbus exception */
+            uint8_t exceptionCode{0};            /**< exception code when applicable */
+            uint16_t crc{0};                     /**< CRC reported in response frame */
+            String dataHex;                      /**< hex representation of raw frame */
+            String registerDataHex;              /**< hex for register payload only */
+            std::vector<uint16_t> words;        /**< bounded word array extracted from payload */
         };
 
+        /**
+         * @brief Map of tracked raw-read requests (request id -> state)
+         *
+         * Kept small and age-limited by `purgeTracked()` to avoid unbounded
+         * memory usage on long-running devices.
+         */
         static std::map<uint32_t, TrackedRawReadResult> s_trackedRawReads;
+
+        /**
+         * @brief Monotonic counter for allocating tracked request ids
+         */
         static uint32_t s_nextTrackedId = 1;
 
+        /**
+         * @brief Purge old or excess tracked read entries
+         *
+         * Removes entries older than a configured age and trims the map to a
+         * maximum number of items (oldest-first) to keep memory bounded.
+         */
         auto purgeTracked = [&]() {
             static constexpr uint32_t MAX_AGE_MS = 5UL * 60UL * 1000UL;
             static constexpr size_t MAX_ITEMS = 32;
@@ -1171,6 +1194,11 @@ public:
             });
 
         // ---- Human-friendly bus pattern analysis page ----
+        /**
+         * @brief HTML for the bus pattern analysis page
+         *
+         * Stored in flash (PROGMEM) to avoid allocating large strings on the heap.
+         */
         static const char PATTERNS_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bus Pattern Analysis</title>
@@ -1468,6 +1496,12 @@ refresh();startA();
         // ESPAsyncWebServer prefix-match collisions with /view/modbus.
 
         // ---- Gap Scheduler monitoring page ----
+        /**
+         * @brief HTML for the gap scheduler monitoring page
+         *
+         * Kept in PROGMEM to reduce RAM usage; served directly by the web
+         * server for human inspection of scheduler state.
+         */
         static const char SCHEDULER_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Gap Scheduler</title>
