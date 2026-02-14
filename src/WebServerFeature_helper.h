@@ -4,25 +4,24 @@
 #include <Arduino.h>
 #include <IPAddress.h>
 
+// Forward-declare to avoid pulling heavy AsyncWebServer headers into all units
+class AsyncWebServerRequest;
+
 namespace WebServerHelper {
 
 /**
- * @brief Generate the root page HTML
- * @param deviceId Device ID string
- * @param firmwareName Firmware name string
- * @param ipAddress IP address
- * @param uptimeSeconds Uptime in seconds
- * @param freeHeap Free heap in bytes
- * @return Complete HTML string for the root page
+ * @brief Stream the root page directly to an AsyncWebServerRequest response.
+ *
+ * This avoids building a large `String` in RAM by printing static parts
+ * from flash using `F(...)` and streaming the small dynamic parts.
  */
-String generateRootPageHtml(const String& deviceId, const String& firmwareName,
-                           const IPAddress& ipAddress, uint32_t uptimeSeconds, uint32_t freeHeap);
+void sendRootPage(AsyncWebServerRequest* request, const String& deviceId, const String& firmwareName,
+                  const IPAddress& ipAddress, uint32_t uptimeSeconds, uint32_t freeHeap);
 
 /**
- * @brief Generate the storage browser page HTML
- * @return Complete HTML string for the storage browser page
+ * @brief Stream the storage browser page directly to an AsyncWebServerRequest.
  */
-String generateStoragePageHtml();
+void sendStoragePage(AsyncWebServerRequest* request);
 
 } // namespace WebServerHelper
 
