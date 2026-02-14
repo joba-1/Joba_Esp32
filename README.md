@@ -1,5 +1,8 @@
 # ESP32 Firmware
 
+[![CI](https://github.com/joba-1/Joba_Esp32/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/joba-1/Joba_Esp32/actions/workflows/coverage.yml)
+[![Coverage](https://img.shields.io/badge/coverage-60%25-yellow.svg)](https://github.com/joba-1/Joba_Esp32/actions/workflows/coverage.yml)
+
 A production-ready, modular ESP32 firmware framework for IoT data collection and home automation. Built with PlatformIO and Arduino framework, featuring automatic device identification, comprehensive data logging, and seamless Home Assistant integration.
 
 ## What It Does
