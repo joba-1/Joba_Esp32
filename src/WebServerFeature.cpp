@@ -249,9 +249,9 @@ void WebServerFeature::setupDefaultRoutes() {
             }
         }
 
-        String output;
-        serializeJson(doc, output);
-        request->send(200, "application/json", output);
+        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        serializeJson(doc, *response);
+        request->send(response);
     });
 
     // IMPORTANT: Register specific storage endpoints BEFORE the general /api/storage endpoint

@@ -730,9 +730,9 @@ String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
         if (it == _devices.end()) {
             JsonDocument err;
             err["error"] = "Device not found";
-            String output;
+            std::string output;
             serializeJson(err, output);
-            return output;
+            return String(output.c_str());
         }
 
         const auto& device = it->second;
@@ -842,9 +842,9 @@ String ModbusDeviceManager::getDeviceValuesJson(uint8_t unitId) const {
     }
     doc["unknownU16Truncated"] = (bool)(unknownTotal > unknown.size());
 
-    String output;
+    std::string output;
     serializeJson(doc, output);
-    return output;
+    return String(output.c_str());
 }
 
 void ModbusDeviceManager::writeDeviceValuesJson(uint8_t unitId, Print& out) const {

@@ -121,9 +121,9 @@ public:
                     dev["unknownCount"] = (uint32_t)kv.second.unknownU16.size();
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
         
         // Get device values
@@ -196,9 +196,9 @@ public:
                     doc["valid"] = false;
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
         
         // Write to a register
@@ -232,9 +232,9 @@ public:
                 doc["value"] = value;
                 doc["queued"] = queued;
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
         
         // Raw read request
@@ -271,9 +271,9 @@ public:
                 doc["functionCode"] = fc;
                 doc["queued"] = queued;
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
 
         // Raw read request (tracked) - returns a requestId that can be polled via /api/modbus/raw/result
@@ -363,9 +363,10 @@ public:
                 doc["count"] = count;
                 doc["functionCode"] = fc;
 
-                String output;
-                serializeJson(doc, output);
-                request->send(queued ? 200 : 503, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                if (!queued) response->setCode(503);
+                serializeJson(doc, *response);
+                request->send(response);
             });
 
         // Fetch tracked raw read result
@@ -416,9 +417,9 @@ public:
                     }
                 }
 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
         
         // Get bus status
@@ -497,9 +498,9 @@ public:
                     if (iso.length() > 0) updated["iso"] = iso;
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
 
         // Set silence time for arbitration testing
@@ -521,9 +522,9 @@ public:
                 doc["charTimes"] = (float)modbus.getSilenceTimeUs() / modbus.getCharTimeUs();
                 doc["specMinCharTimes"] = 3.5;
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
 
         // Reset stats for clean testing
@@ -615,9 +616,9 @@ public:
                     }
                 }
 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             };
 
         webServer->on("/api/modbus/crc", HTTP_GET, handleModbusCrc);
@@ -664,9 +665,9 @@ public:
                     }
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
 
         // Bus pattern analysis: per-register-range timing, gaps, cycle detection
@@ -1393,9 +1394,9 @@ refresh();startA();
                     arr.add(name);
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
         
         // Response mismatch diagnostics
@@ -1436,9 +1437,9 @@ refresh();startA();
                     }
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
         
         // HTML dashboard
@@ -2099,9 +2100,9 @@ if($('autoRef').checked)startA();
                     }
                 });
 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
 
         // Get register definitions for all devices
@@ -2133,9 +2134,9 @@ if($('autoRef').checked)startA();
                     }
                 }
                 
-                String output;
-                serializeJson(doc, output);
-                request->send(200, "application/json", output);
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
             });
     }
 };
