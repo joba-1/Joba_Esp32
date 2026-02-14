@@ -10,6 +10,8 @@
 
 void test_parse_types(void) {
     using namespace ModbusDeviceHelper;
+    // Arrange: none (stateless parser)
+    // Act & Assert
     TEST_ASSERT_TRUE(parseModbusDataType("int16") == ModbusDataType::INT16);
     TEST_ASSERT_TRUE(parseModbusDataType("UINT32_BE") == ModbusDataType::UINT32_BE);
     TEST_ASSERT_TRUE(parseModbusDataType("float32_le") == ModbusDataType::FLOAT32_LE);
@@ -22,7 +24,10 @@ void test_convert_uint16_and_int16(void) {
     def.conversionFactor = 1.0f;
     def.offset = 0.0f;
     uint16_t raw[] = { 0x1234 };
+    // Arrange: def and raw above
+    // Act
     float v = ModbusDeviceHelper::convertModbusRawToValue(def, raw);
+    // Assert
     TEST_ASSERT_EQUAL_FLOAT(0x1234, v);
 
     def.dataType = ModbusDataType::INT16;
@@ -44,7 +49,10 @@ void test_convert_float32_be(void) {
     uint16_t raw[2];
     raw[0] = (uint16_t)(bits >> 16);
     raw[1] = (uint16_t)(bits & 0xFFFF);
+    // Arrange
+    // Act
     float out = ModbusDeviceHelper::convertModbusRawToValue(def, raw);
+    // Assert
     TEST_ASSERT_FLOAT_WITHIN(1e-6, fv, out);
 }
 
