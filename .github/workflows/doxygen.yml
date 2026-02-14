@@ -1,0 +1,25 @@
+name: Doxygen
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'Doxyfile'
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended
+      - name: Generate docs
+        run: |
+          chmod +x scripts/generate_docs.sh
+          ./scripts/generate_docs.sh
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doxygen-html
+          path: docs/doxygen/html

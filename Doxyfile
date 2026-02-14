@@ -1,0 +1,80 @@
+## Doxyfile generated for Joba_Esp32
+## Comprehensive settings: HTML, LaTeX, XML, diagrams, source browser
+
+PROJECT_NAME           = "Joba_Esp32"
+PROJECT_NUMBER         = ""
+PROJECT_BRIEF          = "ESP32 firmware: Modbus monitor + integrators"
+OUTPUT_DIRECTORY       = docs/doxygen
+CREATE_SUBDIRS         = YES
+
+OPTIMIZE_OUTPUT_FOR_C  = NO
+OPTIMIZE_FOR_FORTRAN   = NO
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_ANON_NSPACES   = YES
+
+INPUT                  = src include README.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp *.c *.cpp *.cc *.md
+EXCLUDE                = test build .pio .vscode misc/data
+EXCLUDE_PATTERNS       = */test/* */test_* /*/test/*
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_HEADER            = 
+HTML_FOOTER            = 
+HTML_STYLESHEET        = 
+HTML_EXTRA_FILES       = 
+GENERATE_TREEVIEW      = YES
+
+GENERATE_LATEX         = YES
+LATEX_OUTPUT           = latex
+
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = YES
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+HAVE_DOT               = YES
+DOT_NUM_THREADS        = 2
+DOT_IMAGE_FORMAT       = png
+DOT_FONTNAME           = Helvetica
+CLASS_DIAGRAMS         = YES
+COLLABORATION_GRAPH    = YES
+GROUP_GRAPHS           = YES
+UML_LOOK               = YES
+TEMPLATE_RELATIONS     = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+DOT_GRAPH_MAX_NODES    = 50
+
+GENERATE_TAGFILE       = docs/doxygen/jobadocs.tag
+
+MULTILINE_CPP_IS_BRIEF = YES
+
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+
+# Prepend project root to file links in generated docs
+STRIP_FROM_PATH        = ${PROJECT_SOURCE_DIR}
+
+# Warn on undocumented items
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+
+QUIET                  = NO
+WARNINGS               = YES
+INPUT_ENCODING         = UTF-8
