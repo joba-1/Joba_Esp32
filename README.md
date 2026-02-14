@@ -284,6 +284,26 @@ Default password: Auto-generated as `{FIRMWARE_NAME}-{MAC_SUFFIX}` (shown in ser
 
 For full details (parameters, examples), see [WEB_API.md](WEB_API.md).
 
+## Tests & Coverage
+
+Run the unit tests locally (native environment) and generate an HTML coverage report:
+
+```bash
+# Clean previous native build artifacts
+pio run -e native -t clean
+
+# Run native unit tests
+platformio test --environment native
+
+# Generate coverage (requires geninfo/lcov/gcovr installed)
+bash misc/coverage/run_coverage.sh
+
+# Open coverage report
+xdg-open coverage/html/index.html
+```
+
+CI (GitHub Actions) is configured to run native tests and publish the generated coverage artifacts. The latest coverage HTML is available as a build artifact on successful workflow runs.
+
 **MQTT reset command:**
 - Publish to `{baseTopic}/cmd/reset` (payload: `reset` / `restart` / `1`) to reboot.
 

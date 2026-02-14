@@ -3,7 +3,7 @@ applyTo: "**"
 ---
 # Joba_Esp32 (ESP32 + Arduino + PlatformIO)
 
-- Build is PlatformIO (`platformio.ini`) with envs `serial` (USB, usually not connected) and `ota` (espota). `pio` isn’t on PATH, activate `/home/joachim/.platformio/penv` before using it or other stuff below the penv directory. Use the correct activate for the used shell
+- Build is PlatformIO (`platformio.ini`) with envs `serial` (USB, usually not connected) and `ota` (espota). `pio` isn’t on PATH, activate `/home/joachim/.platformio/penv` before using it or other stuff below the penv directory. Use the correct activate for the used shell. Also run tests before commits and suggest tests for uncovered lines when you edit code in those areas; see `coverage/coverage.info.filtered` for which lines are uncovered.
 - Local config lives in `config.ini` (gitignored) based on `config.ini.template`. `pre_build.py` may create it and generates `data/build_info.json` for LittleFS build diagnostics.
 - When changing files under `data/` (Modbus JSON, build_info, etc), run `/home/joachim/.platformio/penv/bin/pio run -t uploadfs` so the filesystem matches firmware; see `WEB_API.md` `/api/buildinfo`.
 - uploads sometimes fail after upload started transferring data; retrying usually works.
@@ -24,6 +24,9 @@ applyTo: "**"
 
 - suggest commits before adding new unrelated code/features
 - write unit tests for new features and bug fixes
+- create doxygen comments for new public APIs and complex logic; run `pio run -t doxygen` to generate docs in `docs/doxygen/html/index.html`
+- run coverage locally with `./misc/coverage/run_coverage.sh` and check `coverage/html/index.html` for uncovered lines; CI also runs coverage and uploads artifacts
+- suggest unit tests for previously uncovered lines when you edit code in those areas or if you stumble on them during other tasks; see `coverage/coverage.info.filtered` for which lines are uncovered
 
 ---
 applyTo: "docs/**/*.md"
