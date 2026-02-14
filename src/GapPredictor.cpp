@@ -123,7 +123,10 @@ GapPrediction GapPredictor::predictCurrentGap(uint64_t predecessorKey) const {
             usableEdges++;
         }
     }
-    if (totalSamples < GAP_MIN_SAMPLES || usableEdges == 0) return result;
+    if (totalSamples < GAP_MIN_SAMPLES || usableEdges == 0) {
+        xSemaphoreGive(_mutex);
+        return result;
+    }
 
     const BusTransitionEntry* bestEdge = nullptr;
     uint32_t bestCount = 0;
@@ -242,6 +245,7 @@ bool GapPredictor::canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, u
         // If the remaining window (elapsed + planned safe wire time) would
         // exceed the effective minimum for this successor, it is unsafe.
         if (elapsedMs + safeWireMs > effectiveMin) {
+            xSemaphoreGive(_mutex);
             return false;
         }
     }
@@ -265,7 +269,9 @@ bool GapPredictor::canSafelyTransmit(uint64_t predecessorKey, uint32_t wireMs, u
  */
 void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElapsedMs, uint32_t lastTxWireMs,
                          bool hasLastCompletedTx, uint64_t lastCompletedTxKey) {
+    bool locked = false;
     if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        locked = true;
         _stats.collisions++;
         _stats.gapInsufficient++;
         _stats.lastCollisionMs = millis();
@@ -281,12 +287,13 @@ void GapPredictor::reportCollision(bool sentDuringGapWindow, uint32_t lastTxElap
 
     float oldMargin = _stats.safetyMargin;
     _stats.safetyMargin = std::min(_stats.safetyMargin + COLLISION_MARGIN_STEP, _stats.maxMargin);
-        if (_stats.safetyMargin != oldMargin) {
-            _stats.lastMarginAdjustMs = millis();
-            LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
-                    oldMargin * 100, _stats.safetyMargin * 100);
-        }
-        if (_mutex) xSemaphoreGive(_mutex);
+    if (_stats.safetyMargin != oldMargin) {
+        _stats.lastMarginAdjustMs = millis();
+        LOG_W("Gap scheduler: margin %.0f%% -> %.0f%%",
+                oldMargin * 100, _stats.safetyMargin * 100);
+    }
+
+    if (locked) xSemaphoreGive(_mutex);
 }
 
 /**
