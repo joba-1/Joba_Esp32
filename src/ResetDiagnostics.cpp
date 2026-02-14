@@ -9,6 +9,16 @@
 // rtc_get_reset_reason() lives in ROM headers.
 #include <rom/rtc.h>
 
+/**
+ * @file ResetDiagnostics.cpp
+ * @brief RTC-backed reset and breadcrumb diagnostics.
+ *
+ * Persists lightweight diagnostic state in RTC memory across software
+ * resets (not power cycles). Provides helpers to set breadcrumbs, record
+ * slow-loop durations and fetch boot/reset reason information used by the
+ * `/health` endpoint and debug logging.
+ */
+
 namespace {
     struct RtcState {
         uint32_t magic;

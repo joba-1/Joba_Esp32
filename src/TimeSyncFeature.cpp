@@ -3,6 +3,15 @@
 #include <WiFi.h>
 #include <time.h>
 
+/**
+ * @file TimeSyncFeature.cpp
+ * @brief NTP synchronization feature implementation.
+ *
+ * Manages NTP configuration and periodic synchronization. Non-blocking state
+ * machine ensures the feature only attempts sync when WiFi is available and
+ * reschedules retries on timeout.
+ */
+
 TimeSyncFeature::TimeSyncFeature(const char* ntpServer1, const char* ntpServer2,
                                  const char* timezone, uint32_t syncIntervalMs)
     : _ntpServer1(ntpServer1)

@@ -1,6 +1,16 @@
 #include "CpuMonitor.h"
 #include "LoggingFeature.h"
 
+/**
+ * @file CpuMonitor.cpp
+ * @brief Lightweight CPU usage and loop-time measurement helpers.
+ *
+ * This translation unit implements a small, non-blocking CPU monitor used by
+ * the main loop to record busy/idle time, loop counts and average loop
+ * durations. The implementation is deliberately allocation-free and
+ * designed for frequent calls from the primary `loop()` path.
+ */
+
 namespace {
     // Measurement window (how often stats roll over)
     static constexpr uint32_t WINDOW_US = 1000000;  // 1 second

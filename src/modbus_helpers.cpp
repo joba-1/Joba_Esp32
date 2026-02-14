@@ -2,6 +2,15 @@
 #include <sstream>
 #include <iomanip>
 
+/**
+ * @file modbus_helpers.cpp
+ * @brief Small utility implementations for Modbus CRC and hex formatting.
+ *
+ * Contains a compact CRC-16 (Modbus) implementation and a human-friendly
+ * hex formatter used by logging and web/UI helpers. These functions are
+ * standalone and intentionally allocation-minimal for embedded use.
+ */
+
 uint16_t modbus_crc16(const uint8_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t pos = 0; pos < len; pos++) {

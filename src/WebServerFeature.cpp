@@ -15,6 +15,15 @@
 #include "CpuMonitor.h"
 #include "WebServerFeature_helper.h"
 
+/**
+ * @file WebServerFeature.cpp
+ * @brief Async web server feature and HTTP API handlers.
+ *
+ * Implements the `WebServerFeature` which owns an `AsyncWebServer` and
+ * registers the firmware's HTTP endpoints (status, storage, modbus views,
+ * OTA, health). Authentication is handled via basic auth when configured.
+ */
+
 #ifndef FIRMWARE_GIT_SHA
 #define FIRMWARE_GIT_SHA unknown
 #endif
@@ -28,6 +37,13 @@
 // Access global storage instance defined in main.cpp
 extern StorageFeature storage;
 
+/**
+ * @brief Initialize the async web server feature.
+ *
+ * This constructor stores configuration (port, optional basic-auth credentials)
+ * but does not start network or server resources. Call `setup()` to allocate
+ * and begin the `AsyncWebServer` instance so routes become active.
+ */
 WebServerFeature::WebServerFeature(uint16_t port, const char* username, const char* password)
     : _port(port)
     , _username(username)
@@ -39,6 +55,13 @@ WebServerFeature::WebServerFeature(uint16_t port, const char* username, const ch
 {
 }
 
+/**
+ * @brief Create and start the `AsyncWebServer` instance.
+ *
+ * Idempotent: calling `setup()` multiple times has no effect after the first
+ * successful initialization. This performs route registration via
+ * `setupDefaultRoutes()` and begins listening on the configured port.
+ */
 void WebServerFeature::setup() {
     if (_setupDone) return;
     
@@ -59,6 +82,13 @@ void WebServerFeature::setup() {
     LOG_I("Web server started%s", _authEnabled ? " (auth enabled)" : "");
 }
 
+/**
+ * @brief Register the default HTTP routes used by the firmware.
+ *
+ * Routes include static assets, root page, storage API, health checks and
+ * the HTTP OTA update endpoint. Authentication checks are performed where
+ * required via `authenticate()`.
+ */
 void WebServerFeature::setupDefaultRoutes() {
     // Serve static CSS file (no auth required)
     _server->on("/style.css", HTTP_GET, [this](AsyncWebServerRequest* request) {
@@ -436,22 +466,43 @@ void WebServerFeature::setupDefaultRoutes() {
     });
 }
 
+/**
+ * @brief Access the underlying `AsyncWebServer` instance.
+ *
+ * Returns nullptr if `setup()` has not been called yet. Callers should not
+ * take ownership of the returned pointer.
+ */
 AsyncWebServer* WebServerFeature::getServer() {
     return _server;
 }
 
+/**
+ * @brief Add a custom `AsyncWebHandler` to the server.
+ *
+ * Forwards to the internal server when available. The server retains
+ * ownership of the handler.
+ */
 void WebServerFeature::addHandler(AsyncWebHandler* handler) {
     if (_server) {
         _server->addHandler(handler);
     }
 }
 
+/**
+ * @brief Convenience wrapper to register a URI handler with the server.
+ */
 void WebServerFeature::on(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest) {
     if (_server) {
         _server->on(uri, method, onRequest);
     }
 }
 
+/**
+ * @brief Authenticate a request when basic auth is enabled.
+ *
+ * Returns true when authentication is disabled or the provided credentials
+ * are valid.
+ */
 bool WebServerFeature::authenticate(AsyncWebServerRequest* request) {
     if (!_authEnabled) {
         return true;

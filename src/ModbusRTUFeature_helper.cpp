@@ -4,6 +4,15 @@
 #include <cstring>
 #include <algorithm>
 
+/**
+ * @file ModbusRTUFeature_helper.cpp
+ * @brief Parsing and helper routines for Modbus RTU frames.
+ *
+ * Implements frame parsing, CRC checks and register map updates used by the
+ * Modbus RTU feature. Functions are designed to be robust against truncated
+ * frames and perform minimal allocations.
+ */
+
 // Modbus RTU constants
 static constexpr uint8_t MAX_RTU_UNIT_ID = 247;
 static constexpr size_t MIN_FRAME_SIZE = 4;
