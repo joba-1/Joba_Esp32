@@ -124,30 +124,34 @@ bool determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, s
         // Try RESPONSE format FIRST: responses have a byteCount field that tells us
         // the exact expected length. This prevents misinterpreting truncated responses
         // as requests when the final CRC byte hasn't arrived yet.
-        if (remaining >= 5) {
-            uint8_t byteCount = p[2];
-            if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
-                size_t respLen = (size_t)byteCount + 5;
-                if (remaining >= respLen) {
-                    if (tryParseAtLen(p, remaining, respLen, tmp, 0, 0) && !tmp.isException) {
-                        // For response, require CRC valid to avoid false matches
-                        if (tmp.isValid) {
-                            isRequest = false;
-                            frameLen = respLen;
-                            return true;
-                        }
-                    }
-                }
+        uint8_t byteCount = (remaining >= 3) ? p[2] : 0;
+        bool couldBeResponse = (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT);
+        size_t respLen = couldBeResponse ? ((size_t)byteCount + 5) : 0;
+        
+        if (couldBeResponse && remaining >= respLen) {
+            if (tryParseAtLen(p, remaining, respLen, tmp, 0, 0) && !tmp.isException) {
+                // Response structure matches; CRC validity checked later
+                isRequest = false;
+                frameLen = respLen;
+                return true;
             }
         }
-        // Try REQUEST format: 8-byte fixed length, require CRC valid
+        // Try REQUEST format: 8-byte fixed length
+        // Require CRC validity ONLY if this could be a truncated response (byteCount
+        // indicates we need more bytes). This prevents matching 8 bytes of a 9-byte
+        // response as a request.
         if (remaining >= 8) {
-            if (tryParseAtLen(p, remaining, 8, tmp, 0, 0) && tmp.isValid && !tmp.isException && tmp.dataLen == 4) {
+            if (tryParseAtLen(p, remaining, 8, tmp, 0, 0) && !tmp.isException && tmp.dataLen == 4) {
                 uint16_t qty = tmp.getQuantity();
                 if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                    isRequest = true;
-                    frameLen = 8;
-                    return true;
+                    // If byteCount could indicate a longer response but we only have 8 bytes,
+                    // require CRC validity to avoid false request matches
+                    bool requireCrcValid = couldBeResponse && (remaining < respLen || remaining == 8);
+                    if (!requireCrcValid || tmp.isValid) {
+                        isRequest = true;
+                        frameLen = 8;
+                        return true;
+                    }
                 }
             }
         }

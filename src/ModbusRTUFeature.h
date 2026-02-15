@@ -206,6 +206,28 @@ public:
     bool isWaitingForResponse() const { return _waitingForResponse; }
 
     /**
+     * @brief Info about the current pending (in-flight) request
+     */
+    struct PendingRequestInfo {
+        bool valid;        ///< True if there's an in-flight request
+        uint8_t unitId;
+        uint8_t functionCode;
+        uint16_t startRegister;
+        uint16_t quantity;
+    };
+
+    /**
+     * @brief Get info about the current in-flight request (if any)
+     */
+    PendingRequestInfo getPendingRequestInfo() const {
+        if (_waitingForResponse && _hasPendingRequest) {
+            return { true, _currentRequest.unitId, _currentRequest.functionCode,
+                     _currentRequest.startRegister, _currentRequest.quantity };
+        }
+        return { false, 0, 0, 0, 0 };
+    }
+
+    /**
      * @brief Timeout backoff state (sending may be paused after repeated timeouts)
      */
     bool isQueueingPaused() const;
@@ -773,21 +795,6 @@ private:
     static constexpr uint32_t RESPONSE_MAX_WINDOW_MS = 200;  // max time to accept response (strict window)
     static constexpr uint32_t RESPONSE_MAX_WINDOW_MS_EXTENDED = 1500; // extended window for problematic requests
 
-    // --- Debug: capture full TX/RX byte stream for problematic requests ---
-    bool _dbgCaptureActive{false};
-    uint8_t _dbgCaptureRequestUnit{0};
-    uint16_t _dbgCaptureRequestStart{0};
-    uint16_t _dbgCaptureRequestQty{0};
-    bool _dbgCaptureNextTx{false};
-    std::vector<uint8_t> _dbgCapturedTx;
-    std::vector<uint8_t> _dbgCapturedRx;
-    std::vector<uint32_t> _dbgCapturedTxTs; // microsecond offsets from _dbgCaptureStartUs
-    std::vector<uint32_t> _dbgCapturedRxTs; // microsecond offsets from _dbgCaptureStartUs
-    uint32_t _dbgCaptureStartUs{0};
-    uint32_t _dbgCaptureLastUs{0};
-
-    // Dump and clear the active capture (reason used in logs)
-    void dumpAndClearCapture(const char* reason);
 public:
     /**
      * @brief Get recent RX frames for debugging (valid and invalid, last FRAME_HISTORY_SIZE)

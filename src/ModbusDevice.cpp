@@ -95,6 +95,28 @@ void ModbusDeviceManager::handleObservedFrame(const ModbusFrame& frame, bool isR
         it->second.successCount++;
 
         // Best-effort: update cached register values if we can infer the request range
+        // First, check if this is a response to OUR pending request (multi-master: we may
+        // have received a foreign request after sending ours, which would overwrite
+        // _lastSeenRequests and cause a mismatch).
+        auto pending = _modbus.getPendingRequestInfo();
+        if (pending.valid && pending.unitId == frame.unitId &&
+            ((pending.functionCode & 0x7F) == (frame.functionCode & 0x7F))) {
+            // Build a synthetic request frame from our pending info
+            ModbusFrame ourRequest;
+            ourRequest.unitId = pending.unitId;
+            ourRequest.functionCode = pending.functionCode;
+            ourRequest.dataLen = 4;
+            ourRequest.data[0] = (uint8_t)(pending.startRegister >> 8);
+            ourRequest.data[1] = (uint8_t)(pending.startRegister & 0xFF);
+            ourRequest.data[2] = (uint8_t)(pending.quantity >> 8);
+            ourRequest.data[3] = (uint8_t)(pending.quantity & 0xFF);
+            ourRequest.isValid = true;
+            ourRequest.timestamp = frame.timestamp; // Use response timestamp (doesn't matter for pairing)
+            tryUpdateFromPassiveResponse(it->second, ourRequest, frame);
+            return;
+        }
+
+        // Fall back to last-seen request (may be foreign in multi-master environment)
         auto reqIt = _lastSeenRequests.find(frame.unitId);
         if (reqIt != _lastSeenRequests.end()) {
             const ModbusFrame& request = reqIt->second;

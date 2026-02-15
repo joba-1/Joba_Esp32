@@ -429,13 +429,6 @@ void ModbusRTUFeature::loop() {
         }
 
         _rxBuffer.push_back(byte);
-        // Capture RX bytes for active debug capture
-        if (_dbgCaptureActive) {
-            uint32_t ofs = (uint32_t)(byteTimeUs - _dbgCaptureStartUs);
-            _dbgCapturedRx.push_back(byte);
-            _dbgCapturedRxTs.push_back(ofs);
-            _dbgCaptureLastUs = (uint32_t)byteTimeUs;
-        }
         _lastByteTime = byteTimeUs;
         _lastActivityTime = millis();
         _busSilent = false;
@@ -504,11 +497,6 @@ void ModbusRTUFeature::loop() {
         LOG_D("  Loop dbg: rxDrained=%u gapUs=%u queueSize=%u serialAvail=%u", (unsigned)_dbgRxBytesDrainedInLoop, (unsigned)_dbgGapUsInLoop, (unsigned)_dbgQueueSizeInLoop, (unsigned)_dbgSerialAvailableInLoop);
         LOG_D("  Gap/scheduler: sentDuringGap=%d lastTxWireMs=%u lastTxElapsedMs=%u hasLastCompletedTx=%d lastCompletedTxKey=%llu", (int)_sentDuringGapWindow, (unsigned)_lastTxWireMs, (unsigned)_lastTxElapsedMs, (int)_hasLastCompletedTx, (unsigned long long)_lastCompletedTxKey);
         LOG_D("  Request params: unit=%u fc=0x%02X start=%u qty=%u retries=%u", (unsigned)_currentRequest.unitId, (unsigned)_currentRequest.functionCode, (unsigned)_currentRequest.startRegister, (unsigned)_currentRequest.quantity, (unsigned)_currentRequest.retries);
-        // If we are capturing this request, dump capture now for post-mortem
-        if (_dbgCaptureActive && _currentRequest.unitId == _dbgCaptureRequestUnit &&
-            _currentRequest.startRegister == _dbgCaptureRequestStart && _currentRequest.quantity == _dbgCaptureRequestQty) {
-            dumpAndClearCapture("timeout");
-        }
         
         // If we sent this request using gap prediction and it timed out,
         // it likely collided with the foreign master — increase safety margin
@@ -771,11 +759,6 @@ void ModbusRTUFeature::handleCrcInvalidFrame(const ModbusFrame& frame, bool resy
 void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameLen) {
     // matched our in-flight request
     _waitingForResponse = false;
-    // If we are capturing this request, dump the capture (response received)
-    if (_dbgCaptureActive && frame.unitId == _dbgCaptureRequestUnit &&
-        _currentRequest.startRegister == _dbgCaptureRequestStart && _currentRequest.quantity == _dbgCaptureRequestQty) {
-        dumpAndClearCapture("response");
-    }
     // Keep stats disabled through our entire TX-response window; will re-enable on next foreign request
     uint32_t rtt = (uint32_t)(millis() - _requestSentTime);
     _busTransactionStats.record(rtt);
@@ -960,10 +943,6 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                                     while (_serial.available()) {
                                         uint8_t nb = (uint8_t)_serial.read();
                                         _rxBuffer.push_back(nb);
-                                        if (_dbgCaptureActive) {
-                                            _dbgCapturedRx.push_back(nb);
-                                            _dbgCapturedRxTs.push_back((uint32_t)(micros() - _dbgCaptureStartUs));
-                                        }
                                         _lastByteTime = micros();
                                         _lastActivityTime = millis();
                                     }
@@ -1372,88 +1351,6 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
     ModbusRTUHelper::updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
 }
 
-void ModbusRTUFeature::dumpAndClearCapture(const char* reason) {
-    if (!_dbgCaptureActive) return;
-    unsigned long durMs = (unsigned long)((micros() - _dbgCaptureStartUs) / 1000ULL);
-    LOG_I("Modbus capture dump (%s): unit=%u reg=%u qty=%u duration=%lums tx=%u rx=%u",
-          reason, _dbgCaptureRequestUnit, _dbgCaptureRequestStart, _dbgCaptureRequestQty,
-          durMs, (unsigned)_dbgCapturedTx.size(), (unsigned)_dbgCapturedRx.size());
-
-    // TX hexdump in 32-byte chunks
-    if (!_dbgCapturedTx.empty()) {
-        size_t off = 0;
-        char buf[160];
-        while (off < _dbgCapturedTx.size()) {
-            size_t chunk = std::min((size_t)32, _dbgCapturedTx.size() - off);
-            size_t len = 0;
-            for (size_t i = 0; i < chunk && len + 4 < sizeof(buf); ++i) {
-                len += snprintf(buf + len, sizeof(buf) - len, "%02X ", _dbgCapturedTx[off + i]);
-            }
-            LOG_D("CAPTURE TX[%u+]: %s", (unsigned)chunk, buf);
-            off += chunk;
-        }
-    }
-
-    // RX hexdump in 32-byte chunks
-    if (!_dbgCapturedRx.empty()) {
-        size_t off = 0;
-        char buf[160];
-        while (off < _dbgCapturedRx.size()) {
-            size_t chunk = std::min((size_t)32, _dbgCapturedRx.size() - off);
-            size_t len = 0;
-            for (size_t i = 0; i < chunk && len + 32 < sizeof(buf); ++i) {
-                size_t idx = off + i;
-                uint32_t ts = (idx < _dbgCapturedRxTs.size()) ? _dbgCapturedRxTs[idx] : 0;
-                len += snprintf(buf + len, sizeof(buf) - len, "%06u:%02X ", (unsigned)ts, _dbgCapturedRx[idx]);
-            }
-            LOG_D("CAPTURE RX[%u+]: %s", (unsigned)chunk, buf);
-            off += chunk;
-        }
-    }
-
-    // Additional CRC diagnostic: check first candidate response at capture start
-    if (!_dbgCapturedRx.empty()) {
-        // Look for a plausible response header near the start
-        size_t n = _dbgCapturedRx.size();
-        // Minimum: unit(1)+fc(1)+bytecount(1)+payload+crc(2)
-        if (n >= 6) {
-            uint8_t u = _dbgCapturedRx[0];
-            uint8_t fc = _dbgCapturedRx[1];
-            uint8_t byteCount = _dbgCapturedRx[2];
-            size_t expectedFrameLen = 1 + 1 + 1 + byteCount + 2; // unit+fc+bytecount+payload+crc
-            if (byteCount > 0 && n >= expectedFrameLen) {
-                // Build temp buffer for CRC calc: unit + fc + payload (or exception)
-                std::vector<uint8_t> tmp;
-                tmp.reserve(1 + 1 + byteCount);
-                tmp.push_back(u);
-                tmp.push_back(fc);
-                // If exception (fc & 0x80) payload is 1 byte; but we use byteCount as given
-                for (size_t i = 0; i < byteCount && (3 + i) < n; ++i) tmp.push_back(_dbgCapturedRx[3 + i]);
-                uint16_t calc = calculateCRC(tmp.data(), tmp.size());
-                // Received CRC bytes follow payload
-                size_t crcIndex = 3 + byteCount;
-                uint16_t recv = 0;
-                if (crcIndex + 1 < n) {
-                    recv = (uint16_t)_dbgCapturedRx[crcIndex] | ((uint16_t)_dbgCapturedRx[crcIndex + 1] << 8);
-                    LOG_I("Capture CRC check: unit=%u fc=0x%02X byteCount=%u calc=0x%04X recv=0x%04X", (unsigned)u, (unsigned)fc, (unsigned)byteCount, (unsigned)calc, (unsigned)recv);
-                } else {
-                    LOG_I("Capture CRC check: unit=%u fc=0x%02X byteCount=%u calc=0x%04X recv=MISSING", (unsigned)u, (unsigned)fc, (unsigned)byteCount, (unsigned)calc);
-                }
-            }
-        }
-    }
-
-    // Clear capture state
-    _dbgCapturedTx.clear();
-    _dbgCapturedTxTs.clear();
-    _dbgCapturedRx.clear();
-    _dbgCapturedRxTs.clear();
-    _dbgCaptureActive = false;
-    _dbgCaptureNextTx = false;
-    _dbgCaptureStartUs = 0;
-    _dbgCaptureLastUs = 0;
-}
-
 /**
  * @brief Process the outgoing request queue: select a request and attempt to send it.
  *
@@ -1710,19 +1607,6 @@ bool ModbusRTUFeature::sendRequest(const ModbusPendingRequest& request) {
             LOG_E("Unsupported function code: 0x%02X", request.functionCode);
             return false;
     }
-    
-    // If this is the problematic request we want to capture, arm capture
-    if (request.unitId == 3 && request.startRegister == 1304 && request.quantity == 2) {
-        _dbgCapturedTx.clear();
-        _dbgCapturedRx.clear();
-        _dbgCaptureStartUs = (uint32_t)micros();
-        _dbgCaptureLastUs = _dbgCaptureStartUs;
-        _dbgCaptureRequestUnit = request.unitId;
-        _dbgCaptureRequestStart = request.startRegister;
-        _dbgCaptureRequestQty = request.quantity;
-        _dbgCaptureActive = true;
-        _dbgCaptureNextTx = true; // ensure sendFrameFromBuffer records the exact TX bytes+CRC
-    }
 
     return sendFrameFromBuffer();
 }
@@ -1764,15 +1648,7 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
     int drained = 0;
     const int DRAIN_CAP = 512;
     while (_serial.available() && drained < DRAIN_CAP) {
-        uint32_t btUs = micros();
-        uint8_t b = (uint8_t)_serial.read();
-        // Capture echo bytes if capture active
-        if (_dbgCaptureActive) {
-            uint32_t ofs = (uint32_t)(btUs - _dbgCaptureStartUs);
-            _dbgCapturedRx.push_back(b);
-            _dbgCapturedRxTs.push_back(ofs);
-            _dbgCaptureLastUs = (uint32_t)btUs;
-        }
+        (void)_serial.read();
         drained++;
     }
     if (drained > 0) {
@@ -1801,21 +1677,6 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
         }
         hexLen += snprintf(hexBuf + hexLen, sizeof(hexBuf) - hexLen, "%02X %02X", crc & 0xFF, crc >> 8);
         LOG_D("TX[%u]: %s", totalLen, hexBuf);
-    }
-    // If a capture was requested for the next-TX, record the exact bytes sent
-    if (_dbgCaptureNextTx) {
-        uint32_t nowUs = micros();
-        for (size_t i = 0; i < _txFrameLen; ++i) {
-            _dbgCapturedTx.push_back(_txFrameBuffer[i]);
-            _dbgCapturedTxTs.push_back((uint32_t)(nowUs - _dbgCaptureStartUs));
-        }
-        _dbgCapturedTx.push_back((uint8_t)(crc & 0xFF));
-        _dbgCapturedTxTs.push_back((uint32_t)(nowUs - _dbgCaptureStartUs));
-        _dbgCapturedTx.push_back((uint8_t)((crc >> 8) & 0xFF));
-        _dbgCapturedTxTs.push_back((uint32_t)(nowUs - _dbgCaptureStartUs));
-        _dbgCaptureLastUs = (uint32_t)nowUs;
-        _dbgCaptureNextTx = false;
-        LOG_I("Modbus capture: started for unit %u reg %u qty %u", _dbgCaptureRequestUnit, _dbgCaptureRequestStart, _dbgCaptureRequestQty);
     }
     return true;
 }
