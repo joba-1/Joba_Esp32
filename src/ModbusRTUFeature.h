@@ -126,6 +126,12 @@ public:
         }
         LOG_I("Silence time set to %lu us (%.2f char times)", _silenceTimeUs, (float)_silenceTimeUs / _charTimeUs);
     }
+
+    /**
+     * @brief Set Modbus response timeout in milliseconds
+     * @param ms Timeout in ms
+     */
+    void setResponseTimeoutMs(uint32_t ms);
     
     // ========================================
     // Bus Monitoring
@@ -765,7 +771,23 @@ private:
     static constexpr uint32_t GAP_MIN_USABLE_MS = 20;  // minimum usable gap to attempt TX
     static constexpr uint32_t RESPONSE_MIN_WINDOW_MS = 3;  // min time to accept response (avoid echo)
     static constexpr uint32_t RESPONSE_MAX_WINDOW_MS = 200;  // max time to accept response (strict window)
+    static constexpr uint32_t RESPONSE_MAX_WINDOW_MS_EXTENDED = 1500; // extended window for problematic requests
 
+    // --- Debug: capture full TX/RX byte stream for problematic requests ---
+    bool _dbgCaptureActive{false};
+    uint8_t _dbgCaptureRequestUnit{0};
+    uint16_t _dbgCaptureRequestStart{0};
+    uint16_t _dbgCaptureRequestQty{0};
+    bool _dbgCaptureNextTx{false};
+    std::vector<uint8_t> _dbgCapturedTx;
+    std::vector<uint8_t> _dbgCapturedRx;
+    std::vector<uint32_t> _dbgCapturedTxTs; // microsecond offsets from _dbgCaptureStartUs
+    std::vector<uint32_t> _dbgCapturedRxTs; // microsecond offsets from _dbgCaptureStartUs
+    uint32_t _dbgCaptureStartUs{0};
+    uint32_t _dbgCaptureLastUs{0};
+
+    // Dump and clear the active capture (reason used in logs)
+    void dumpAndClearCapture(const char* reason);
 public:
     /**
      * @brief Get recent RX frames for debugging (valid and invalid, last FRAME_HISTORY_SIZE)

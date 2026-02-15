@@ -121,23 +121,32 @@ bool determineFrameLength(const uint8_t* p, size_t remaining, bool& isRequest, s
     }
 
     if (fc == FC3 || fc == FC4) {
-        if (remaining >= 8) {
-            if (tryParseAtLen(p, remaining, 8, tmp, 0, 0) && !tmp.isException && tmp.dataLen == 4) {
-                uint16_t qty = tmp.getQuantity();
-                if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
-                    isRequest = true;
-                    frameLen = 8;
-                    return true;
-                }
-            }
-        }
+        // Try RESPONSE format FIRST: responses have a byteCount field that tells us
+        // the exact expected length. This prevents misinterpreting truncated responses
+        // as requests when the final CRC byte hasn't arrived yet.
         if (remaining >= 5) {
             uint8_t byteCount = p[2];
             if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= MAX_BYTECOUNT) {
                 size_t respLen = (size_t)byteCount + 5;
-                if (tryParseAtLen(p, remaining, respLen, tmp, 0, 0) && !tmp.isException) {
-                    isRequest = false;
-                    frameLen = respLen;
+                if (remaining >= respLen) {
+                    if (tryParseAtLen(p, remaining, respLen, tmp, 0, 0) && !tmp.isException) {
+                        // For response, require CRC valid to avoid false matches
+                        if (tmp.isValid) {
+                            isRequest = false;
+                            frameLen = respLen;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        // Try REQUEST format: 8-byte fixed length, require CRC valid
+        if (remaining >= 8) {
+            if (tryParseAtLen(p, remaining, 8, tmp, 0, 0) && tmp.isValid && !tmp.isException && tmp.dataLen == 4) {
+                uint16_t qty = tmp.getQuantity();
+                if (qty >= 1 && qty <= MAX_REGS_PER_READ) {
+                    isRequest = true;
+                    frameLen = 8;
                     return true;
                 }
             }
