@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include <vector>
 #include <map>
 #include "../../src/ModbusRegisterMap.h"
@@ -68,9 +71,22 @@ void test_update_coils(void) {
     TEST_ASSERT_EQUAL_HEX16(0, coilMap.registers[0x0021]); // next coil false
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_update_holding_registers);
+    RUN_TEST(test_update_coils);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_update_holding_registers);
     RUN_TEST(test_update_coils);
     return UNITY_END();
 }
+#endif

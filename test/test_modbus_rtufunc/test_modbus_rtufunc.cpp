@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 
 // Include the portable helper implementation directly so it is compiled
 // into the test binary and coverage is collected.
@@ -35,6 +38,18 @@ void test_determine_frame_length_response(void) {
 void setUp(void) {}
 void tearDown(void) {}
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_parse_simple_read_request);
+    RUN_TEST(test_determine_frame_length_response);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_simple_read_request);
@@ -42,3 +57,4 @@ int main() {
     UNITY_END();
     return 0;
 }
+#endif

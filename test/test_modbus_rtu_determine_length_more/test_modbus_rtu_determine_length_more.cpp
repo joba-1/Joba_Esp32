@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include <vector>
 #include "../../src/modbus_helpers.cpp"
 #include "../../lib/helpers/src/ModbusRTUFeature_helper.cpp"
@@ -46,6 +49,19 @@ void test_read_request_and_response_lengths() {
     TEST_ASSERT_EQUAL_UINT(9, len);
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_short_buffer_returns_false);
+    RUN_TEST(test_exception_response_length);
+    RUN_TEST(test_read_request_and_response_lengths);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_short_buffer_returns_false);
@@ -53,3 +69,4 @@ int main() {
     RUN_TEST(test_read_request_and_response_lengths);
     return UNITY_END();
 }
+#endif

@@ -1,5 +1,8 @@
 // Consolidated tests for `convertModbusValueToRaw` using the proper API
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include <vector>
 #include <cstdint>
 #include "../../lib/helpers/include/ModbusDevice_helper_portable.h"
@@ -84,6 +87,20 @@ void test_bool_and_padding()
     TEST_ASSERT_EQUAL_UINT16(0u, rp[2]);
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_uint16_conversion);
+    RUN_TEST(test_uint32_endian);
+    RUN_TEST(test_float32_endian_and_roundtrip);
+    RUN_TEST(test_bool_and_padding);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main()
 {
     UNITY_BEGIN();
@@ -93,3 +110,4 @@ int main()
     RUN_TEST(test_bool_and_padding);
     return UNITY_END();
 }
+#endif

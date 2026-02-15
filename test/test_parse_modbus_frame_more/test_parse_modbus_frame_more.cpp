@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include <vector>
 #include "../../src/modbus_helpers.cpp"
 #include "../../lib/helpers/src/ModbusRTUFeature_helper.cpp"
@@ -46,9 +49,22 @@ void test_parse_exception_frame(void) {
     TEST_ASSERT_EQUAL(0x05, frame.exceptionCode);
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_parse_valid_response_and_invalid_crc);
+    RUN_TEST(test_parse_exception_frame);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_valid_response_and_invalid_crc);
     RUN_TEST(test_parse_exception_frame);
     return UNITY_END();
 }
+#endif

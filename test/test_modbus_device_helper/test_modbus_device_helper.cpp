@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include <cstring>
 #include <cstdint>
 #include <vector>
@@ -59,6 +62,19 @@ void test_convert_float32_be(void) {
 void setUp(void) {}
 void tearDown(void) {}
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_parse_types);
+    RUN_TEST(test_convert_uint16_and_int16);
+    RUN_TEST(test_convert_float32_be);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_types);
@@ -67,3 +83,4 @@ int main() {
     UNITY_END();
     return 0;
 }
+#endif

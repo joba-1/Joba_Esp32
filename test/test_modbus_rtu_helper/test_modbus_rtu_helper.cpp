@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include "ModbusRTUFeature_helper.h"
 #include "modbus_helpers.h"
 #include "ModbusFrame.h"
@@ -146,6 +149,21 @@ void test_update_modbus_register_map_holding_and_coils() {
     TEST_ASSERT_EQUAL(1u, coilMap.registers[0x0020]); // first coil at startReg
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_determine_frame_length_short);
+    RUN_TEST(test_determine_frame_length_exception_response);
+    RUN_TEST(test_determine_frame_length_request_and_response);
+    RUN_TEST(test_parse_modbus_frame_crc_invalid_and_exception_and_valid);
+    RUN_TEST(test_update_modbus_register_map_holding_and_coils);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_determine_frame_length_short);
@@ -155,3 +173,4 @@ int main() {
     RUN_TEST(test_update_modbus_register_map_holding_and_coils);
     return UNITY_END();
 }
+#endif

@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 
 // Include implementations so they're compiled into the test binary
 #include "../../src/modbus_helpers.cpp"
@@ -75,6 +78,19 @@ void test_update_register_map_holding(void) {
 void setUp(void) {}
 void tearDown(void) {}
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_modbusframe_getters);
+    RUN_TEST(test_determine_frame_length_request);
+    RUN_TEST(test_update_register_map_holding);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_modbusframe_getters);
@@ -83,3 +99,4 @@ int main() {
     UNITY_END();
     return 0;
 }
+#endif

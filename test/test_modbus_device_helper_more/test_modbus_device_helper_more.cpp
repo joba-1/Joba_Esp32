@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include <cstring>
 #include "../../lib/helpers/include/ModbusDevice_helper_portable.h"
 // include implementation for native tests
@@ -95,6 +98,20 @@ void test_default_and_bool() {
     TEST_ASSERT_EQUAL_FLOAT(1.0f, convertModbusRawToValue(def, r1));
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_uint32_be_and_le);
+    RUN_TEST(test_int32_signed_behaviour);
+    RUN_TEST(test_float32_le_and_conversion);
+    RUN_TEST(test_default_and_bool);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_uint32_be_and_le);
@@ -103,3 +120,4 @@ int main() {
     RUN_TEST(test_default_and_bool);
     return UNITY_END();
 }
+#endif

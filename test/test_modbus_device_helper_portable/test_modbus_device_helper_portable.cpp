@@ -1,4 +1,7 @@
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include "ModbusDevice_helper_portable.h"
 #include <cstring>
 
@@ -116,6 +119,21 @@ void test_convert_value_to_raw_padding_and_endian_float_bool() {
     TEST_ASSERT_EQUAL(1u, rb1[0]);
 }
 
+#if defined(ARDUINO)
+void setup() {
+    UNITY_BEGIN();
+    RUN_TEST(test_parse_types);
+    RUN_TEST(test_convert_raw_to_value_uint16_and_int16);
+    RUN_TEST(test_convert_raw_to_value_uint32_and_int32_be_le);
+    RUN_TEST(test_convert_raw_to_value_float32_be_le_and_bool);
+    RUN_TEST(test_convert_value_to_raw_padding_and_endian_float_bool);
+}
+
+void loop() {
+    UNITY_END();
+    while (true) delay(1000);
+}
+#else
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_types);
@@ -125,3 +143,4 @@ int main() {
     RUN_TEST(test_convert_value_to_raw_padding_and_endian_float_bool);
     return UNITY_END();
 }
+#endif
