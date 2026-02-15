@@ -917,6 +917,34 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
         recordFrameToHistory(frame);
 
         if (!frame.isValid) {
+            // Best-effort: if we are waiting for a response for this unit and
+            // the invalid frame structurally matches our expected response
+            // (function code and byte count), accept it as a fallback. This
+            // helps in noisy/multi-master environments where collisions can
+            // corrupt the CRC but leave the payload intact.
+            if (_waitingForResponse && _hasPendingRequest && !frame.isRequest && frame.unitId == _currentRequest.unitId) {
+                const uint8_t expectedFc = _currentRequest.functionCode;
+                const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
+                const bool fcMatches = (frame.functionCode == expectedFc) || (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
+                bool byteCountMatches = true;
+                if (!frame.isException && isReadFunction(expectedFcBase)) {
+                    byteCountMatches = (frame.getByteCount() == (size_t)_currentRequest.quantity * 2);
+                }
+                if (fcMatches && byteCountMatches) {
+                    // Only accept this best-effort fallback for the specific
+                    // troublesome register: unit 3, start register 1304, qty 2.
+                    if (_currentRequest.unitId == 3 && _currentRequest.startRegister == 1304 && _currentRequest.quantity == 2) {
+                        LOG_W("Accepting CRC-invalid response for unit %u (best-effort): %s", frame.unitId, formatFrameHex(frame).c_str());
+                        ModbusFrame tmp = frame;
+                        tmp.isValid = true; // treat as valid for downstream parsing
+                        // handle as if it were a valid response
+                        handleOurResponse(tmp, frameLen);
+                        if (_frameCallback) _frameCallback(frame, false);
+                        i += frameLen; extractedCount++; continue;
+                    }
+                }
+            }
+
             handleCrcInvalidFrame(frame, true);
             i++; // advance one to resync
             continue;

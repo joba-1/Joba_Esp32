@@ -344,7 +344,18 @@ String StorageFeature::listDir(const char* path) {
 
     LOG_D("listDir (scan): found %u entries for %s in %lu ms", count, p.c_str(), millis() - startTime);
 
-    String result;
-    serializeJson(doc, result);
-    return result;
+    // Serialize into a bounded stack buffer when small to avoid heap churn;
+    // fallback to reserving the String to reduce reallocations for larger payloads.
+    size_t needed = measureJson(doc);
+    if (needed + 1 <= 512) {
+        char buf[512];
+        size_t written = serializeJson(doc, buf, sizeof(buf));
+        buf[(written < sizeof(buf)) ? written : (sizeof(buf) - 1)] = '\0';
+        return String(buf);
+    } else {
+        String result;
+        result.reserve(needed + 1);
+        serializeJson(doc, result);
+        return result;
+    }
 }

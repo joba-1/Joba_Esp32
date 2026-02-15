@@ -62,9 +62,10 @@ void handleModbusRawReadCommand(const String& payload, const String& modbusRawRe
     if (err || unitId == 0 || count == 0) {
         ack["queued"] = false;
         ack["error"] = err ? "invalid_json" : "invalid_params";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/raw/read", out.c_str(), false);
+        char outBuf[256];
+        size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+        outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+        mqtt.publishToBase("modbus/ack/raw/read", outBuf, false);
         return;
     }
 
@@ -74,9 +75,12 @@ void handleModbusRawReadCommand(const String& payload, const String& modbusRawRe
     ack["address"] = address;
     ack["count"] = count;
     ack["functionCode"] = fc;
-    String outAck;
-    serializeJson(ack, outAck);
-    mqtt.publishToBase("modbus/ack/raw/read", outAck.c_str(), false);
+    {
+        char outBuf[256];
+        size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+        outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+        mqtt.publishToBase("modbus/ack/raw/read", outBuf, false);
+    }
 
     bool queued = modbus.queueReadRegisters(
         unitId, fc, address, count,
@@ -125,9 +129,12 @@ void handleModbusRawReadCommand(const String& payload, const String& modbusRawRe
             }
 
             resp["uptimeMs"] = (uint32_t)millis();
-            String out;
-            serializeJson(resp, out);
-            mqtt.publishToBase("modbus/resp/raw/read", out.c_str(), false);
+            {
+                char outBuf[256];
+                size_t outLen = serializeJson(resp, outBuf, sizeof(outBuf));
+                outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+                mqtt.publishToBase("modbus/resp/raw/read", outBuf, false);
+            }
         });
 
     if (!queued) {
@@ -135,9 +142,12 @@ void handleModbusRawReadCommand(const String& payload, const String& modbusRawRe
         nack["id"] = idBuf;
         nack["queued"] = false;
         nack["error"] = "queue_failed";
-        String out;
-        serializeJson(nack, out);
-        mqtt.publishToBase("modbus/ack/raw/read", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(nack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/raw/read", outBuf, false);
+        }
     }
 #endif
 }
@@ -177,9 +187,12 @@ void handleModbusRawWriteCommand(const String& payload, const String& modbusRawW
     if (err || unitId == 0) {
         ack["queued"] = false;
         ack["error"] = err ? "invalid_json" : "invalid_params";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/raw/write", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/raw/write", outBuf, false);
+        }
         return;
     }
 
@@ -196,9 +209,12 @@ void handleModbusRawWriteCommand(const String& payload, const String& modbusRawW
                 JsonDocument resp;
                 resp["id"] = idBuf;
                 resp["success"] = success;
-                String out;
-                serializeJson(resp, out);
-                mqtt.publishToBase("modbus/resp/raw/write", out.c_str(), false);
+                        {
+                            char outBuf[256];
+                            size_t outLen = serializeJson(resp, outBuf, sizeof(outBuf));
+                            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+                            mqtt.publishToBase("modbus/resp/raw/write", outBuf, false);
+                        }
             });
     } else if (doc["value"].is<uint32_t>() || doc["value"].is<int>()) {
         uint16_t value = (uint16_t)(doc["value"].as<uint32_t>() & 0xFFFF);
@@ -207,16 +223,22 @@ void handleModbusRawWriteCommand(const String& payload, const String& modbusRawW
                 JsonDocument resp;
                 resp["id"] = idBuf;
                 resp["success"] = success;
-                String out;
-                serializeJson(resp, out);
-                mqtt.publishToBase("modbus/resp/raw/write", out.c_str(), false);
+                {
+                    char outBuf[256];
+                    size_t outLen = serializeJson(resp, outBuf, sizeof(outBuf));
+                    outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+                    mqtt.publishToBase("modbus/resp/raw/write", outBuf, false);
+                }
             });
     } else {
         ack["queued"] = false;
         ack["error"] = "missing_value";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/raw/write", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/raw/write", outBuf, false);
+        }
         return;
     }
 
@@ -224,9 +246,12 @@ void handleModbusRawWriteCommand(const String& payload, const String& modbusRawW
     ack["unitId"] = unitId;
     ack["address"] = address;
     ack["functionCode"] = fc;
-    String outAck;
-    serializeJson(ack, outAck);
-    mqtt.publishToBase("modbus/ack/raw/write", outAck.c_str(), false);
+    {
+        char outBuf[256];
+        size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+        outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+        mqtt.publishToBase("modbus/ack/raw/write", outBuf, false);
+    }
 #endif
 }
 
@@ -265,18 +290,24 @@ void handleModbusWriteCommand(const String& payload, const String& modbusWriteTo
     if (err || unitId == 0 || regName == nullptr) {
         ack["queued"] = false;
         ack["error"] = err ? "invalid_json" : "invalid_params";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/write", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/write", outBuf, false);
+        }
         return;
     }
 
     if (!modbusDevices) {
         ack["queued"] = false;
         ack["error"] = "devices_unavailable";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/write", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/write", outBuf, false);
+        }
         return;
     }
 
@@ -285,18 +316,22 @@ void handleModbusWriteCommand(const String& payload, const String& modbusWriteTo
             JsonDocument resp;
             resp["id"] = idBuf;
             resp["success"] = success;
-            String out;
-            serializeJson(resp, out);
-            mqtt.publishToBase("modbus/resp/write", out.c_str(), false);
+            char outBuf[256];
+            size_t outLen = serializeJson(resp, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/resp/write", outBuf, false);
         });
 
     ack["queued"] = queued;
     ack["unitId"] = unitId;
     ack["register"] = regName;
     ack["value"] = value;
-    String outAck;
-    serializeJson(ack, outAck);
-    mqtt.publishToBase("modbus/ack/write", outAck.c_str(), false);
+    {
+        char outBuf[256];
+        size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+        outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+        mqtt.publishToBase("modbus/ack/write", outBuf, false);
+    }
 #endif
 }
 
@@ -333,18 +368,24 @@ void handleModbusReadCommand(const String& payload, const String& modbusReadTopi
     if (err || unitId == 0 || regName == nullptr) {
         ack["queued"] = false;
         ack["error"] = err ? "invalid_json" : "invalid_params";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/read", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/read", outBuf, false);
+        }
         return;
     }
 
     if (!modbusDevices) {
         ack["queued"] = false;
         ack["error"] = "devices_unavailable";
-        String out;
-        serializeJson(ack, out);
-        mqtt.publishToBase("modbus/ack/read", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/ack/read", outBuf, false);
+        }
         return;
     }
 
@@ -352,9 +393,12 @@ void handleModbusReadCommand(const String& payload, const String& modbusReadTopi
     ack["queued"] = true;
     ack["unitId"] = unitId;
     ack["register"] = regName;
-    String outAck;
-    serializeJson(ack, outAck);
-    mqtt.publishToBase("modbus/ack/read", outAck.c_str(), false);
+    {
+        char outBuf[256];
+        size_t outLen = serializeJson(ack, outBuf, sizeof(outBuf));
+        outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+        mqtt.publishToBase("modbus/ack/read", outBuf, false);
+    }
 
     bool queued = modbusDevices->readRegister(unitId, regName,
         [&mqtt, idBuf, regName](bool success, float value) {
@@ -364,9 +408,12 @@ void handleModbusReadCommand(const String& payload, const String& modbusReadTopi
             resp["register"] = regName;
             resp["success"] = success;
             if (success) resp["value"] = value;
-            String out;
-            serializeJson(resp, out);
-            mqtt.publishToBase("modbus/resp/read", out.c_str(), false);
+            {
+                char outBuf[256];
+                size_t outLen = serializeJson(resp, outBuf, sizeof(outBuf));
+                outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+                mqtt.publishToBase("modbus/resp/read", outBuf, false);
+            }
         });
 
     // Note: modbusDevices->readRegister returns immediately whether queued; ack already sent
@@ -396,9 +443,21 @@ void handleModbusListDevicesCommand(MQTTFeature& mqtt, ModbusDeviceManager* modb
         o["successCount"] = d.successCount;
         o["errorCount"] = d.errorCount;
     }
-    String out;
-    serializeJson(resp, out);
-    mqtt.publishToBase("modbus/resp/list_devices", out.c_str(), false);
+    // Estimate payload size and avoid heap allocation where possible.
+    size_t needed = measureJson(resp);
+    if (needed + 1 <= 256) {
+        char outBuf[256];
+        size_t outLen = serializeJson(resp, outBuf, sizeof(outBuf));
+        outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+        mqtt.publishToBase("modbus/resp/list_devices", outBuf, false);
+    } else {
+        // For larger payloads, allocate exact-size buffer and publish via publishLarge
+        char* bigBuf = new char[needed + 1];
+        size_t outLen = serializeJson(resp, bigBuf, needed + 1);
+        bigBuf[(outLen < needed + 1) ? outLen : needed] = '\0';
+        mqtt.publishLarge("modbus/resp/list_devices", bigBuf, false);
+        delete[] bigBuf;
+    }
 }
 
 /**
@@ -426,9 +485,12 @@ void handleModbusListRegistersCommand(const String& payload, MQTTFeature& mqtt,
         nack["id"] = idBuf;
         nack["queued"] = false;
         nack["error"] = err ? "invalid_json" : "invalid_params";
-        String out;
-        serializeJson(nack, out);
-        mqtt.publishToBase("modbus/resp/list_registers", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(nack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/resp/list_registers", outBuf, false);
+        }
         return;
     }
 
@@ -443,9 +505,12 @@ void handleModbusListRegistersCommand(const String& payload, MQTTFeature& mqtt,
         JsonDocument nack;
         nack["id"] = idBuf;
         nack["error"] = "device_not_found";
-        String out;
-        serializeJson(nack, out);
-        mqtt.publishToBase("modbus/resp/list_registers", out.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(nack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/resp/list_registers", outBuf, false);
+        }
         return;
     }
 
@@ -471,9 +536,12 @@ void handleModbusListRegistersCommand(const String& payload, MQTTFeature& mqtt,
         JsonDocument nack;
         nack["id"] = idBuf;
         nack["error"] = "publish_failed";
-        String outNack;
-        serializeJson(nack, outNack);
-        mqtt.publishToBase("modbus/resp/list_registers", outNack.c_str(), false);
+        {
+            char outBuf[256];
+            size_t outLen = serializeJson(nack, outBuf, sizeof(outBuf));
+            outBuf[(outLen < sizeof(outBuf)) ? outLen : (sizeof(outBuf) - 1)] = '\0';
+            mqtt.publishToBase("modbus/resp/list_registers", outBuf, false);
+        }
     }
 }
 

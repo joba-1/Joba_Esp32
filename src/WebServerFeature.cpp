@@ -132,9 +132,11 @@ void WebServerFeature::setupDefaultRoutes() {
             doc["error"] = "Restart already scheduled";
         }
 
-        String json;
-        serializeJson(doc, json);
-        request->send(scheduled ? 200 : 409, "application/json", json);
+        {
+            AsyncResponseStream* response = request->beginResponseStream("application/json");
+            serializeJson(doc, *response);
+            request->send(response);
+        }
     });
     
     // API status endpoint
@@ -157,9 +159,11 @@ void WebServerFeature::setupDefaultRoutes() {
             if (iso.length() > 0) updated["iso"] = iso;
         }
 
-        String json;
-        serializeJson(doc, json);
-        request->send(200, "application/json", json);
+        {
+            AsyncResponseStream* response = request->beginResponseStream("application/json");
+            serializeJson(doc, *response);
+            request->send(response);
+        }
     });
 
     // Firmware + filesystem build info (requires auth if enabled)
@@ -376,9 +380,11 @@ void WebServerFeature::setupDefaultRoutes() {
 
             doc["freeHeap"] = (uint32_t)ESP.getFreeHeap();
 
-            String out;
-            serializeJson(doc, out);
-            request->send(200, "application/json", out);
+            {
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                serializeJson(doc, *response);
+                request->send(response);
+            }
             return;
         }
 
