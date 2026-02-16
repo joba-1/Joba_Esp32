@@ -171,73 +171,9 @@ void setup() {
     RUN_TEST(test_format_frame_hex);
     RUN_TEST(test_send_raw_frame_success);
     RUN_TEST(test_send_raw_frame_abort_on_rx_pending);
-    RUN_TEST(test_crc_tolerant_fallback_for_troublesome_register);
     UNITY_END();
 }
 
 void loop() {}
 
-// Accept CRC-invalid response as a best-effort fallback for the specific
-// troublesome case reported by a user: unit 3, start register 1304, qty 2.
-void test_crc_tolerant_fallback_for_troublesome_register(void) {
-    // Arrange
-    FakeSerial s;
-    ModbusRTUFeature modbus(s);
-
-    bool cb_called = false;
-    bool cb_success = false;
-    ModbusFrame cb_frame = {};
-
-    // Queue the exact troublesome request
-    bool queued = modbus.queueReadRegisters(3, ModbusFC::READ_HOLDING_REGISTERS, 1304, 2,
-        [&](bool success, const ModbusFrame& response) {
-            cb_called = true;
-            cb_success = success;
-            cb_frame = response;
-        }
-    );
-    TEST_ASSERT_TRUE(queued);
-
-    // Act: run loop to process queue and transmit the request
-    modbus.loop();
-
-    // Ensure a TX occurred (request sent)
-    TEST_ASSERT_TRUE(s.tx.size() >= 8); // unit + fc + start(2) + qty(2) + CRC(2)
-
-    // Build a response that matches unit/fc/byteCount but has an INVALID CRC
-    // Response payload: unit=3, fc=0x03, byteCount=4, data=0x12 0x34 0x56 0x78
-    uint8_t resp[] = { 0x03, 0x03, 0x04, 0x12, 0x34, 0x56, 0x78 };
-    uint16_t crc = 0xFFFF;
-    // compute CRC over resp bytes
-    for (size_t i = 0; i < sizeof(resp); ++i) {
-        crc ^= resp[i];
-        for (int j = 0; j < 8; ++j) {
-            if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;
-            else crc >>= 1;
-        }
-    }
-    // append a deliberately corrupted CRC (flip low byte)
-    uint8_t crcLow = (uint8_t)(crc & 0xFF) ^ 0xFF; // corrupt
-    uint8_t crcHigh = (uint8_t)((crc >> 8) & 0xFF);
-
-    // Push into fake serial RX (as bytes arriving on the wire)
-    for (size_t i = 0; i < sizeof(resp); ++i) s.rx.push_back(resp[i]);
-    s.rx.push_back(crcLow);
-    s.rx.push_back(crcHigh);
-
-    // Run loop again to process incoming (CRC-invalid) frame
-    modbus.loop();
-
-    // Assert: callback should have been invoked and treated as success by the
-    // narrow CRC-tolerant fallback for the troublesome register.
-    TEST_ASSERT_TRUE(cb_called);
-    TEST_ASSERT_TRUE(cb_success);
-    TEST_ASSERT_TRUE(cb_frame.isValid);
-    TEST_ASSERT_EQUAL_UINT8(3, cb_frame.unitId);
-    TEST_ASSERT_EQUAL_UINT8(ModbusFC::READ_HOLDING_REGISTERS, cb_frame.functionCode);
-    TEST_ASSERT_EQUAL_UINT16(1304, cb_frame.getStartRegister());
-    TEST_ASSERT_EQUAL_UINT16(2, cb_frame.getQuantity());
-    TEST_ASSERT_EQUAL_UINT16(0x1234, (uint16_t)((cb_frame.data[0] << 8) | cb_frame.data[1]));
-    TEST_ASSERT_EQUAL_UINT16(0x5678, (uint16_t)((cb_frame.data[2] << 8) | cb_frame.data[3]));
-}
 

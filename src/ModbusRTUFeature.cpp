@@ -1028,28 +1028,6 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                 // Debug: record the context so we can see why fallback may be rejected
                 LOG_D("CRC-invalid frame for unit %u while waiting for unit %u (req start=%u qty=%u) isRequest=%d fc=0x%02X byteCount=%u", 
                       frame.unitId, _currentRequest.unitId, _currentRequest.startRegister, _currentRequest.quantity, (int)frame.isRequest, frame.functionCode, (unsigned)frame.getByteCount());
-                const uint8_t expectedFc = _currentRequest.functionCode;
-                const uint8_t expectedFcBase = (uint8_t)(expectedFc & 0x7F);
-                const bool fcMatches = (frame.functionCode == expectedFc) || (frame.isException && ((frame.functionCode & 0x7F) == expectedFcBase));
-                bool byteCountMatches = true;
-                if (!frame.isException && isReadFunction(expectedFcBase)) {
-                    byteCountMatches = (frame.getByteCount() == (size_t)_currentRequest.quantity * 2);
-                }
-                if (fcMatches && byteCountMatches) {
-                    // Only accept this best-effort fallback for the specific
-                    // troublesome register: unit 3, start register 1304, qty 2.
-                    if (_currentRequest.unitId == 3 && _currentRequest.startRegister == 1304 && _currentRequest.quantity == 2) {
-                        LOG_W("Accepting CRC-invalid response for unit %u (best-effort): %s", frame.unitId, formatFrameHex(frame).c_str());
-                        ModbusFrame tmp = frame;
-                        tmp.isValid = true; // treat as valid for downstream parsing
-                        // handle as if it were a valid response
-                        handleOurResponse(tmp, frameLen);
-                        if (_frameCallback) _frameCallback(frame, false);
-                        i += frameLen; extractedCount++; continue;
-                    }
-                }
-                // If we reach here, we declined to accept the CRC-invalid frame; log why.
-                LOG_D("Declined CRC-invalid fallback: fcMatches=%d byteCountMatches=%d currentReq=(unit=%u start=%u qty=%u)", (int)fcMatches, (int)byteCountMatches, _currentRequest.unitId, _currentRequest.startRegister, _currentRequest.quantity);
             }
 
             handleCrcInvalidFrame(frame, true);
