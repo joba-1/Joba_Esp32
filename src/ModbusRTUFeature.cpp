@@ -974,6 +974,7 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
         // Record all frames to history immediately (before dispatch)
         // Callbacks are invoked once per frame after dispatch logic below
         recordFrameToHistory(frame);
+        bool skipFrameCallback = false;
 
         if (!frame.isValid) {
             // Best-effort: if we are waiting for a response for this unit and
@@ -1091,6 +1092,8 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                     m.byteCountMatch = byteCountMatches;
                     _mismatchIndex = (_mismatchIndex + 1) % MISMATCH_HISTORY_SIZE;
                     _mismatchCount++;
+                    // These frames likely contain garbage — do not notify global listeners
+                    skipFrameCallback = true;
                 } else {
                     handleOurResponse(frame, frameLen);
                 }
@@ -1107,8 +1110,8 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                 _mismatchCount++;
                 LOG_W("RX mismatch: unit=%d/%d fc=%d/%d byteCount=%s", frame.unitId, _currentRequest.unitId, frame.functionCode, _currentRequest.functionCode, byteCountMatches ? "ok" : "MISMATCH");
             }
-            // Notify listeners
-            if (_frameCallback) _frameCallback(frame, isRequest);
+            // Notify listeners unless we've explicitly suppressed callbacks for this frame
+            if (!skipFrameCallback && _frameCallback) _frameCallback(frame, isRequest);
             i += frameLen; extractedCount++; continue;
         }
 

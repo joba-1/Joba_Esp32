@@ -135,6 +135,7 @@ public:
                 }
                 
                 uint8_t unitId = request->getParam("unit")->value().toInt();
+                WebServerFeature::noteResponse(request);
                 auto* response = request->beginResponseStream("application/json");
                 if (request->hasParam("meta")) {
                     devices.writeDeviceMetaJson(unitId, *response);
@@ -605,16 +606,12 @@ public:
         webServer->on("/api/modbus/crc", HTTP_GET, handleModbusCrc);
         webServer->on("/api/modbus/crc/", HTTP_GET, handleModbusCrc);
         
-        // Get register maps from bus monitoring
+        // Get register maps from bus monitoring (chunked, compact keys)
         webServer->on("/api/modbus/maps", HTTP_GET,
             [&modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
-                const bool timeValid = TimeUtils::isTimeValidNow();
-                const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
-                const unsigned long nowMs = millis();
-
-                // Stream JSON response to avoid building a large JsonDocument
+                WebServerFeature::noteResponse(request);
                 AsyncResponseStream* response = request->beginResponseStream("application/json");
                 response->setCode(200);
                 response->print("[");
@@ -632,23 +629,10 @@ public:
                         char _b[48]; int _n = snprintf(_b, sizeof(_b), "\"functionCode\":%u,", kv.second.functionCode); if (_n>0) response->print(_b);
                     }
 
-                    // updated
+                    // updated uptime
                     response->print("\"updated\":{");
                     {
                         char _b[64]; int _n = snprintf(_b, sizeof(_b), "\"uptimeMs\":%u", (uint32_t)kv.second.lastUpdate); if (_n>0) response->print(_b);
-                    }
-                    if (kv.second.lastUpdate != 0 && timeValid && nowUnix != 0) {
-                        uint32_t ageMs = (uint32_t)(nowMs - kv.second.lastUpdate);
-                        uint32_t estEpoch = nowUnix - (ageMs / 1000);
-                        {
-                            char _b[64]; int _n = snprintf(_b, sizeof(_b), ",\"epoch\":%u", estEpoch); if (_n>0) response->print(_b);
-                        }
-                        String iso = TimeUtils::isoUtcFromUnixSeconds(estEpoch);
-                        if (iso.length() > 0) {
-                            response->print(",\"iso\":\"");
-                            response->print(iso);
-                            response->print("\"");
-                        }
                     }
                     response->print("},");
 
@@ -663,7 +647,7 @@ public:
                         if (!firstReg) response->print(",");
                         firstReg = false;
                         {
-                            char _b[64]; int _n = snprintf(_b, sizeof(_b), "{\"address\":%u,\"value\":%d}", regKv.first, regKv.second); if (_n>0) response->print(_b);
+                            char _b[64]; int _n = snprintf(_b, sizeof(_b), "{\"reg\":%u,\"val\":%d}", regKv.first, regKv.second); if (_n>0) response->print(_b);
                         }
                     }
                     response->print("]}");
@@ -1154,6 +1138,7 @@ public:
                 float successRate = (gs.gapSufficient + gs.gapInsufficient) > 0
                     ? (gs.gapSufficient * 100.0f / (gs.gapSufficient + gs.gapInsufficient)) : 0;
 
+                WebServerFeature::noteResponse(request);
                 auto* response = request->beginResponseStream("application/json");
                 response->print(F("{\"txDecisions\":{"));
                 response->printf("\"inGap\":%u,\"fallback\":%u,\"deferred\":%u,\"total\":%u,\"gapPct\":%.1f",
@@ -1446,6 +1431,7 @@ refresh();startA();
             [&devices, &modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
+                WebServerFeature::noteResponse(request);
                 AsyncResponseStream* response = request->beginResponseStream("application/json");
                 response->print(F("{\"status\":{"));
                 response->printf("\"silent\":%s,", modbus.isBusSilent() ? "true" : "false");
@@ -2130,6 +2116,7 @@ if($('autoRef').checked)startA();
                     }
                 }
                 
+                WebServerFeature::noteResponse(request);
                 AsyncResponseStream* response = request->beginResponseStream("application/json");
                 serializeJson(doc, *response);
                 request->send(response);

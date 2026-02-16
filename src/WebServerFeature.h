@@ -71,6 +71,14 @@ public:
      * async response buffer or heap. Implemented in `WebServerFeature.cpp`.
      */
     static void safeSendJson(AsyncWebServerRequest* request, JsonDocument& doc, size_t maxBytes = 8192, int statusCode = 200);
+    /**
+     * @brief Record the request path as the last response-starting path.
+     *
+     * Call this right before creating/starting a response that may allocate
+     * significant buffers so the path is available in logs if allocation
+     * failures occur inside the async response machinery.
+     */
+    static void noteResponse(AsyncWebServerRequest* request);
 
 private:
     void setupDefaultRoutes();

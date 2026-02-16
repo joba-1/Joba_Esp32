@@ -21,13 +21,28 @@
 void WebServerFeature::safeSendJson(AsyncWebServerRequest* request, JsonDocument& doc, size_t maxBytes, int statusCode) {
     size_t needed = measureJson(doc);
     if (needed == 0 || needed > maxBytes) {
+        LOG_W("safeSendJson: payload too large for %s (needed=%u max=%u)", request ? request->url().c_str() : "<unknown>", (unsigned)needed, (unsigned)maxBytes);
+        noteResponse(request);
         request->send(503, "text/plain", "Payload too large");
         return;
     }
+    noteResponse(request);
     AsyncResponseStream* response = request->beginResponseStream("application/json");
     response->setCode(statusCode);
     serializeJson(doc, *response);
     request->send(response);
+}
+
+// Track the last started response path so allocation failures logged by the
+// async webserver can be correlated to a page (best-effort).
+static String s_lastResponsePath;
+static unsigned long s_lastResponseTimeMs = 0;
+
+void WebServerFeature::noteResponse(AsyncWebServerRequest* request) {
+    if (!request) return;
+    s_lastResponsePath = request->url();
+    s_lastResponseTimeMs = millis();
+    LOG_D("noteResponse: %s", s_lastResponsePath.c_str());
 }
 
 /**
@@ -309,6 +324,7 @@ void WebServerFeature::setupDefaultRoutes() {
         }
 
         String content = storage.readFile(path.c_str());
+        WebServerFeature::noteResponse(request);
         AsyncWebServerResponse* response = request->beginResponse(200, "application/octet-stream", content);
         // Add Content-Disposition header for attachment with filename
         int slash = path.lastIndexOf('/');
@@ -408,6 +424,7 @@ void WebServerFeature::setupDefaultRoutes() {
             }
             
             bool success = !Update.hasError();
+            WebServerFeature::noteResponse(request);
             AsyncWebServerResponse* response = request->beginResponse(
                 success ? 200 : 500, 
                 "application/json",
