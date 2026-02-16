@@ -181,8 +181,8 @@ public:
     int getCycleTrackingPos() const { return _cycleTrackingPos; }
 
 private:
-    static constexpr size_t MAX_BUS_PATTERNS = 64;
-    static constexpr size_t CYCLE_SEQ_SIZE = 128;
+    static constexpr size_t MAX_BUS_PATTERNS = 32;
+    static constexpr size_t CYCLE_SEQ_SIZE = 64;
 
     BusPatternMap _busPatterns;
     std::vector<BusCycleEntry> _detectedCycle;

@@ -614,39 +614,62 @@ public:
                 const uint32_t nowUnix = TimeUtils::nowUnixSecondsOrZero();
                 const unsigned long nowMs = millis();
 
-                JsonDocument doc;
-                JsonArray maps = doc.to<JsonArray>();
-                
+                // Stream JSON response to avoid building a large JsonDocument
+                AsyncResponseStream* response = request->beginResponseStream("application/json");
+                response->setCode(200);
+                response->print("[");
+                bool firstMap = true;
                 for (const auto& kv : modbus.getAllRegisterMaps()) {
-                    JsonObject map = maps.add<JsonObject>();
-                    map["unitId"] = kv.second.unitId;
-                    map["functionCode"] = kv.second.functionCode;
+                    if (!firstMap) response->print(",");
+                    firstMap = false;
 
-                    // Group update time fields under a common pattern.
-                    JsonObject updated = map["updated"].to<JsonObject>();
-                    updated["uptimeMs"] = (uint32_t)kv.second.lastUpdate;
+                    // Emit compact object for this map
+                    response->print("{");
+                    {
+                        char _b[48]; int _n = snprintf(_b, sizeof(_b), "\"unitId\":%u,", kv.second.unitId); if (_n>0) response->print(_b);
+                    }
+                    {
+                        char _b[48]; int _n = snprintf(_b, sizeof(_b), "\"functionCode\":%u,", kv.second.functionCode); if (_n>0) response->print(_b);
+                    }
 
+                    // updated
+                    response->print("\"updated\":{");
+                    {
+                        char _b[64]; int _n = snprintf(_b, sizeof(_b), "\"uptimeMs\":%u", (uint32_t)kv.second.lastUpdate); if (_n>0) response->print(_b);
+                    }
                     if (kv.second.lastUpdate != 0 && timeValid && nowUnix != 0) {
                         uint32_t ageMs = (uint32_t)(nowMs - kv.second.lastUpdate);
                         uint32_t estEpoch = nowUnix - (ageMs / 1000);
-                        updated["epoch"] = estEpoch;
+                        {
+                            char _b[64]; int _n = snprintf(_b, sizeof(_b), ",\"epoch\":%u", estEpoch); if (_n>0) response->print(_b);
+                        }
                         String iso = TimeUtils::isoUtcFromUnixSeconds(estEpoch);
-                        if (iso.length() > 0) updated["iso"] = iso;
+                        if (iso.length() > 0) {
+                            response->print(",\"iso\":\"");
+                            response->print(iso);
+                            response->print("\"");
+                        }
                     }
-                    map["requestCount"] = kv.second.requestCount;
-                    map["responseCount"] = kv.second.responseCount;
-                    map["errorCount"] = kv.second.errorCount;
-                    
-                    // Include register values
-                    JsonArray regs = map["registers"].to<JsonArray>();
+                    response->print("},");
+
+                    {
+                        char _b[80]; int _n = snprintf(_b, sizeof(_b), "\"requestCount\":%u,\"responseCount\":%u,\"errorCount\":%u,", kv.second.requestCount, kv.second.responseCount, kv.second.errorCount); if (_n>0) response->print(_b);
+                    }
+
+                    // registers
+                    response->print("\"registers\":[");
+                    bool firstReg = true;
                     for (const auto& regKv : kv.second.registers) {
-                        JsonObject reg = regs.add<JsonObject>();
-                        reg["address"] = regKv.first;
-                        reg["value"] = regKv.second;
+                        if (!firstReg) response->print(",");
+                        firstReg = false;
+                        {
+                            char _b[64]; int _n = snprintf(_b, sizeof(_b), "{\"address\":%u,\"value\":%d}", regKv.first, regKv.second); if (_n>0) response->print(_b);
+                        }
                     }
+                    response->print("]}");
                 }
-                
-                WebServerFeature::safeSendJson(request, doc);
+                response->print("]");
+                request->send(response);
             });
 
         // Bus pattern analysis: per-register-range timing, gaps, cycle detection

@@ -40,17 +40,13 @@ public:
         String apiLatestPath = apiPath + "/latest";
         String viewPath = String("/view/") + basePath;
         
-        // Store paths in heap for lambda capture
-        char* apiPathStr = strdup(apiPath.c_str());
-        char* viewPathStr = strdup(viewPath.c_str());
-        
         // API endpoint - all data
-        server->on(apiPathStr, HTTP_GET, [getJsonCallback](AsyncWebServerRequest* request) {
+        server->on(apiPath.c_str(), HTTP_GET, [getJsonCallback](AsyncWebServerRequest* request) {
             request->send(200, "application/json", getJsonCallback());
         });
         
         // API endpoint - latest entry
-        server->on(strdup(apiLatestPath.c_str()), HTTP_GET, [getLatestJsonCallback](AsyncWebServerRequest* request) {
+        server->on(apiLatestPath.c_str(), HTTP_GET, [getLatestJsonCallback](AsyncWebServerRequest* request) {
             String json = getLatestJsonCallback();
             if (json.length() == 0 || json == "{}") {
                 request->send(404, "application/json", "{\"error\":\"No data available\"}");
@@ -60,8 +56,8 @@ public:
         });
         
         // HTML view endpoint
-        server->on(viewPathStr, HTTP_GET, [basePath, apiPathStr, getSchemaCallback, refreshIntervalMs](AsyncWebServerRequest* request) {
-            streamHtmlView(request, basePath, apiPathStr, refreshIntervalMs);
+        server->on(viewPath.c_str(), HTTP_GET, [basePath, apiPath, getSchemaCallback, refreshIntervalMs](AsyncWebServerRequest* request) {
+            streamHtmlView(request, basePath, apiPath.c_str(), refreshIntervalMs);
         });
     }
 
@@ -84,18 +80,14 @@ public:
         String apiLatestPath = apiPath + "/latest";
         String viewPath = String("/view/") + basePath;
         
-        // Store paths in heap for lambda capture
-        char* apiPathStr = strdup(apiPath.c_str());
-        char* viewPathStr = strdup(viewPath.c_str());
-        
         // API endpoint - all data
-        server->on(apiPathStr, HTTP_GET, [getJsonCallback, &serverFeature](AsyncWebServerRequest* request) {
+        server->on(apiPath.c_str(), HTTP_GET, [getJsonCallback, &serverFeature](AsyncWebServerRequest* request) {
             if (!serverFeature.authenticate(request)) return request->requestAuthentication();
             request->send(200, "application/json", getJsonCallback());
         });
         
         // API endpoint - latest entry
-        server->on(strdup(apiLatestPath.c_str()), HTTP_GET, [getLatestJsonCallback, &serverFeature](AsyncWebServerRequest* request) {
+        server->on(apiLatestPath.c_str(), HTTP_GET, [getLatestJsonCallback, &serverFeature](AsyncWebServerRequest* request) {
             if (!serverFeature.authenticate(request)) return request->requestAuthentication();
             String json = getLatestJsonCallback();
             if (json.length() == 0 || json == "{}") {
@@ -106,9 +98,9 @@ public:
         });
         
         // HTML view endpoint
-        server->on(viewPathStr, HTTP_GET, [basePath, apiPathStr, getSchemaCallback, refreshIntervalMs, &serverFeature](AsyncWebServerRequest* request) {
+        server->on(viewPath.c_str(), HTTP_GET, [basePath, apiPath, getSchemaCallback, refreshIntervalMs, &serverFeature](AsyncWebServerRequest* request) {
             if (!serverFeature.authenticate(request)) return request->requestAuthentication();
-            streamHtmlView(request, basePath, apiPathStr, refreshIntervalMs);
+            streamHtmlView(request, basePath, apiPath.c_str(), refreshIntervalMs);
         });
     }
     

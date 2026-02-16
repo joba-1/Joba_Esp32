@@ -58,7 +58,7 @@ void GapPredictor::reset() {
 void GapPredictor::recordTransition(uint64_t predecessorKey, uint64_t successorKey, uint32_t gapMs) {
     if (predecessorKey == 0 || !_statsEnabled) return;
 
-    static constexpr size_t MAX_BUS_PATTERNS = 64;
+    static constexpr size_t MAX_BUS_PATTERNS = 16;
 
     if (_mutex && xSemaphoreTake(_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         auto it = _busTransitions.find(predecessorKey);

@@ -248,7 +248,7 @@ void ModbusDeviceManager::tryUpdateFromPassiveResponse(ModbusDeviceInstance& dev
     // If nothing in the JSON definition matched this request/response pair,
     // interpret it as unknown uint16 registers and report those.
     if (!matchedAny) {
-        static constexpr size_t MAX_UNKNOWN_U16_PER_DEVICE = 512;
+        static constexpr size_t MAX_UNKNOWN_U16_PER_DEVICE = 64;
 
         for (size_t i = 0; i < respRegCount; i++) {
             uint16_t address = (uint16_t)(startReg + i);
@@ -256,6 +256,10 @@ void ModbusDeviceManager::tryUpdateFromPassiveResponse(ModbusDeviceInstance& dev
             // Respect cap to avoid unbounded memory growth if a master scans huge ranges.
             auto existing = device.unknownU16.find(address);
             if (existing == device.unknownU16.end() && device.unknownU16.size() >= MAX_UNKNOWN_U16_PER_DEVICE) {
+                if (!device.unknownU16OverflowWarned) {
+                    LOG_W("unknownU16 cap (%u) reached for unit %u; further unknown registers ignored", (unsigned)MAX_UNKNOWN_U16_PER_DEVICE, device.unitId);
+                    device.unknownU16OverflowWarned = true;
+                }
                 break;
             }
 

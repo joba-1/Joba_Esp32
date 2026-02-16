@@ -95,6 +95,7 @@ struct ModbusDeviceInstance {
     uint32_t successCount;
     uint32_t errorCount;
     float pollIntervalFactor;   // Multiplier for poll intervals (from devices.json)
+    bool unknownU16OverflowWarned{false}; // set when MAX_UNKNOWN_U16_PER_DEVICE cap reached (warn once)
 
     struct ModbusPollBatch {
         uint8_t functionCode;
