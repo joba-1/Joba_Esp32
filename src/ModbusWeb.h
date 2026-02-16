@@ -1651,353 +1651,353 @@ if($('autoRef').checked)startA();
                 request->send(200, "text/html", PATTERNS_PAGE);
             });
 
+static const char RAW_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head>
+<title>Modbus Raw Tools</title>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}
+.card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}
+h1{color:#FF9800}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}
+a{color:#FF9800}
+label{display:inline-block;margin:6px 10px 6px 0}
+input,select{padding:6px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px}
+button{padding:6px 12px;background:#FF9800;color:#1a1a2e;border:none;border-radius:4px;font-weight:600;cursor:pointer}
+button:hover{background:#F57C00}
+pre{background:#0a0a1a;color:#eee;padding:10px;border-radius:6px;overflow:auto;border:1px solid #2a2a4a}
+code{background:#0f3460;padding:2px 6px;border-radius:3px}
+small{color:#888}
+.home-link{display:inline-block;margin-bottom:12px;color:#FF9800;font-size:0.9em}
+.home-link:before{content:'← '}
+</style></head><body>
+<a href='/' class='home-link'>Home</a>
+<h1>Modbus Raw Tools</h1>
+<p><a href='/view/modbus' style='color:#2196F3'>&larr; Back to dashboard</a></p>
+<div class='card'>
+<h2>Tracked Raw Read</h2>
+<p><small>Sends via <code>/api/modbus/raw/readTracked</code> and polls <code>/api/modbus/raw/result</code>.</small></p>
+<div>
+<label>unit <input id='unit' type='number' value='1' min='1' max='247'></label>
+<label>address <input id='address' type='number' value='0' min='0' max='65535'></label>
+<label>count <input id='count' type='number' value='2' min='1' max='125'></label>
+<label>fc <select id='fc'><option value='3'>3</option><option value='4'>4</option></select></label>
+<button onclick='sendRead()'>Send</button>
+</div>
+<h3>Request Frame (hex)</h3><pre id='req'>-</pre>
+<h3>Result</h3><pre id='out'>Ready.</pre>
+</div>
+<script>
+let lastRequestId = 0;
+function qs(id){return document.getElementById(id);}
+function toHexByte(b){return ('0'+(b&0xFF).toString(16)).slice(-2).toUpperCase();}
+function toHex(bytes){return bytes.map(toHexByte).join(' ');}
+function crc16Modbus(bytes){
+  let crc=0xFFFF;
+  for(const bb of bytes){
+    crc ^= (bb & 0xFF);
+    for(let i=0;i<8;i++){
+      const lsb = crc & 1;
+      crc >>= 1;
+      if(lsb) crc ^= 0xA001;
+    }
+  }
+  return crc & 0xFFFF;
+}
+async function sendRead(){
+  const u=qs('unit').value, a=qs('address').value, c=qs('count').value, fc=qs('fc').value;
+  const unit = parseInt(u,10)||0;
+  const addr = parseInt(a,10)||0;
+  const cnt  = parseInt(c,10)||0;
+  const fcc  = parseInt(fc,10)||3;
+  const req = [unit, fcc, (addr>>8)&0xFF, addr&0xFF, (cnt>>8)&0xFF, cnt&0xFF];
+  const crc = crc16Modbus(req);
+  req.push(crc & 0xFF, (crc>>8)&0xFF);
+  qs('req').textContent = toHex(req);
+  qs('out').textContent='Queueing...';
+  const url=`/api/modbus/raw/readTracked?unit=${encodeURIComponent(u)}&address=${encodeURIComponent(a)}&count=${encodeURIComponent(c)}&fc=${encodeURIComponent(fc)}`;
+  const r=await fetch(url);
+  const j=await r.json();
+  lastRequestId = j.requestId || 0;
+  qs('out').textContent = JSON.stringify(j,null,2);
+  if(!j.queued || !lastRequestId) return;
+  pollResult(lastRequestId, 0);
+}
+async function pollResult(id, n){
+  if(n>40){ qs('out').textContent += `\n\nNo response yet (timeout waiting in UI).` ; return; }
+  const r=await fetch(`/api/modbus/raw/result?id=${encodeURIComponent(id)}`);
+  const j=await r.json();
+  qs('out').textContent = JSON.stringify(j,null,2);
+  if(j.completed) return;
+  setTimeout(()=>pollResult(id,n+1), 250);
+}
+</script></body></html>)rawliteral";
+
         webServer->on("/view/modbus/raw", HTTP_GET,
             [&server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
-
-                String html = F("<!DOCTYPE html><html><head>"
-                    "<title>Modbus Raw Tools</title>"
-                    "<meta charset='UTF-8'>"
-                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<style>"
-                    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
-                    ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
-                    "h1{color:#FF9800}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}"
-                    "a{color:#FF9800}"
-                    "label{display:inline-block;margin:6px 10px 6px 0}"
-                    "input,select{padding:6px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px}"
-                    "button{padding:6px 12px;background:#FF9800;color:#1a1a2e;border:none;border-radius:4px;font-weight:600;cursor:pointer}"
-                    "button:hover{background:#F57C00}"
-                    "pre{background:#0a0a1a;color:#eee;padding:10px;border-radius:6px;overflow:auto;border:1px solid #2a2a4a}"
-                    "code{background:#0f3460;padding:2px 6px;border-radius:3px}"
-                    "small{color:#888}"
-                    ".home-link{display:inline-block;margin-bottom:12px;color:#FF9800;font-size:0.9em}"
-                    ".home-link:before{content:'← '}"
-                    "</style></head><body>"
-                    "<a href='/' class='home-link'>Home</a>"
-                    "<h1>Modbus Raw Tools</h1>"
-                    "<p><a href='/view/modbus' style='color:#2196F3'>&larr; Back to dashboard</a></p>"
-                    "<div class='card'>"
-                    "<h2>Tracked Raw Read</h2>"
-                    "<p><small>Sends via <code>/api/modbus/raw/readTracked</code> and polls <code>/api/modbus/raw/result</code>.</small></p>"
-                    "<div>"
-                    "<label>unit <input id='unit' type='number' value='1' min='1' max='247'></label>"
-                    "<label>address <input id='address' type='number' value='0' min='0' max='65535'></label>"
-                    "<label>count <input id='count' type='number' value='2' min='1' max='125'></label>"
-                    "<label>fc <select id='fc'><option value='3'>3</option><option value='4'>4</option></select></label>"
-                    "<button onclick='sendRead()'>Send</button>"
-                    "</div>"
-                    "<h3>Request Frame (hex)</h3><pre id='req'>-</pre>"
-                    "<h3>Result</h3><pre id='out'>Ready.</pre>"
-                    "</div>"
-                    "<script>"
-                    "let lastRequestId = 0;"
-                    "function qs(id){return document.getElementById(id);}"
-                    "function toHexByte(b){return ('0'+(b&0xFF).toString(16)).slice(-2).toUpperCase();}"
-                    "function toHex(bytes){return bytes.map(toHexByte).join(' ');}"
-                    "function crc16Modbus(bytes){"
-                    "  let crc=0xFFFF;"
-                    "  for(const bb of bytes){"
-                    "    crc ^= (bb & 0xFF);"
-                    "    for(let i=0;i<8;i++){"
-                    "      const lsb = crc & 1;"
-                    "      crc >>= 1;"
-                    "      if(lsb) crc ^= 0xA001;"
-                    "    }"
-                    "  }"
-                    "  return crc & 0xFFFF;"
-                    "}"
-                    "async function sendRead(){"
-                    "  const u=qs('unit').value, a=qs('address').value, c=qs('count').value, fc=qs('fc').value;"
-                    "  const unit = parseInt(u,10)||0;"
-                    "  const addr = parseInt(a,10)||0;"
-                    "  const cnt  = parseInt(c,10)||0;"
-                    "  const fcc  = parseInt(fc,10)||3;"
-                    "  const req = [unit, fcc, (addr>>8)&0xFF, addr&0xFF, (cnt>>8)&0xFF, cnt&0xFF];"
-                    "  const crc = crc16Modbus(req);"
-                    "  req.push(crc & 0xFF, (crc>>8)&0xFF);"
-                    "  qs('req').textContent = toHex(req);"
-                    "  qs('out').textContent='Queueing...';"
-                    "  const url=`/api/modbus/raw/readTracked?unit=${encodeURIComponent(u)}&address=${encodeURIComponent(a)}&count=${encodeURIComponent(c)}&fc=${encodeURIComponent(fc)}`;"
-                    "  const r=await fetch(url);"
-                    "  const j=await r.json();"
-                    "  lastRequestId = j.requestId || 0;"
-                    "  qs('out').textContent = JSON.stringify(j,null,2);"
-                    "  if(!j.queued || !lastRequestId) return;"
-                    "  pollResult(lastRequestId, 0);"
-                    "}"
-                    "async function pollResult(id, n){"
-                    "  if(n>40){ qs('out').textContent += `\n\nNo response yet (timeout waiting in UI).` ; return; }"
-                    "  const r=await fetch(`/api/modbus/raw/result?id=${encodeURIComponent(id)}`);"
-                    "  const j=await r.json();"
-                    "  qs('out').textContent = JSON.stringify(j,null,2);"
-                    "  if(j.completed) return;"
-                    "  setTimeout(()=>pollResult(id,n+1), 250);"
-                    "}"
-                    "</script></body></html>");
-
-                request->send(200, "text/html", html);
+                request->send(200, "text/html", RAW_PAGE);
             });
 
         // Decoded value viewer page
+static const char DECODED_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head>
+<title>Modbus Decoded Register Viewer</title>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}
+.card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}
+h1{color:#AB47BC}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}
+a{color:#AB47BC}
+label{display:inline-block;margin:6px 10px 6px 0;font-weight:600}
+select,input{padding:8px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px;min-width:200px}
+button{padding:8px 16px;background:#AB47BC;color:#fff;border:none;border-radius:4px;font-weight:600;cursor:pointer;margin-top:10px}
+button:hover{background:#9C27B0}
+.result-box{background:#0a0a1a;border:2px solid #AB47BC;border-radius:6px;padding:15px;margin-top:15px}
+.value{font-size:32px;font-weight:bold;color:#AB47BC;margin:10px 0}
+.meta{color:#888;font-size:12px;margin-top:5px}
+small{color:#888}
+.error{color:#F44336}
+.warning{color:#FF9800}
+.home-link{display:inline-block;margin-bottom:12px;color:#AB47BC;font-size:0.9em}
+.home-link:before{content:'← '}
+</style></head><body>
+<a href='/' class='home-link'>Home</a>
+<h1>Decoded Register Viewer</h1>
+<p><a href='/view/modbus' style='color:#2196F3'>&larr; Back to dashboard</a></p>
+<div class='card'>
+<h2>Read Decoded Value</h2>
+<p><small>Select device and register to view decoded value from cache</small></p>
+<div>
+<div><label>Device<br><select id='device' onchange='updateRegisters()' style='width:100%'>
+<option value=''>-- Select Device --</option>
+</select></label></div>
+<div><label>Register<br><select id='register' style='width:100%'>
+<option value=''>-- Select Register --</option>
+</select></label></div>
+<div><label>Unit Multiplier<br><select id='unitMult' style='width:100%'>
+<option value='1' selected>1 (original unit)</option>
+<option value='0.001'>0.001 (k-unit, e.g. kW, kWh)</option>
+<option value='1000'>1000 (m-unit, e.g. mV, mA)</option>
+<option value='0.000001'>0.000001 (M-unit, e.g. MW)</option>
+</select></label></div>
+<div style='margin-top:10px'>
+<label><input type='checkbox' id='autoRefresh' checked onchange='toggleAutoRefresh()'> Auto-refresh (5s)</label>
+</div>
+<button onclick='readValue()'>Read Value</button>
+</div>
+<div id='result' style='display:none'></div>
+<div style='margin-top:8px;font-size:12px;color:#666'>
+Last update: <span id='lastUpdate'>-</span>
+</div>
+</div>
+<script>
+let devicesData = [];
+let currentRegisters = [];
+let autoRefreshTimer = null;
+function qs(id){return document.getElementById(id);} 
+function formatAge(sec){
+  if(sec < 60) return sec+'s';
+  const m = Math.floor(sec/60);
+  if(m < 60) return m+'m '+(sec%60)+'s';
+  const h = Math.floor(m/60);
+  if(h < 24) return h+'h '+(m%60)+'m';
+  const d = Math.floor(h/24);
+  return d+'d '+(h%24)+'h';
+}
+async function init(){
+  try{
+    const r = await fetch('/api/modbus/registers');
+    devicesData = await r.json();
+    const devSel = qs('device');
+    devSel.innerHTML = '<option value="">-- Select Device --</option>';
+    devicesData.forEach(d=>{
+      const opt = document.createElement('option');
+      opt.value = d.unitId;
+      opt.textContent = `Unit ${d.unitId} - ${d.deviceName || d.deviceType}`;
+      devSel.appendChild(opt);
+    });
+  }catch(e){
+    alert('Failed to load devices: '+e.message);
+  }
+}
+function updateRegisters(){
+  stopAutoRefresh();
+  const unitId = parseInt(qs('device').value);
+  const regSel = qs('register');
+  regSel.innerHTML = '<option value="">-- Select Register --</option>';
+  qs('result').style.display = 'none';
+  if(!unitId) return;
+  const dev = devicesData.find(d=>d.unitId===unitId);
+  if(!dev || !dev.registers) return;
+  currentRegisters = dev.registers;
+  dev.registers.forEach(r=>{
+    const opt = document.createElement('option');
+    opt.value = r.name;
+    opt.textContent = `${r.name} (${r.unit || 'no unit'}) @ ${r.address}`;
+    regSel.appendChild(opt);
+  });
+}
+async function readValue(){
+  const unitId = qs('device').value;
+  const regName = qs('register').value;
+  const multStr = qs('unitMult').value;
+  if(!unitId || !regName){
+    alert('Please select device and register');
+    return;
+  }
+  const mult = parseFloat(multStr) || 1.0;
+  try{
+    const r = await fetch(`/api/modbus/read?unit=${encodeURIComponent(unitId)}&register=${encodeURIComponent(regName)}`);
+    const j = await r.json();
+    const reg = currentRegisters.find(x=>x.name===regName);
+    let unitStr = reg ? reg.unit : '';
+    if(mult !== 1.0){
+      if(mult === 0.001) unitStr = 'k'+unitStr;
+      else if(mult === 1000) unitStr = 'm'+unitStr;
+      else if(mult === 0.000001) unitStr = 'M'+unitStr;
+      else unitStr = unitStr + ' × ' + mult;
+    }
+    const displayVal = j.value * mult;
+    let html = '<div class="result-box">';
+    html += '<h3>'+regName+'</h3>';
+    html += '<div class="value">'+displayVal.toFixed(4)+' '+unitStr+'</div>';
+    html += '<div class="meta">Unit ID: '+j.unitId+'</div>';
+    if(j.valid){
+      html += '<div class="meta">Valid: <span style="color:#4CAF50">Yes</span>';
+      if(j.ageSeconds !== undefined){
+        html += ' (age: '+formatAge(j.ageSeconds)+')';
+      }
+      html += '</div>';
+    }else{
+      html += '<div class="meta">Valid: <span class="error">No</span>';
+      if(j.ageSeconds !== undefined){
+        html += ' <small>(last successful read: '+formatAge(j.ageSeconds)+' ago)</small>';
+      }else{
+        html += ' <small>(never read)</small>';
+      }
+      html += '</div>';
+    }
+    html += '<div class="meta">Queued for update: '+(j.queued?'Yes':'No')+'</div>';
+    html += '<div class="meta">Original value: '+j.value.toFixed(4)+' '+(reg?reg.unit:'')+'</div>';
+    if(reg){
+      html += '<div class="meta">Address: '+reg.address+', Length: '+reg.length+'</div>';
+    }
+    html += '</div>';
+    qs('result').innerHTML = html;
+    qs('result').style.display = 'block';
+    qs('lastUpdate').textContent = new Date().toLocaleTimeString();
+    startAutoRefresh();
+  }catch(e){
+    qs('result').innerHTML = '<div class="result-box"><div class="error">Error: '+e.message+'</div></div>';
+    qs('result').style.display = 'block';
+    qs('lastUpdate').textContent = new Date().toLocaleTimeString();
+  }
+}
+function startAutoRefresh(){
+  stopAutoRefresh();
+  if(!qs('autoRefresh').checked) return;
+  const unitId = qs('device').value;
+  const regName = qs('register').value;
+  if(!unitId || !regName) return;
+  autoRefreshTimer = setInterval(()=>{
+    if(qs('autoRefresh').checked && qs('device').value && qs('register').value){
+      readValue();
+    }else{
+      stopAutoRefresh();
+    }
+  }, 5000);
+}
+function stopAutoRefresh(){
+  if(autoRefreshTimer){
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+function toggleAutoRefresh(){
+  if(qs('autoRefresh').checked){
+    startAutoRefresh();
+  }else{
+    stopAutoRefresh();
+  }
+}
+init();
+</script></body></html>)rawliteral";
+
         webServer->on("/view/modbus/decoded", HTTP_GET,
             [&server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
-
-                String html = F("<!DOCTYPE html><html><head>"
-                    "<title>Modbus Decoded Register Viewer</title>"
-                    "<meta charset='UTF-8'>"
-                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<style>"
-                    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
-                    ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
-                    "h1{color:#AB47BC}h2{color:#eee;margin:0 0 10px 0}h3{color:#ccc;margin:10px 0 5px 0}"
-                    "a{color:#AB47BC}"
-                    "label{display:inline-block;margin:6px 10px 6px 0;font-weight:600}"
-                    "select,input{padding:8px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px;min-width:200px}"
-                    "button{padding:8px 16px;background:#AB47BC;color:#fff;border:none;border-radius:4px;font-weight:600;cursor:pointer;margin-top:10px}"
-                    "button:hover{background:#9C27B0}"
-                    ".result-box{background:#0a0a1a;border:2px solid #AB47BC;border-radius:6px;padding:15px;margin-top:15px}"
-                    ".value{font-size:32px;font-weight:bold;color:#AB47BC;margin:10px 0}"
-                    ".meta{color:#888;font-size:12px;margin-top:5px}"
-                    "small{color:#888}"
-                    ".error{color:#F44336}"
-                    ".warning{color:#FF9800}"
-                    ".home-link{display:inline-block;margin-bottom:12px;color:#AB47BC;font-size:0.9em}"
-                    ".home-link:before{content:'← '}"
-                    "</style></head><body>"
-                    "<a href='/' class='home-link'>Home</a>"
-                    "<h1>Decoded Register Viewer</h1>"
-                    "<p><a href='/view/modbus' style='color:#2196F3'>&larr; Back to dashboard</a></p>"
-                    "<div class='card'>"
-                    "<h2>Read Decoded Value</h2>"
-                    "<p><small>Select device and register to view decoded value from cache</small></p>"
-                    "<div>"
-                    "<div><label>Device<br><select id='device' onchange='updateRegisters()' style='width:100%'>"
-                    "<option value=''>-- Select Device --</option>"
-                    "</select></label></div>"
-                    "<div><label>Register<br><select id='register' style='width:100%'>"
-                    "<option value=''>-- Select Register --</option>"
-                    "</select></label></div>"
-                    "<div><label>Unit Multiplier<br><select id='unitMult' style='width:100%'>"
-                    "<option value='1' selected>1 (original unit)</option>"
-                    "<option value='0.001'>0.001 (k-unit, e.g. kW, kWh)</option>"
-                    "<option value='1000'>1000 (m-unit, e.g. mV, mA)</option>"
-                    "<option value='0.000001'>0.000001 (M-unit, e.g. MW)</option>"
-                    "</select></label></div>"
-                    "<div style='margin-top:10px'>"
-                    "<label><input type='checkbox' id='autoRefresh' checked onchange='toggleAutoRefresh()'> Auto-refresh (5s)</label>"
-                    "</div>"
-                    "<button onclick='readValue()'>Read Value</button>"
-                    "</div>"
-                    "<div id='result' style='display:none'></div>"
-                    "<div style='margin-top:8px;font-size:12px;color:#666'>"
-                    "Last update: <span id='lastUpdate'>-</span>"
-                    "</div>"
-                    "</div>"
-                    "<script>"
-                    "let devicesData = [];"
-                    "let currentRegisters = [];"
-                    "let autoRefreshTimer = null;"
-                    "function qs(id){return document.getElementById(id);}"
-                    "function formatAge(sec){"
-                    "  if(sec < 60) return sec+'s';"
-                    "  const m = Math.floor(sec/60);"
-                    "  if(m < 60) return m+'m '+(sec%60)+'s';"
-                    "  const h = Math.floor(m/60);"
-                    "  if(h < 24) return h+'h '+(m%60)+'m';"
-                    "  const d = Math.floor(h/24);"
-                    "  return d+'d '+(h%24)+'h';"
-                    "}"
-                    "async function init(){"
-                    "  try{"
-                    "    const r = await fetch('/api/modbus/registers');"
-                    "    devicesData = await r.json();"
-                    "    const devSel = qs('device');"
-                    "    devSel.innerHTML = '<option value=\"\">-- Select Device --</option>';"
-                    "    devicesData.forEach(d=>{"
-                    "      const opt = document.createElement('option');"
-                    "      opt.value = d.unitId;"
-                    "      opt.textContent = `Unit ${d.unitId} - ${d.deviceName || d.deviceType}`;"
-                    "      devSel.appendChild(opt);"
-                    "    });"
-                    "  }catch(e){"
-                    "    alert('Failed to load devices: '+e.message);"
-                    "  }"
-                    "}"
-                    "function updateRegisters(){"
-                    "  stopAutoRefresh();"
-                    "  const unitId = parseInt(qs('device').value);"
-                    "  const regSel = qs('register');"
-                    "  regSel.innerHTML = '<option value=\"\">-- Select Register --</option>';"
-                    "  qs('result').style.display = 'none';"
-                    "  if(!unitId) return;"
-                    "  const dev = devicesData.find(d=>d.unitId===unitId);"
-                    "  if(!dev || !dev.registers) return;"
-                    "  currentRegisters = dev.registers;"
-                    "  dev.registers.forEach(r=>{"
-                    "    const opt = document.createElement('option');"
-                    "    opt.value = r.name;"
-                    "    opt.textContent = `${r.name} (${r.unit || 'no unit'}) @ ${r.address}`;"
-                    "    regSel.appendChild(opt);"
-                    "  });"
-                    "}"
-                    "async function readValue(){"
-                    "  const unitId = qs('device').value;"
-                    "  const regName = qs('register').value;"
-                    "  const multStr = qs('unitMult').value;"
-                    "  if(!unitId || !regName){"
-                    "    alert('Please select device and register');"
-                    "    return;"
-                    "  }"
-                    "  const mult = parseFloat(multStr) || 1.0;"
-                    "  try{"
-                    "    const r = await fetch(`/api/modbus/read?unit=${encodeURIComponent(unitId)}&register=${encodeURIComponent(regName)}`);"
-                    "    const j = await r.json();"
-                    "    const reg = currentRegisters.find(x=>x.name===regName);"
-                    "    let unitStr = reg ? reg.unit : '';"
-                    "    if(mult !== 1.0){"
-                    "      if(mult === 0.001) unitStr = 'k'+unitStr;"
-                    "      else if(mult === 1000) unitStr = 'm'+unitStr;"
-                    "      else if(mult === 0.000001) unitStr = 'M'+unitStr;"
-                    "      else unitStr = unitStr + ' × ' + mult;"
-                    "    }"
-                    "    const displayVal = j.value * mult;"
-                    "    let html = '<div class=\"result-box\">';"
-                    "    html += '<h3>'+regName+'</h3>';"
-                    "    html += '<div class=\"value\">'+displayVal.toFixed(4)+' '+unitStr+'</div>';"
-                    "    html += '<div class=\"meta\">Unit ID: '+j.unitId+'</div>';"
-                    "    if(j.valid){"
-                    "      html += '<div class=\"meta\">Valid: <span style=\"color:#4CAF50\">Yes</span>';"
-                    "      if(j.ageSeconds !== undefined){"
-                    "        html += ' (age: '+formatAge(j.ageSeconds)+')';"
-                    "      }"
-                    "      html += '</div>';"
-                    "    }else{"
-                    "      html += '<div class=\"meta\">Valid: <span class=\"error\">No</span>';"
-                    "      if(j.ageSeconds !== undefined){"
-                    "        html += ' <small>(last successful read: '+formatAge(j.ageSeconds)+' ago)</small>';"
-                    "      }else{"
-                    "        html += ' <small>(never read)</small>';"
-                    "      }"
-                    "      html += '</div>';"
-                    "    }"
-                    "    html += '<div class=\"meta\">Queued for update: '+(j.queued?'Yes':'No')+'</div>';"
-                    "    html += '<div class=\"meta\">Original value: '+j.value.toFixed(4)+' '+(reg?reg.unit:'')+'</div>';"
-                    "    if(reg){"
-                    "      html += '<div class=\"meta\">Address: '+reg.address+', Length: '+reg.length+'</div>';"
-                    "    }"
-                    "    html += '</div>';"
-                    "    qs('result').innerHTML = html;"
-                    "    qs('result').style.display = 'block';"
-                    "    qs('lastUpdate').textContent = new Date().toLocaleTimeString();"
-                    "    startAutoRefresh();"
-                    "  }catch(e){"
-                    "    qs('result').innerHTML = '<div class=\"result-box\"><div class=\"error\">Error: '+e.message+'</div></div>';"
-                    "    qs('result').style.display = 'block';"
-                    "    qs('lastUpdate').textContent = new Date().toLocaleTimeString();"
-                    "  }"
-                    "}"
-                    "function startAutoRefresh(){"
-                    "  stopAutoRefresh();"
-                    "  if(!qs('autoRefresh').checked) return;"
-                    "  const unitId = qs('device').value;"
-                    "  const regName = qs('register').value;"
-                    "  if(!unitId || !regName) return;"
-                    "  autoRefreshTimer = setInterval(()=>{"
-                    "    if(qs('autoRefresh').checked && qs('device').value && qs('register').value){"
-                    "      readValue();"
-                    "    }else{"
-                    "      stopAutoRefresh();"
-                    "    }"
-                    "  }, 5000);"
-                    "}"
-                    "function stopAutoRefresh(){"
-                    "  if(autoRefreshTimer){"
-                    "    clearInterval(autoRefreshTimer);"
-                    "    autoRefreshTimer = null;"
-                    "  }"
-                    "}"
-                    "function toggleAutoRefresh(){"
-                    "  if(qs('autoRefresh').checked){"
-                    "    startAutoRefresh();"
-                    "  }else{"
-                    "    stopAutoRefresh();"
-                    "  }"
-                    "}"
-                    "init();"
-                    "</script></body></html>");
-
-                request->send(200, "text/html", html);
+                request->send(200, "text/html", DECODED_PAGE);
+                return;
             });
+
+
+
+static const char DASHBOARD_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head>
+<title>Modbus Dashboard</title>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}
+.card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}
+.device{border-left:4px solid #2196F3}
+.status{border-left:4px solid #4CAF50}
+table{width:100%;border-collapse:collapse;background:#16213e}
+th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #2a2a4a}
+th{background:#0f3460;color:#2196F3}
+.ok{color:#4CAF50}.err{color:#F44336}
+.outdated{opacity:0.4;color:#666}
+h1{color:#2196F3}h2{color:#eee;margin:0 0 10px 0}
+.update-info{font-size:12px;color:#666;margin-top:10px}
+.flash{animation:flash 0.3s}
+@keyframes flash{0%{background:#2a4a6a}100%{background:transparent}}
+.home-link{display:inline-block;margin-bottom:12px;color:#2196F3;font-size:0.9em}
+.home-link:before{content:'← '}
+</style></head><body>
+<a href='/' class='home-link'>Home</a>
+<h1>Modbus Dashboard</h1>
+<div id='content'>Loading...</div>
+<div class='update-info'>Auto-refresh every 5s | Last update: <span id='lastUpdate'>-</span></div>
+<script>
+let prev={};
+function render(d){
+let h='<div class="card status"><h2>Bus Status</h2><p>';
+h+='Silent: <span class="'+(d.status.silent?'ok':'err')+'">'+(d.status.silent?'Yes':'No')+'</span>';
+h+=' | Queue: '+d.status.queue+' | RX: '+d.status.rx+' | TX: '+d.status.tx+' | CRC Errors: '+d.status.crcErrors+'</p></div>';
+d.devices.forEach(dev=>{
+h+='<div class="card device"><h2>Unit '+dev.unitId+' - '+dev.type+'</h2>';
+h+='<p>Success: '+dev.success+' | Errors: '+dev.errors+'</p>';
+h+='<table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>';
+dev.values.forEach(v=>{
+let key=dev.unitId+'_'+v.n;
+let changed=prev[key]!==undefined&&prev[key]!==v.v;
+prev[key]=v.v;
+h+='<tr'+(v.old?' class="outdated" title="Outdated"':'')+'>';
+h+='<td>'+v.n+'</td><td'+(changed?' class="flash"':'')+'>'+v.v.toFixed(2)+'</td>';
+h+='<td>'+v.u+'</td><td class="'+(v.ok?'ok':'err')+'">'+(v.ok?'\\u2713':'\\u2717')+'</td></tr>';
+});
+h+='</table></div>';
+});
+document.getElementById('content').innerHTML=h;
+document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
+}
+function fetchData(){fetch('/api/modbus/dashboard').then(r=>r.json()).then(render).catch(e=>console.error(e));}
+fetchData();setInterval(fetchData,5000);
+</script>
+<div style='margin-top:12px;font-size:13px'>
+<a href='/view/modbus/patterns' style='color:#26A69A'>Pattern Analysis</a> | 
+<a href='/view/modbus/scheduler' style='color:#FFA726'>Gap Scheduler</a> | 
+<a href='/view/modbus/raw' style='color:#FF9800'>Raw Tools</a> | 
+<a href='/view/modbus/decoded' style='color:#AB47BC'>Decoded Viewer</a>
+</div>
+</body></html>)rawliteral";
 
         webServer->on("/view/modbus", HTTP_GET,
             [&devices, &modbus, &server](AsyncWebServerRequest* request) {
                 if (!server.authenticate(request)) return request->requestAuthentication();
-
-                // Static HTML shell - data loaded via AJAX
-                String html = F("<!DOCTYPE html><html><head>"
-                    "<title>Modbus Dashboard</title>"
-                    "<meta charset='UTF-8'>"
-                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<style>"
-                    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}"
-                    ".card{background:#16213e;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);width:max-content;min-width:100%}"
-                    ".device{border-left:4px solid #2196F3}"
-                    ".status{border-left:4px solid #4CAF50}"
-                    "table{width:100%;border-collapse:collapse;background:#16213e}"
-                    "th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #2a2a4a}"
-                    "th{background:#0f3460;color:#2196F3}"
-                    ".ok{color:#4CAF50}.err{color:#F44336}"
-                    ".outdated{opacity:0.4;color:#666}"
-                    "h1{color:#2196F3}h2{color:#eee;margin:0 0 10px 0}"
-                    ".update-info{font-size:12px;color:#666;margin-top:10px}"
-                    ".flash{animation:flash 0.3s}"
-                    "@keyframes flash{0%{background:#2a4a6a}100%{background:transparent}}"
-                    ".home-link{display:inline-block;margin-bottom:12px;color:#2196F3;font-size:0.9em}"
-                    ".home-link:before{content:'← '}"
-                    "</style></head><body>"
-                    "<a href='/' class='home-link'>Home</a>"
-                    "<h1>Modbus Dashboard</h1>"
-                    "<div id='content'>Loading...</div>"
-                    "<div class='update-info'>Auto-refresh every 5s | Last update: <span id='lastUpdate'>-</span></div>"
-                    "<script>"
-                    "let prev={};"
-                    "function render(d){"
-                    "let h='<div class=\"card status\"><h2>Bus Status</h2><p>';"
-                    "h+='Silent: <span class=\"'+(d.status.silent?'ok':'err')+'\">'+(d.status.silent?'Yes':'No')+'</span>';"
-                    "h+=' | Queue: '+d.status.queue+' | RX: '+d.status.rx+' | TX: '+d.status.tx+' | CRC Errors: '+d.status.crcErrors+'</p></div>';"
-                    "d.devices.forEach(dev=>{"
-                    "h+='<div class=\"card device\"><h2>Unit '+dev.unitId+' - '+dev.type+'</h2>';"
-                    "h+='<p>Success: '+dev.success+' | Errors: '+dev.errors+'</p>';"
-                    "h+='<table><tr><th>Register</th><th>Value</th><th>Unit</th><th>Valid</th></tr>';"
-                    "dev.values.forEach(v=>{"
-                    "let key=dev.unitId+'_'+v.n;"
-                    "let changed=prev[key]!==undefined&&prev[key]!==v.v;"
-                    "prev[key]=v.v;"
-                    "h+='<tr'+(v.old?' class=\"outdated\" title=\"Outdated\"':'')+'>';"
-                    "h+='<td>'+v.n+'</td><td'+(changed?' class=\"flash\"':'')+'>'+v.v.toFixed(2)+'</td>';"
-                    "h+='<td>'+v.u+'</td><td class=\"'+(v.ok?'ok':'err')+'\">'+(v.ok?'\\u2713':'\\u2717')+'</td></tr>';"
-                    "});"
-                    "h+='</table></div>';"
-                    "});"
-                    "document.getElementById('content').innerHTML=h;"
-                    "document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();"
-                    "}"
-                    "function fetchData(){fetch('/api/modbus/dashboard').then(r=>r.json()).then(render).catch(e=>console.error(e));}"
-                    "fetchData();setInterval(fetchData,5000);"
-                    "</script>"
-                    "<div style='margin-top:12px;font-size:13px'>"
-                    "<a href='/view/modbus/patterns' style='color:#26A69A'>Pattern Analysis</a> | "
-                    "<a href='/view/modbus/scheduler' style='color:#FFA726'>Gap Scheduler</a> | "
-                    "<a href='/view/modbus/raw' style='color:#FF9800'>Raw Tools</a> | "
-                    "<a href='/view/modbus/decoded' style='color:#AB47BC'>Decoded Viewer</a>"
-                    "</div>"
-                    "</body></html>");
-
-                request->send(200, "text/html", html);
+                request->send(200, "text/html", DASHBOARD_PAGE);
+                return;
             });
-        
+
         // Modbus monitoring data
         webServer->on("/api/modbus/monitor", HTTP_GET,
             [&modbus, &server](AsyncWebServerRequest* request) {
