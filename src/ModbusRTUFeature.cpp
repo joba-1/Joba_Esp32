@@ -1072,18 +1072,12 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                 byteCountMatches = (frame.getByteCount() == (size_t)_currentRequest.quantity * 2);
             }
             if (frame.isValid && fcMatches && byteCountMatches) {
-                // Enforce strict timing window before accepting response. Allow an
-                // extended response window for the known-problematic read (unit 3,
-                // start 1304, qty 2) to tolerate slightly-late replies.
+                // Enforce strict timing window before accepting response
                 uint32_t elapsedMs = (uint32_t)(millis() - _requestSentTime);
-                uint32_t maxWindow = RESPONSE_MAX_WINDOW_MS;
-                if (_currentRequest.unitId == 3 && _currentRequest.startRegister == 1304 && _currentRequest.quantity == 2) {
-                    maxWindow = RESPONSE_MAX_WINDOW_MS_EXTENDED;
-                }
-                if (elapsedMs < RESPONSE_MIN_WINDOW_MS || elapsedMs > maxWindow) {
+                if (elapsedMs < RESPONSE_MIN_WINDOW_MS || elapsedMs > RESPONSE_MAX_WINDOW_MS) {
                     // Outside allowed window - treat as mismatch and log details
                     LOG_W("RX response outside strict window: unit=%d elapsed=%ums (min=%u max=%u) req=unit:%u fc:0x%02X reg:%u qty:%u resp=%s",
-                          frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, maxWindow,
+                          frame.unitId, elapsedMs, RESPONSE_MIN_WINDOW_MS, RESPONSE_MAX_WINDOW_MS,
                           _currentRequest.unitId, _currentRequest.functionCode,
                           _currentRequest.startRegister, _currentRequest.quantity,
                           formatFrameHex(frame).c_str());

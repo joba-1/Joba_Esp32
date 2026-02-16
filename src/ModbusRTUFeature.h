@@ -793,7 +793,6 @@ private:
     static constexpr uint32_t GAP_MIN_USABLE_MS = 20;  // minimum usable gap to attempt TX
     static constexpr uint32_t RESPONSE_MIN_WINDOW_MS = 3;  // min time to accept response (avoid echo)
     static constexpr uint32_t RESPONSE_MAX_WINDOW_MS = 200;  // max time to accept response (strict window)
-    static constexpr uint32_t RESPONSE_MAX_WINDOW_MS_EXTENDED = 1500; // extended window for problematic requests
 
 public:
     /**
