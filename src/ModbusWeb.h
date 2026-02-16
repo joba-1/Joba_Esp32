@@ -1959,7 +1959,7 @@ let changed=prev[key]!==undefined&&prev[key]!==v.v;
 prev[key]=v.v;
 h+='<tr'+(v.old?' class="outdated" title="Outdated"':'')+'>';
 h+='<td>'+v.n+'</td><td'+(changed?' class="flash"':'')+'>'+v.v.toFixed(2)+'</td>';
-h+='<td>'+v.u+'</td><td class="'+(v.ok?'ok':'err')+'">'+(v.ok?'\\u2713':'\\u2717')+'</td></tr>';
+h+='<td>'+v.u+'</td><td class="'+(v.ok?'ok':'err')+'">'+(v.ok?'\u2713':'\u2717')+'</td></tr>';
 });
 h+='</table></div>';
 });
