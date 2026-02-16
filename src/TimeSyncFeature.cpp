@@ -61,7 +61,21 @@ void TimeSyncFeature::loop() {
                     _synced = true;
                     _lastSyncTime = millis();
                     _state = State::SYNCED;
-                    LOG_I("Time synchronized: %s", getFormattedTime().c_str());
+                    // Re-apply TZ after NTP sync in case underlying libs reset it
+                    setenv("TZ", _timezone, 1);
+                    tzset();
+
+                    time_t now = time(nullptr);
+                    struct tm tm_utc;
+                    struct tm tm_loc;
+                    gmtime_r(&now, &tm_utc);
+                    localtime_r(&now, &tm_loc);
+                    char bufUtc[32];
+                    char bufLoc[32];
+                    strftime(bufUtc, sizeof(bufUtc), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
+                    strftime(bufLoc, sizeof(bufLoc), "%Y-%m-%dT%H:%M:%S%z", &tm_loc);
+                    const char* tz = getenv("TZ");
+                    LOG_I("Time synchronized: epoch=%lu UTC=%s LOCAL=%s TZ=%s", (unsigned long)now, bufUtc, bufLoc, tz ? tz : "(null)");
                 } else if (millis() - _syncStartTime > SYNC_TIMEOUT) {
                     // Timeout - go back to waiting
                     LOG_W("NTP sync timeout, will retry...");
