@@ -279,11 +279,6 @@ public:
     bool getRegisterValue(uint8_t unitId, const char* registerName, ModbusRegisterValue& regValue) const;
     
     /**
-     * @brief Get all current values for a device as JSON
-     */
-    String getDeviceValuesJson(uint8_t unitId) const;
-
-    /**
      * @brief Stream all current values for a device as JSON
      *
      * Avoids building a potentially large intermediate String.
