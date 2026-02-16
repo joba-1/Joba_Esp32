@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
 #include "Feature.h"
 
 /**
@@ -61,6 +62,15 @@ public:
         _password = password;
         _authEnabled = (strlen(_username) > 0 && strlen(_password) > 0);
     }
+
+    /**
+     * @brief Safely serialize and send a JSON document as an HTTP response.
+     *
+     * Measures the serialization size with `measureJson()` and returns HTTP
+     * 503 when the payload would exceed `maxBytes` to avoid exhausting the
+     * async response buffer or heap. Implemented in `WebServerFeature.cpp`.
+     */
+    static void safeSendJson(AsyncWebServerRequest* request, JsonDocument& doc, size_t maxBytes = 8192, int statusCode = 200);
 
 private:
     void setupDefaultRoutes();

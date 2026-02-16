@@ -121,9 +121,7 @@ public:
                     dev["unknownCount"] = (uint32_t)kv.second.unknownU16.size();
                 }
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
         
         // Get device values
@@ -196,9 +194,7 @@ public:
                     doc["valid"] = false;
                 }
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
         
         // Write to a register
@@ -232,9 +228,7 @@ public:
                 doc["value"] = value;
                 doc["queued"] = queued;
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
         
         // Raw read request
@@ -271,9 +265,7 @@ public:
                 doc["functionCode"] = fc;
                 doc["queued"] = queued;
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
 
         // Raw read request (tracked) - returns a requestId that can be polled via /api/modbus/raw/result
@@ -363,10 +355,7 @@ public:
                 doc["count"] = count;
                 doc["functionCode"] = fc;
 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                if (!queued) response->setCode(503);
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc, 8192, queued ? 200 : 503);
             });
 
         // Fetch tracked raw read result
@@ -417,9 +406,7 @@ public:
                     }
                 }
 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
         
         // Get bus status
@@ -498,9 +485,7 @@ public:
                     if (iso.length() > 0) updated["iso"] = iso;
                 }
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
 
         // Set silence time for arbitration testing
@@ -522,9 +507,7 @@ public:
                 doc["charTimes"] = (float)modbus.getSilenceTimeUs() / modbus.getCharTimeUs();
                 doc["specMinCharTimes"] = 3.5;
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
 
         // Reset stats for clean testing
@@ -616,9 +599,7 @@ public:
                     }
                 }
 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             };
 
         webServer->on("/api/modbus/crc", HTTP_GET, handleModbusCrc);
@@ -665,9 +646,7 @@ public:
                     }
                 }
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
 
         // Bus pattern analysis: per-register-range timing, gaps, cycle detection
@@ -1394,9 +1373,7 @@ refresh();startA();
                     arr.add(name);
                 }
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
         
         // Response mismatch diagnostics
@@ -1437,9 +1414,7 @@ refresh();startA();
                     }
                 }
                 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
         
         // HTML dashboard
@@ -2100,9 +2075,7 @@ if($('autoRef').checked)startA();
                     }
                 });
 
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
+                WebServerFeature::safeSendJson(request, doc);
             });
 
         // Get register definitions for all devices

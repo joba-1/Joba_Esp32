@@ -15,6 +15,21 @@
 #include "CpuMonitor.h"
 #include "WebServerFeature_helper.h"
 
+// Safely serialize and send JSON documents without causing large temporary
+// allocations in the async response buffer. If the serialized payload would
+// exceed `maxBytes`, return 503 to avoid exhausting heap/cbuf.
+void WebServerFeature::safeSendJson(AsyncWebServerRequest* request, JsonDocument& doc, size_t maxBytes, int statusCode) {
+    size_t needed = measureJson(doc);
+    if (needed == 0 || needed > maxBytes) {
+        request->send(503, "text/plain", "Payload too large");
+        return;
+    }
+    AsyncResponseStream* response = request->beginResponseStream("application/json");
+    response->setCode(statusCode);
+    serializeJson(doc, *response);
+    request->send(response);
+}
+
 /**
  * @file WebServerFeature.cpp
  * @brief Async web server feature and HTTP API handlers.
@@ -133,9 +148,7 @@ void WebServerFeature::setupDefaultRoutes() {
         }
 
         {
-            AsyncResponseStream* response = request->beginResponseStream("application/json");
-            serializeJson(doc, *response);
-            request->send(response);
+            WebServerFeature::safeSendJson(request, doc);
         }
     });
     
@@ -160,9 +173,7 @@ void WebServerFeature::setupDefaultRoutes() {
         }
 
         {
-            AsyncResponseStream* response = request->beginResponseStream("application/json");
-            serializeJson(doc, *response);
-            request->send(response);
+            WebServerFeature::safeSendJson(request, doc);
         }
     });
 
@@ -253,9 +264,7 @@ void WebServerFeature::setupDefaultRoutes() {
             }
         }
 
-        AsyncResponseStream* response = request->beginResponseStream("application/json");
-        serializeJson(doc, *response);
-        request->send(response);
+        WebServerFeature::safeSendJson(request, doc);
     });
 
     // IMPORTANT: Register specific storage endpoints BEFORE the general /api/storage endpoint
@@ -380,11 +389,7 @@ void WebServerFeature::setupDefaultRoutes() {
 
             doc["freeHeap"] = (uint32_t)ESP.getFreeHeap();
 
-            {
-                AsyncResponseStream* response = request->beginResponseStream("application/json");
-                serializeJson(doc, *response);
-                request->send(response);
-            }
+            WebServerFeature::safeSendJson(request, doc);
             return;
         }
 
