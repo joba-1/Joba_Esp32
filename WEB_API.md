@@ -154,6 +154,34 @@ Parameters:
 curl --anyauth -u admin:<password> 'http://<device-ip>/api/modbus/crc?limit=10'
 ```
 
+Example (trimmed) response — `items[]` contains contexts with `bad` (+ optional `before`/`after`):
+
+```json
+{
+  "items": [
+    {
+      "id": 12345,
+      "bad": {
+        "startUptimeMs": 12345678,
+        "unitId": 3,
+        "functionCode": 4,
+        "frameType": "response",
+        "isValid": false,
+        "invalidReason": "crc_mismatch",
+        "crcReceivedHex": "0x8800",
+        "crcCalculatedHex": "0x1234",
+        "hex": "03 04 06 47 00 01 C0 88 13 88 00",
+        "invalidWhy": "CRC mismatch (received=0x8800 calculated=0x1234)"
+      },
+      "before": { "hex": "01 03 00 00 02 D4 0B", "frameType": "request" },
+      "after": { "hex": "03 04 02 12 34 B8 8A", "frameType": "response" }
+    }
+  ]
+}
+```
+
+Use this endpoint to correlate CRC failures with nearby frames (`before`/`after`) when debugging bus collisions or electrical issues.
+
 ### GET `/api/modbus/devices`
 List configured Modbus units, their type, and cached value counts.
 
@@ -361,6 +389,25 @@ Interactive web page for reading decoded register values. Provides dropdown sele
 - Unit multiplier (for converting to kW, MW, mV, etc.)
 
 Displays the decoded value from cache with metadata (validity, queuing status, original value).
+
+### GET `/view/modbus/diagnostics`
+
+HTML diagnostics page that consolidates the Modbus JSON endpoints, quick API forms, and reset/actions.
+
+- Linked from the root page and the Modbus dashboard as **Modbus Diagnostics**.
+- Useful when troubleshooting CRC failures, register cache, pattern analysis, or gap-scheduler state.
+
+Access it from a browser (authentication required when enabled):
+
+```bash
+# open in browser or curl to fetch the HTML
+curl -u admin:<password> http://<device-ip>/view/modbus/diagnostics
+```
+
+Contents (short):
+- Links to: `/api/modbus/monitor`, `/api/modbus/crc`, `/api/modbus/registers`, `/api/modbus/patterns`, `/api/modbus/mismatches`, `/api/modbus/silence`, etc.
+- Quick forms to call: `/api/modbus/device`, `/api/modbus/read`, `/api/modbus/raw/read`, `/api/modbus/write`.
+- Action buttons for: `/api/modbus/stats/reset`, `/api/modbus/patterns/reset`.
 
 ---
 

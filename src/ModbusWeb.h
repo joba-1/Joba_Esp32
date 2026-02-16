@@ -1916,6 +1916,96 @@ init();
                 return;
             });
 
+// Modbus diagnostics page (links + quick API forms moved from root)
+static const char DIAGNOSTICS_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head>
+<title>Modbus Diagnostics</title>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;margin:10px;background:#1a1a2e;color:#eee}
+.card{background:#16213e;border-radius:8px;padding:12px;margin:10px 0;box-shadow:0 2px 4px rgba(0,0,0,0.3);min-width:100%}
+/* brighter theme for diagnostics: vivid teal for links and accents */
+h1{color:#26A69A}
+a{color:#26A69A;font-weight:600}
+label{display:inline-block;margin:6px 10px 6px 0}
+input,select,button{padding:6px 8px;background:#0f3460;color:#eee;border:1px solid #2a2a4a;border-radius:4px}
+button{background:#26A69A;color:#072018;border:none;cursor:pointer;font-weight:700}
+button:hover{background:#1e8e79}
+.home-link{display:inline-block;margin-bottom:12px;color:#26A69A;font-size:0.9em}
+.home-link:before{content:'← '}
+.small{font-size:0.9em;color:#B2DFDB}
+</style></head><body>
+<a href='/' class='home-link'>Home</a>
+<h1>Modbus Diagnostics</h1>
+<div class='card'>
+  <h2>JSON endpoints</h2>
+  <p><a href='/api/modbus/status'>/api/modbus/status</a> <small class='small'>(Bus status)</small></p>
+  <p><a href='/api/modbus/devices'>/api/modbus/devices</a> <small class='small'>(Device list)</small></p>
+  <p><a href='/api/modbus/maps'>/api/modbus/maps</a> <small class='small'>(Register maps)</small></p>
+  <p><a href='/api/modbus/types'>/api/modbus/types</a> <small class='small'>(Device types)</small></p>
+  <p><a href='/api/modbus/monitor'>/api/modbus/monitor</a> <small class='small'>(Frame monitor)</small></p>
+  <p><a href='/api/modbus/crc'>/api/modbus/crc</a> <small class='small'>(CRC contexts)</small></p>
+  <p><a href='/api/modbus/registers'>/api/modbus/registers</a> <small class='small'>(Register cache)</small></p>
+  <p><a href='/api/modbus/patterns'>/api/modbus/patterns</a> <small class='small'>(Pattern analysis)</small></p>
+  <p><a href='/api/modbus/mismatches'>/api/modbus/mismatches</a> <small class='small'>(Mismatches)</small></p>
+  <p><a href='/api/modbus/silence'>/api/modbus/silence</a> <small class='small'>(Get / set silence time)</small></p>
+</div>
+
+<div class='card'>
+  <h2>Quick API forms</h2>
+  <form action='/api/modbus/device' method='get'>
+    <strong>/api/modbus/device</strong>
+    <label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>
+    <label><input name='meta' type='checkbox' value='1'> meta</label>
+    <button type='submit'>GET</button>
+  </form>
+
+  <form action='/api/modbus/read' method='get'>
+    <strong>/api/modbus/read</strong>
+    <label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>
+    <label>register <input name='register' type='text' placeholder='e.g. grid_voltage' size='20'></label>
+    <button type='submit'>GET</button>
+  </form>
+
+  <form action='/api/modbus/raw/read' method='get'>
+    <strong>/api/modbus/raw/read</strong>
+    <label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>
+    <label>address <input name='address' type='number' value='0' min='0' max='65535'></label>
+    <label>count <input name='count' type='number' value='2' min='1' max='125'></label>
+    <label>fc <select name='fc'><option value='3'>3</option><option value='4'>4</option></select></label>
+    <button type='submit'>GET</button>
+  </form>
+
+  <form action='/api/modbus/write' method='post'>
+    <strong>/api/modbus/write</strong>
+    <label>unit <input name='unit' type='number' value='1' min='1' max='247'></label>
+    <label>register <input name='register' type='text' placeholder='e.g. inverter_enable' size='20'></label>
+    <label>value <input name='value' type='number' value='0' step='0.01'></label>
+    <button type='submit'>POST</button>
+  </form>
+</div>
+
+<div class='card'>
+  <h2>Actions</h2>
+  <form action='/api/modbus/stats/reset' method='post' onsubmit="return confirm('Reset Modbus stats?')">
+    <strong>/api/modbus/stats/reset</strong> <small class='small'>(POST)</small>
+    <button type='submit'>Reset stats</button>
+  </form>
+  <form action='/api/modbus/patterns/reset' method='post' onsubmit="return confirm('Clear collected patterns?')">
+    <strong>/api/modbus/patterns/reset</strong> <small class='small'>(POST)</small>
+    <button type='submit'>Clear patterns</button>
+  </form>
+</div>
+
+</body></html>)rawliteral";
+
+        webServer->on("/view/modbus/diagnostics", HTTP_GET,
+            [&server](AsyncWebServerRequest* request) {
+                if (!server.authenticate(request)) return request->requestAuthentication();
+                request->send(200, "text/html", DIAGNOSTICS_PAGE);
+                return;
+            });
+
 
 
 static const char DASHBOARD_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head>
@@ -1973,7 +2063,8 @@ fetchData();setInterval(fetchData,5000);
 <a href='/view/modbus/patterns' style='color:#26A69A'>Pattern Analysis</a> | 
 <a href='/view/modbus/scheduler' style='color:#FFA726'>Gap Scheduler</a> | 
 <a href='/view/modbus/raw' style='color:#FF9800'>Raw Tools</a> | 
-<a href='/view/modbus/decoded' style='color:#AB47BC'>Decoded Viewer</a>
+<a href='/view/modbus/decoded' style='color:#AB47BC'>Decoded Viewer</a> | 
+<a href='/view/modbus/diagnostics' style='color:#546E7A'>Diagnostics</a>
 </div>
 </body></html>)rawliteral";
 
