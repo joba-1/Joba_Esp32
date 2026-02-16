@@ -1774,13 +1774,7 @@ small{color:#888}
 <div><label>Register<br><select id='register' style='width:100%'>
 <option value=''>-- Select Register --</option>
 </select></label></div>
-<div><label>Unit Multiplier<br><select id='unitMult' style='width:100%'>
-<option value='1' selected>1 (original unit)</option>
-<option value='0.001'>0.001 (k-unit, e.g. kW, kWh)</option>
-<option value='1000'>1000 (m-unit, e.g. mV, mA)</option>
-<option value='0.000001'>0.000001 (M-unit, e.g. MW)</option>
-</select></label></div>
-<div style='margin-top:10px'>
+<div style='margin-top:10px' >
 <label><input type='checkbox' id='autoRefresh' checked onchange='toggleAutoRefresh()'> Auto-refresh (5s)</label>
 </div>
 <button onclick='readValue()'>Read Value</button>
@@ -1840,24 +1834,16 @@ function updateRegisters(){
 async function readValue(){
   const unitId = qs('device').value;
   const regName = qs('register').value;
-  const multStr = qs('unitMult').value;
   if(!unitId || !regName){
     alert('Please select device and register');
     return;
   }
-  const mult = parseFloat(multStr) || 1.0;
   try{
     const r = await fetch(`/api/modbus/read?unit=${encodeURIComponent(unitId)}&register=${encodeURIComponent(regName)}`);
     const j = await r.json();
     const reg = currentRegisters.find(x=>x.name===regName);
     let unitStr = reg ? reg.unit : '';
-    if(mult !== 1.0){
-      if(mult === 0.001) unitStr = 'k'+unitStr;
-      else if(mult === 1000) unitStr = 'm'+unitStr;
-      else if(mult === 0.000001) unitStr = 'M'+unitStr;
-      else unitStr = unitStr + ' × ' + mult;
-    }
-    const displayVal = j.value * mult;
+    const displayVal = j.value;
     let html = '<div class="result-box">';
     html += '<h3>'+regName+'</h3>';
     html += '<div class="value">'+displayVal.toFixed(4)+' '+unitStr+'</div>';
