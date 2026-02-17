@@ -7,6 +7,9 @@
  */
 
 #include <unity.h>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 #include "TimeUtils_test.h"
 
 void setUp(void) {}
