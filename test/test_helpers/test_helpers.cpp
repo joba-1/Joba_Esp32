@@ -11,6 +11,10 @@
 #include <Arduino.h>
 #endif
 
+/**
+ * @brief Trivial pass smoke test.
+ * @goal Verify the test harness runs at least one passing test on the host.
+ */
 void test_trivial_pass(void) {
     TEST_ASSERT_TRUE(true);
 }

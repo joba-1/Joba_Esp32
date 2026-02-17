@@ -31,6 +31,10 @@ static std::vector<uint8_t> make_frame(const std::vector<uint8_t>& payload_witho
     return frame;
 }
 
+/**
+ * @brief Short buffer handling for determineFrameLength.
+ * @goal Verify that too-short buffers are rejected to avoid false positives.
+ */
 void test_determine_frame_length_short() {
     // Arrange
     bool isReq=false; size_t len=0;
@@ -39,6 +43,10 @@ void test_determine_frame_length_short() {
     TEST_ASSERT_FALSE(determineFrameLength(buf, 3, isReq, len));
 }
 
+/**
+ * @brief Exception response frame length detection.
+ * @goal Ensure exception responses are detected and their expected length is returned.
+ */
 void test_determine_frame_length_exception_response() {
     // Exception response for FC3: [unit, FC3|0x80, exCode, CRC]
     std::vector<uint8_t> raw = {0x11, (uint8_t)(ModbusFC::READ_HOLDING_REGISTERS | 0x80), 0x02};
@@ -52,6 +60,11 @@ void test_determine_frame_length_exception_response() {
     TEST_ASSERT_EQUAL(5u, len);
 }
 
+/**
+ * @brief Request and response frame length detection.
+ * @goal Validate the heuristics that distinguish requests from responses and
+ *       compute their full frame lengths including CRC.
+ */
 void test_determine_frame_length_request_and_response() {
     // Request: unit, FC3, start(2), qty(2), CRC => length 8
     std::vector<uint8_t> req = {0x01, ModbusFC::READ_HOLDING_REGISTERS, 0x00, 0x10, 0x00, 0x02};
@@ -76,6 +89,10 @@ void test_determine_frame_length_request_and_response() {
     TEST_ASSERT_EQUAL(9u, len);
 }
 
+/**
+ * @brief Parse frames with valid CRC, invalid CRC and exceptions.
+ * @goal Ensure parser marks frames as valid/invalid and captures exception codes.
+ */
 void test_parse_modbus_frame_crc_invalid_and_exception_and_valid() {
     // Valid response frame
     std::vector<uint8_t> resp = {0x02, ModbusFC::READ_INPUT_REGISTERS, 0x02, 0x01, 0x02};
@@ -109,6 +126,16 @@ void test_parse_modbus_frame_crc_invalid_and_exception_and_valid() {
     TEST_ASSERT_EQUAL(0x05, frame3.exceptionCode);
 }
 
+/**
+ * @brief Update register map from request/response pairs.
+ * @goal Verify that register values and coil states are recorded correctly
+ *       in the register map with appropriate timestamps.
+ */
+/**
+ * @brief Update register map with holding registers and coils test.
+ * @goal Validate that `updateModbusRegisterMap` correctly records holding
+ *       register values and coil bit states from responses.
+ */
 void test_update_modbus_register_map_holding_and_coils() {
     ModbusRegisterMap regMap{};
     regMap.unitId = 1;

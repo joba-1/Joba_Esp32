@@ -19,6 +19,11 @@
 void setUp(void) {}
 void tearDown(void) {}
 
+/**
+ * @brief CRC residual test when CRC bytes are appended to data.
+ * @goal Ensure the CRC implementation returns a zero residual when the
+ *       correct CRC is appended to the data stream.
+ */
 static void test_crc_with_appended_bytes_should_verify_zero_residual(void) {
     // Arrange
     uint8_t data[] = {0x01, 0x03, 0x02, 0x00, 0x0A};
@@ -35,6 +40,10 @@ static void test_crc_with_appended_bytes_should_verify_zero_residual(void) {
     TEST_ASSERT_EQUAL_HEX16(0x0000, residual);
 }
 
+/**
+ * @brief Hex formatting correctness.
+ * @goal Verify that `format_hex` emits uppercase hex pairs separated by spaces.
+ */
 static void test_format_hex_basic(void) {
     // Arrange
     uint8_t data[] = {0x01, 0x02, 0xAB};

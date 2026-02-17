@@ -23,6 +23,10 @@ static std::vector<uint8_t> with_crc(const std::vector<uint8_t>& v) {
     return out;
 }
 
+/**
+ * @brief Parse valid response and detect invalid CRC.
+ * @goal Ensure the parser accepts valid frames and flags frames with corrupted CRC.
+ */
 void test_parse_valid_response_and_invalid_crc(void) {
     // Arrange: valid response for 2 registers
     std::vector<uint8_t> resp = {0x01, 0x03, 0x04, 0x00, 0x11, 0x00, 0x22};
@@ -44,6 +48,10 @@ void test_parse_valid_response_and_invalid_crc(void) {
     TEST_ASSERT_FALSE(frame2.isValid);
 }
 
+/**
+ * @brief Parse an exception frame.
+ * @goal Verify exception frames are classified and the exception code extracted.
+ */
 void test_parse_exception_frame(void) {
     // Arrange: exception frame (unit, fc|0x80, exCode)
     std::vector<uint8_t> exc = {0x11, (uint8_t)(0x03 | 0x80), 0x05};

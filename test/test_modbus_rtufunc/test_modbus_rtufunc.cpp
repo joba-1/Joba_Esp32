@@ -17,6 +17,11 @@
 #include "../../src/modbus_helpers.cpp"
 #include "../../lib/helpers/src/ModbusRTUFeature_helper.cpp"
 
+/**
+ * @brief Parse a simple Modbus read request.
+ * @goal Confirm the frame parser recognises a minimal read request and
+ *       reports validity/state correctly (including CRC handling).
+ */
 void test_parse_simple_read_request(void) {
     // Build a minimal read holding registers request: unit(1), fc(3), start(0), qty(2), crc(2)
     // Arrange
@@ -30,6 +35,11 @@ void test_parse_simple_read_request(void) {
     TEST_ASSERT_FALSE(out.isValid);
 }
 
+/**
+ * @brief Determine expected frame length for a response.
+ * @goal Ensure `determineFrameLength` returns the correct response length
+ *       and identifies the buffer as a response rather than a request.
+ */
 void test_determine_frame_length_response(void) {
     // Response: unit(1), fc(3), bytecount(4), data(4), crc(2) => total 1+1+1+4+2=9
     // Arrange

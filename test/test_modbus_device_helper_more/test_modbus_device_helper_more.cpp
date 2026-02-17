@@ -17,6 +17,11 @@
 
 using namespace ModbusDeviceHelper;
 
+/**
+ * @brief UINT32 BE/LE interpretation tests.
+ * @goal Verify that 32-bit unsigned integers are reconstructed correctly
+ *       for both endian conventions.
+ */
 void test_uint32_be_and_le() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
@@ -39,6 +44,11 @@ void test_uint32_be_and_le() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 131073.0f, out_le);
 }
 
+/**
+ * @brief INT32 signed behaviour.
+ * @goal Ensure signed 32-bit values are interpreted as negative when the
+ *       high bit is set, for both endiannesses.
+ */
 void test_int32_signed_behaviour() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
@@ -59,6 +69,11 @@ void test_int32_signed_behaviour() {
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, -1.0f, v2);
 }
 
+/**
+ * @brief FLOAT32 little-endian reconstruction and scaling.
+ * @goal Confirm float32 values reconstruct correctly and conversionFactor/
+ *       offset are applied as expected.
+ */
 void test_float32_le_and_conversion() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
@@ -88,6 +103,11 @@ void test_float32_le_and_conversion() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6, 11.0f, scaled);
 }
 
+/**
+ * @brief Default and boolean fallback semantics.
+ * @goal Validate default handling (fallback to uint16 behavior) and boolean
+ *       truthiness mapping for non-zero values.
+ */
 void test_default_and_bool() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;

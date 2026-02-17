@@ -19,6 +19,11 @@
 // Include the portable implementation directly into the test binary for native builds
 #include "../../lib/helpers/src/ModbusDevice_helper_portable.cpp"
 
+/**
+ * @brief Data type parsing behaviour.
+ * @goal Ensure textual type names are parsed to the correct `ModbusDataType`
+ *       values so users' device JSON types are interpreted correctly.
+ */
 void test_parse_types(void) {
     using namespace ModbusDeviceHelper;
     // Arrange: none (stateless parser)
@@ -28,6 +33,11 @@ void test_parse_types(void) {
     TEST_ASSERT_TRUE(parseModbusDataType("float32_le") == ModbusDataType::FLOAT32_LE);
 }
 
+/**
+ * @brief UINT16 / INT16 conversion correctness.
+ * @goal Verify raw 16-bit words are converted to signed/unsigned float values
+ *       according to the specified `dataType`.
+ */
 void test_convert_uint16_and_int16(void) {
     ModbusRegisterDef def = {};
     def.dataType = ModbusDataType::UINT16;
@@ -47,6 +57,11 @@ void test_convert_uint16_and_int16(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-6, (float)(int16_t)0xFF00, v2);
 }
 
+/**
+ * @brief FLOAT32 big-endian conversion.
+ * @goal Confirm 32-bit big-endian floats are reconstructed accurately from
+ *       two Modbus words within numeric tolerance.
+ */
 void test_convert_float32_be(void) {
     ModbusRegisterDef def = {};
     def.dataType = ModbusDataType::FLOAT32_BE;

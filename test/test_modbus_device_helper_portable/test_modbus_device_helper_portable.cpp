@@ -15,6 +15,11 @@
 
 using namespace ModbusDeviceHelper;
 
+/**
+ * @brief ParseModbusDataType mapping tests.
+ * @goal Validate the case-insensitive parsing of type names into the enum
+ *       so configuration files are robustly interpreted.
+ */
 void test_parse_types() {
     TEST_ASSERT_EQUAL(ModbusDataType::INT16, parseModbusDataType("int16"));
     TEST_ASSERT_EQUAL(ModbusDataType::UINT32_BE, parseModbusDataType("uint32_be"));
@@ -31,6 +36,10 @@ void test_parse_types() {
         // Act & Assert:
 }
 
+/**
+ * @brief Convert UINT16/INT16 raw words to float values.
+ * @goal Ensure basic 16-bit conversions return expected numeric results.
+ */
 void test_convert_raw_to_value_uint16_and_int16() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
@@ -44,6 +53,10 @@ void test_convert_raw_to_value_uint16_and_int16() {
         TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, convertModbusRawToValue(def, raw2)); // AAA end
 }
 
+/**
+ * @brief 32-bit integer conversions for BE/LE.
+ * @goal Verify both big- and little-endian 32-bit integer interpretations.
+ */
 void test_convert_raw_to_value_uint32_and_int32_be_le() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
@@ -64,6 +77,10 @@ void test_convert_raw_to_value_uint32_and_int32_be_le() {
     (void)v; // just ensure it runs; exact value platform-dependent sign behaviour checked indirectly
 }
 
+/**
+ * @brief Float32 BE/LE and boolean conversions.
+ * @goal Confirm IEEE-754 float reconstructions and boolean semantics are correct.
+ */
 void test_convert_raw_to_value_float32_be_le_and_bool() {
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
@@ -87,6 +104,11 @@ void test_convert_raw_to_value_float32_be_le_and_bool() {
     TEST_ASSERT_EQUAL_FLOAT(1.0f, convertModbusRawToValue(def, raw_bool1));
 }
 
+/**
+ * @brief Value-to-raw conversion with padding and endian checks.
+ * @goal Ensure values are encoded with correct byte order and padded to
+ *       requested register lengths.
+ */
 void test_convert_value_to_raw_padding_and_endian_float_bool() {
     ModbusRegisterDef def{};
     def.offset = 0.0f;

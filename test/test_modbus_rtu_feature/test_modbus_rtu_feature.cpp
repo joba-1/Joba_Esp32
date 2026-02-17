@@ -29,7 +29,11 @@ static uint16_t reference_crc(const uint8_t* data, size_t length) {
 void setUp(void) {}
 void tearDown(void) {}
 
-// Test: calculate CRC for normal and exception frames
+/**
+ * @brief Calculate CRC for normal and exception frames.
+ * @goal Validate CRC calculation matches the reference algorithm for both
+ *       regular and exception frames so frame integrity checks are reliable.
+ */
 void test_calculate_frame_crc(void) {
     // Arrange: normal frame
     ModbusFrame f = {};
@@ -62,7 +66,11 @@ void test_calculate_frame_crc(void) {
     TEST_ASSERT_EQUAL_UINT16(refEx, refEx);
 }
 
-// Test formatHex
+/**
+ * @brief Hex formatting helper test.
+ * @goal Ensure byte arrays are formatted as uppercase hex pairs separated
+ *       by spaces for diagnostic output.
+ */
 void test_format_hex(void) {
     // Arrange
     const uint8_t data[] = {0xAA, 0xBB, 0x01};
@@ -80,7 +88,11 @@ void test_format_hex(void) {
     TEST_ASSERT_EQUAL_STRING("AA BB 01", result.c_str());
 }
 
-// Test formatFrameHex
+/**
+ * @brief Frame-level hex formatting test.
+ * @goal Confirm a Modbus frame (including CRC) is rendered as a single
+ *       space-separated hex string for visibility and debugging.
+ */
 void test_format_frame_hex(void) {
     // Arrange
     ModbusFrame f = {};
@@ -139,7 +151,10 @@ static bool sendRawFrameHelper(ISerial& s, const uint8_t* data, size_t length) {
     return true;
 }
 
-// Test successful send when no RX pending
+/**
+ * @brief sendRawFrame success path.
+ * @goal Verify the helper sends payload + CRC when no RX bytes are pending.
+ */
 void test_send_raw_frame_success(void) {
     // Arrange
     FakeSerial s;
@@ -156,7 +171,11 @@ void test_send_raw_frame_success(void) {
     TEST_ASSERT_EQUAL_UINT8((uint8_t)((crc >> 8) & 0xFF), s.tx[sizeof(payload) + 1]);
 }
 
-// Test abort when RX pending
+/**
+ * @brief sendRawFrame abort behavior when RX pending.
+ * @goal Ensure the helper aborts sending if RX buffer contains pending bytes
+ *       to avoid colliding with inbound data.
+ */
 void test_send_raw_frame_abort_on_rx_pending(void) {
     // Arrange
     FakeSerial s;

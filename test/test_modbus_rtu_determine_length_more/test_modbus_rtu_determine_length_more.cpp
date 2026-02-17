@@ -14,7 +14,11 @@
 #include "../../src/modbus_helpers.cpp"
 #include "../../lib/helpers/src/ModbusRTUFeature_helper.cpp"
 
-void test_short_buffer_returns_false() {
+/**
+ * @brief Too-short buffer handling.
+ * @goal Ensure frame-length detection rejects undersized buffers.
+ */
+void test_short_buffer_returns_false(void) {
     // Arrange
     uint8_t buf[3] = {0x01, 0x03, 0x00};
     bool isReq = false; size_t len = 0;
@@ -22,7 +26,11 @@ void test_short_buffer_returns_false() {
     TEST_ASSERT_FALSE(ModbusRTUHelper::determineFrameLength(buf, 3, isReq, len));
 }
 
-void test_exception_response_length() {
+/**
+ * @brief Exception response length detection.
+ * @goal Validate that exception responses report the correct total length.
+ */
+void test_exception_response_length(void) {
     // Arrange: exception response (unit, fc|0x80, exCode, CRC appended)
     std::vector<uint8_t> raw = {0x11, (uint8_t)(0x03 | 0x80), 0x05};
     uint16_t crc = modbus_crc16(raw.data(), raw.size());
@@ -37,7 +45,12 @@ void test_exception_response_length() {
     TEST_ASSERT_EQUAL_UINT(5, len);
 }
 
-void test_read_request_and_response_lengths() {
+/**
+ * @brief Read request and response length detection.
+ * @goal Confirm determineFrameLength reports lengths for both request and
+ *       corresponding response forms.
+ */
+void test_read_request_and_response_lengths(void) {
     // Arrange: request for 2 registers (unit, fc, startHi, startLo, qtyHi, qtyLo, crcLo, crcHi)
     uint8_t req[] = {0x01, 0x03, 0x00, 0x10, 0x00, 0x02, 0x00, 0x00};
     bool isReq = false; size_t len = 0;

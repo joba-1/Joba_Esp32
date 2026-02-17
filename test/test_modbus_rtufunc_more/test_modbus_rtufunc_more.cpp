@@ -15,6 +15,11 @@
 #include "../../src/modbus_helpers.cpp"
 #include "../../lib/helpers/src/ModbusRTUFeature_helper.cpp"
 
+/**
+ * @brief Accessor helpers on ModbusFrame.
+ * @goal Verify getters for start register, quantity, and byte count behave
+ *       correctly for different `dataLen` settings.
+ */
 void test_modbusframe_getters(void) {
     ModbusFrame f;
     f.dataLen = 0;
@@ -36,6 +41,11 @@ void test_modbusframe_getters(void) {
     TEST_ASSERT_EQUAL_UINT16(0x0003, f.getQuantity());
 }
 
+/**
+ * @brief Determine frame length for a request.
+ * @goal Confirm that request frames are identified and their total length
+ *       including CRC is returned.
+ */
 void test_determine_frame_length_request(void) {
     // request: unit(1), fc(3), start(0), qty(2) -> 6 bytes without CRC
     uint8_t msg[8] = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00 };
@@ -51,6 +61,11 @@ void test_determine_frame_length_request(void) {
     TEST_ASSERT_EQUAL_UINT(8, frameLen);
 }
 
+/**
+ * @brief Update register map from read holding request/response.
+ * @goal Ensure register map reflects updated register values and metadata
+ *       after processing a request/response pair.
+ */
 void test_update_register_map_holding(void) {
     // build request (start=0, qty=2)
     uint8_t req[8] = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00 };

@@ -19,6 +19,10 @@
 
 using namespace ModbusDeviceHelper;
 
+/**
+ * @brief UINT16 conversion to raw register words.
+ * @goal Ensure a large value fits into a single UINT16 register when encoded.
+ */
 void test_uint16_conversion() {
     ModbusRegisterDef def{};
     def.dataType = ModbusDataType::UINT16;
@@ -31,6 +35,11 @@ void test_uint16_conversion() {
     TEST_ASSERT_EQUAL_UINT16(40000u, r[0]);
 }
 
+/**
+ * @brief UINT32 endian encoding tests.
+ * @goal Verify that 32-bit integers are split into two 16-bit registers in
+ *       the correct endian order for BE and LE modes.
+ */
 void test_uint32_endian()
 {
     ModbusRegisterDef def{};
@@ -51,6 +60,11 @@ void test_uint32_endian()
     TEST_ASSERT_EQUAL_UINT16(0x0102u, rle[1]);
 }
 
+/**
+ * @brief FLOAT32 roundtrip and endian tests.
+ * @goal Confirm float32 values round-trip through conversion and respect
+ *       endian ordering for both BE and LE.
+ */
 void test_float32_endian_and_roundtrip()
 {
     ModbusRegisterDef def{};
@@ -72,6 +86,11 @@ void test_float32_endian_and_roundtrip()
     TEST_ASSERT_FLOAT_WITHIN(1e-6, fv, out);
 }
 
+/**
+ * @brief Boolean encoding and padding behavior.
+ * @goal Ensure booleans map to 0/1 and values are padded to the requested
+ *       register count with zeros.
+ */
 void test_bool_and_padding()
 {
     ModbusRegisterDef def{};
