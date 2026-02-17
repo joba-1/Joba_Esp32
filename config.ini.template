@@ -5,8 +5,9 @@
 [user_config]
 ; Device identity
 ; Override these to customize your device
-device_instance = 0                     ; 0 = use MAC-based ID, >0 = manual instance number
+device_instance = 1                     ; 0 = use MAC-based ID, >0 = manual instance number
 default_password = ""                   ; Empty = auto-generate as firmware_name-MAC
+ota_hostname = "joba-esp32-1"           ; Hostname for OTA updates (must match DeviceInfo::getHostname()) 
 
 ; Logging configuration
 ; Log levels: 0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=VERBOSE

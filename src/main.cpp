@@ -24,33 +24,10 @@
 #include "CpuMonitor.h"
 #include "main_helper.h"
 #include <ArduinoJson.h>
-#include <esp_ota_ops.h>
 
 // ============================================
 // Example Data Collection Definition
 // ============================================
-
-static void markOtaAppValidIfPendingVerify() {
-    /**
-     * @brief If the running partition is in PENDING_VERIFY state, mark the
-     *        application as valid to prevent OTA rollback.
-     *
-     * This is called early in `setup()` so that freshly-updated images are
-     * preserved when the firmware's behavior is considered stable.
-     */
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    if (!running) return;
-
-    esp_ota_img_states_t state;
-    if (esp_ota_get_state_partition(running, &state) != ESP_OK) return;
-
-    if (state == ESP_OTA_IMG_PENDING_VERIFY) {
-        // If OTA rollback is enabled, newly-booted images may start in a
-        // "pending verify" state and will be rolled back unless marked valid.
-        // Mark as valid immediately; this firmware is expected to be stable.
-        esp_ota_mark_app_valid_cancel_rollback();
-    }
-}
 
 // Define your data structure
 struct SensorData {
@@ -58,7 +35,7 @@ struct SensorData {
     char location[16];      // InfluxDB tag
     float temperature;      // InfluxDB field
     float humidity;         // InfluxDB field
-    int32_t rssi;          // WiFi signal strength
+    int32_t rssi;           // WiFi signal strength
 };
 
 // Define the schema for serialization
@@ -234,10 +211,6 @@ void setup() {
     ResetDiagnostics::init();
     ResetDiagnostics::setBreadcrumb("setup", "start");
 
-    // Ensure OTA updates stick even when rollback is enabled.
-    // Must run early, before any long initialization.
-    markOtaAppValidIfPendingVerify();
-
     // Initialize WiFi in station mode (needed for MAC address)
     WiFi.mode(WIFI_STA);
     
@@ -276,6 +249,7 @@ void setup() {
         const String modbusRawWriteTopic = mqttBaseTopic + "/modbus/cmd/raw/write";
         const String modbusWriteTopic = mqttBaseTopic + "/modbus/cmd/write";
         const String modbusReadTopic = mqttBaseTopic + "/modbus/cmd/read";
+        
         const String t(topic);
         // Only handle topics under our base topic
         if (!t.startsWith(mqttBaseTopic)) return;
