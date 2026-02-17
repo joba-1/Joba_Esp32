@@ -21,20 +21,29 @@
  *       correctly for different `dataLen` settings.
  */
 void test_modbusframe_getters(void) {
+    // Arrange:
+    // - Start with an empty ModbusFrame (`dataLen=0`) to verify getters
+    //   return safe default values when no data is available.
+    // - Populate `data` progressively to confirm getters read bytes
+    //   from the expected offsets as `dataLen` increases.
+    // Rationale: using small, explicit length changes keeps the test focused
+    // on accessor correctness and avoids coupling to parsing logic.
     ModbusFrame f;
     f.dataLen = 0;
+    
+    // Act / Assert: no data available, expect defaults
     TEST_ASSERT_EQUAL_UINT16(0, f.getStartRegister());
     TEST_ASSERT_EQUAL_UINT16(0, f.getQuantity());
     TEST_ASSERT_EQUAL_UINT32(0, f.getByteCount());
     TEST_ASSERT_NULL(f.getRegisterData());
 
-    // set minimal data for start register
+    // Act / Assert: set minimal data for start register
     f.dataLen = 2;
     f.data[0] = 0x01;
     f.data[1] = 0x02;
     TEST_ASSERT_EQUAL_UINT16(0x0102, f.getStartRegister());
 
-    // set data for quantity
+    // Act / Assert: set data for quantity
     f.dataLen = 4;
     f.data[2] = 0x00;
     f.data[3] = 0x03;
@@ -47,15 +56,20 @@ void test_modbusframe_getters(void) {
  *       including CRC is returned.
  */
 void test_determine_frame_length_request(void) {
-    // request: unit(1), fc(3), start(0), qty(2) -> 6 bytes without CRC
+    // Arrange:
+    // - Build a canonical read request (unit=1, fc=3, start=0, qty=2)
+    //   and append CRC so the helper sees a realistic frame.
     uint8_t msg[8] = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00 };
     uint16_t crc = modbus_crc16(msg, 6);
     msg[6] = crc & 0xFF;
     msg[7] = (crc >> 8) & 0xFF;
 
+    // Act
     bool isReq = false;
     size_t frameLen = 0;
     bool ok = ModbusRTUHelper::determineFrameLength(msg, sizeof(msg), isReq, frameLen);
+
+    // Assert
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_TRUE(isReq);
     TEST_ASSERT_EQUAL_UINT(8, frameLen);
@@ -67,12 +81,13 @@ void test_determine_frame_length_request(void) {
  *       after processing a request/response pair.
  */
 void test_update_register_map_holding(void) {
-    // build request (start=0, qty=2)
+    // Arrange:
+    // - Build a request targeting start=0 qty=2 and a matching response
+    //   containing two 16-bit register values (0x000A, 0x0014).
     uint8_t req[8] = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00 };
     uint16_t crc1 = modbus_crc16(req, 6);
     req[6] = crc1 & 0xFF; req[7] = (crc1 >> 8) & 0xFF;
 
-    // build response: unit, fc, bytecount=4, data (0x000A,0x0014)
     uint8_t resp[9] = { 0x01, 0x03, 0x04, 0x00, 0x0A, 0x00, 0x14, 0x00, 0x00 };
     uint16_t crc2 = modbus_crc16(resp, 7);
     resp[7] = crc2 & 0xFF; resp[8] = (crc2 >> 8) & 0xFF;
@@ -80,6 +95,7 @@ void test_update_register_map_holding(void) {
     ModbusFrame request;
     ModbusFrame response;
 
+    // Act: parse frames and update map
     ModbusRTUHelper::parseModbusFrame(req, sizeof(req), request, 0, 0);
     ModbusRTUHelper::parseModbusFrame(resp, sizeof(resp), response, 0, 0);
 
@@ -91,7 +107,7 @@ void test_update_register_map_holding(void) {
 
     ModbusRTUHelper::updateModbusRegisterMap(map, request, response, 12345);
 
-    // expect two registers updated
+    // Assert: expect two registers updated and metadata set
     TEST_ASSERT_EQUAL_UINT16(10, map.registers[0]);
     TEST_ASSERT_EQUAL_UINT16(20, map.registers[1]);
     TEST_ASSERT_EQUAL_UINT32(1, map.responseCount);

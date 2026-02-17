@@ -11,23 +11,48 @@
 
 void setUp(void) {}
 void tearDown(void) {}
-
+/**
+ * @brief Validate upper/lower bounds for Unix time validity.
+ * @goal Ensure `isUnixTimeValid` accepts timestamps within the valid
+ *       application window and rejects those outside it.
+ */
 static void test_isUnixTimeValid_bounds(void) {
+    // Arrange: choose a value just inside and just outside the valid boundary
+    // Act / Assert
     TEST_ASSERT_TRUE(TimeUtils::isUnixTimeValid((time_t)1600000001));
     TEST_ASSERT_FALSE(TimeUtils::isUnixTimeValid((time_t)1599999999));
 }
 
+/**
+ * @brief Heuristic detection of Unix-second timestamps.
+ * @goal Verify `looksLikeUnixSeconds` returns true for second-precision
+ *       timestamps (large values) and false for small millisecond-like values.
+ */
 static void test_looksLikeUnixSeconds(void) {
+    // Arrange: choose a typical recent unix-second and a clearly-non-second value
+    // Act / Assert
     TEST_ASSERT_TRUE(TimeUtils::looksLikeUnixSeconds(1600000000UL));
     TEST_ASSERT_FALSE(TimeUtils::looksLikeUnixSeconds(1000UL));
 }
 
+/**
+ * @brief ISO UTC formatting from Unix seconds.
+ * @goal Confirm `isoUtcFromUnixSeconds` returns correctly formatted
+ *       ISO timestamps for valid inputs and an empty string for invalid ones.
+ */
 static void test_isoUtcFromUnixSeconds_format(void) {
+    // Arrange: valid and invalid timestamps
+    // Act: format valid timestamp
     // 2023-01-01T00:00:00Z == 1672531200
     std::string s = TimeUtils::isoUtcFromUnixSeconds(1672531200U);
+
+    // Assert: expect exact ISO string
     TEST_ASSERT_EQUAL_STRING("2023-01-01T00:00:00Z", s.c_str());
-    // invalid timestamp returns empty
+    
+    // Act: format invalid timestamp
     std::string empty = TimeUtils::isoUtcFromUnixSeconds(1000U);
+    
+    // Assert: invalid timestamp returns empty
     TEST_ASSERT_EQUAL_STRING("", empty.c_str());
 }
 

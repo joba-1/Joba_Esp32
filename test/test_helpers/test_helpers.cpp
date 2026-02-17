@@ -16,6 +16,14 @@
  * @goal Verify the test harness runs at least one passing test on the host.
  */
 void test_trivial_pass(void) {
+    // Arrange:
+    // - No setup required; this is a harness smoke test.
+    // Rationale: keeping the test minimal ensures the harness itself is
+    // functional without depending on other project components.
+    // Act:
+    // - Assert a true condition.
+    // Assert:
+    // - Expect the assertion to pass.
     TEST_ASSERT_TRUE(true);
 }
 

@@ -24,8 +24,17 @@ static std::vector<uint8_t> with_crc(const std::vector<uint8_t>& v) {
     return out;
 }
 
+/**
+ * @brief Update holding registers in the register map.
+ * @goal Verify that parsed frames update the `ModbusRegisterMap` registers
+ *       and metadata correctly so consumers see the expected device state.
+ */
 void test_update_holding_registers(void) {
-    // Arrange: request for 2 holding registers at 0x0010
+    // Arrange: parse request and response for 2 holding registers at 0x0010
+    // Rationale: choose a small, non-zero start address (0x0010) and two
+    // registers so the map indexes are simple and easy to verify. The
+    // response values 0x0011/0x0022 are small, human-friendly constants
+    // that avoid edge cases (like 0 or 0xFFFF) and make assertions clear.
     std::vector<uint8_t> req = {0x01, ModbusFC::READ_HOLDING_REGISTERS, 0x00, 0x10, 0x00, 0x02};
     auto req_full = with_crc(req);
     std::vector<uint8_t> resp = {0x01, ModbusFC::READ_HOLDING_REGISTERS, 0x04, 0x00, 0x11, 0x00, 0x22};
@@ -33,10 +42,12 @@ void test_update_holding_registers(void) {
 
     ModbusFrame reqFrame;
     ModbusFrame respFrame;
+
     // Act: parse frames
     TEST_ASSERT_TRUE(ModbusRTUHelper::parseModbusFrame(req_full.data(), req_full.size(), reqFrame, 0, 0));
     TEST_ASSERT_TRUE(ModbusRTUHelper::parseModbusFrame(resp_full.data(), resp_full.size(), respFrame, 0, 0));
 
+    // Arrange: cleared map prepared for above unit and fc
     ModbusRegisterMap regMap{};
     regMap.unitId = reqFrame.unitId;
     regMap.functionCode = reqFrame.functionCode;
@@ -51,8 +62,17 @@ void test_update_holding_registers(void) {
     TEST_ASSERT_EQUAL_HEX16(0x0022, regMap.registers[0x0011]);
 }
 
+/**
+ * @brief Update coils in the register map.
+ * @goal Ensure packed coil responses update individual coil states in the map
+ *       and metadata such as `responseCount` and `lastUpdate` are set.
+ */
 void test_update_coils(void) {
     // Arrange: request read coils starting at 0x0020 qty 8
+    // Rationale: use an 8-coil request with a single-byte response (0x01)
+    // to exercise bit-unpacking (LSB-first) into individual coil entries.
+    // The start address 0x0020 is chosen away from other test ranges to
+    // avoid accidental index collisions in the shared register map.
     std::vector<uint8_t> req = {0x01, ModbusFC::READ_COILS, 0x00, 0x20, 0x00, 0x08};
     auto req_full = with_crc(req);
     // Response: bytecount=1, data=0x01 -> first coil true, others false
@@ -61,10 +81,12 @@ void test_update_coils(void) {
 
     ModbusFrame reqFrame;
     ModbusFrame respFrame;
-    // Act: parse frames
+
+    // Act & Assert: parse frames
     TEST_ASSERT_TRUE(ModbusRTUHelper::parseModbusFrame(req_full.data(), req_full.size(), reqFrame, 0, 0));
     TEST_ASSERT_TRUE(ModbusRTUHelper::parseModbusFrame(resp_full.data(), resp_full.size(), respFrame, 0, 0));
 
+    // Arrange: cleared map prepared for above unit and fc
     ModbusRegisterMap coilMap{};
     coilMap.unitId = reqFrame.unitId;
     coilMap.functionCode = reqFrame.functionCode;
