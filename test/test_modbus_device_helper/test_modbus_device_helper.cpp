@@ -27,6 +27,9 @@
 void test_parse_types(void) {
     using namespace ModbusDeviceHelper;
     // Arrange: none (stateless parser)
+    // Rationale: the parser is pure and operates only on the input string;
+    // using no setup keeps the test focused on parsing logic and avoids
+    // accidental state leakage between cases.
     // Act & Assert
     TEST_ASSERT_TRUE(parseModbusDataType("int16") == ModbusDataType::INT16);
     TEST_ASSERT_TRUE(parseModbusDataType("UINT32_BE") == ModbusDataType::UINT32_BE);
@@ -46,6 +49,8 @@ void test_convert_uint16_and_int16(void) {
     def.offset = 0.0f;
     uint16_t raw[] = { 0x1234 };
     // Arrange: def and raw above
+    // Rationale: select `0x1234` as a clear, nontrivial 16-bit pattern that
+    // is easy to recognize in assertions and not near edge values like 0.
     // Act
     float v = ModbusDeviceHelper::convertModbusRawToValue(def, raw);
     // Assert
@@ -76,6 +81,8 @@ void test_convert_float32_be(void) {
     raw[0] = (uint16_t)(bits >> 16);
     raw[1] = (uint16_t)(bits & 0xFFFF);
     // Arrange
+    // Rationale: use a well-known float `3.14159` to test 32-bit float
+    // reconstruction; packing into two 16-bit words mirrors Modbus wire format.
     // Act
     float out = ModbusDeviceHelper::convertModbusRawToValue(def, raw);
     // Assert

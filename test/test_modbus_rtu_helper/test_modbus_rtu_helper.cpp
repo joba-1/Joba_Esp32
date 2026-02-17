@@ -37,8 +37,12 @@ static std::vector<uint8_t> make_frame(const std::vector<uint8_t>& payload_witho
  */
 void test_determine_frame_length_short() {
     // Arrange
+    // Use a very short buffer (3 bytes) which is intentionally below any
+    // valid Modbus frame length; this checks that the function safely rejects
+    // undersized inputs instead of mis-parsing them.
     bool isReq=false; size_t len=0;
     uint8_t buf[3] = {1,2,3};
+
     // Act & Assert
     TEST_ASSERT_FALSE(determineFrameLength(buf, 3, isReq, len));
 }
@@ -52,10 +56,13 @@ void test_determine_frame_length_exception_response() {
     std::vector<uint8_t> raw = {0x11, (uint8_t)(ModbusFC::READ_HOLDING_REGISTERS | 0x80), 0x02};
     auto frame = make_frame(raw);
     // Arrange
+    // Construct a compact exception response (unit, fc|0x80, exceptionCode).
+    // We choose a small example to exercise the exception-path logic without
+    // adding extra payload complexity.
     bool isReq=false; size_t len=0;
-    // Act
+
+    // Act & Assert
     TEST_ASSERT_TRUE(determineFrameLength(frame.data(), frame.size(), isReq, len));
-    // Assert
     TEST_ASSERT_FALSE(isReq);
     TEST_ASSERT_EQUAL(5u, len);
 }
@@ -70,7 +77,10 @@ void test_determine_frame_length_request_and_response() {
     std::vector<uint8_t> req = {0x01, ModbusFC::READ_HOLDING_REGISTERS, 0x00, 0x10, 0x00, 0x02};
     auto reqf = make_frame(req);
     // Arrange
-    bool isReq=false; size_t len=0;
+        // Arrange
+        // Typical read request targeting start=0x0010 qty=2; this canonical
+        // request shape validates both request and response length detection.
+        bool isReq=false; size_t len=0;
     // Act
     TEST_ASSERT_TRUE(determineFrameLength(reqf.data(), reqf.size(), isReq, len));
     // Assert
@@ -81,7 +91,10 @@ void test_determine_frame_length_request_and_response() {
     std::vector<uint8_t> resp = {0x01, ModbusFC::READ_HOLDING_REGISTERS, 0x04, 0x00,0x0A, 0x00,0x14};
     auto respf = make_frame(resp);
     // Arrange
-    isReq=false; len=0;
+        // Arrange
+        // Representative response containing two registers (0x000A,0x0014).
+        // Values chosen are small, human-friendly constants to simplify assertions.
+        isReq=false; len=0;
     // Act
     TEST_ASSERT_TRUE(determineFrameLength(respf.data(), respf.size(), isReq, len));
     // Assert

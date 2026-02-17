@@ -21,6 +21,11 @@ using namespace ModbusDeviceHelper;
  *       so configuration files are robustly interpreted.
  */
 void test_parse_types() {
+    // Arrange: none
+    // Rationale: parsing is stateless; we use an explicit unknown label to
+    // validate default fallback behavior without needing extra setup.
+
+    // Act & Assert:
     TEST_ASSERT_EQUAL(ModbusDataType::INT16, parseModbusDataType("int16"));
     TEST_ASSERT_EQUAL(ModbusDataType::UINT32_BE, parseModbusDataType("uint32_be"));
     TEST_ASSERT_EQUAL(ModbusDataType::UINT32_LE, parseModbusDataType("uint32_le"));
@@ -32,8 +37,6 @@ void test_parse_types() {
     TEST_ASSERT_EQUAL(ModbusDataType::STRING, parseModbusDataType("string"));
     // unknown -> default UINT16
     TEST_ASSERT_EQUAL(ModbusDataType::UINT16, parseModbusDataType("unknown_type"));
-        // Arrange: none
-        // Act & Assert:
 }
 
 /**
@@ -41,16 +44,25 @@ void test_parse_types() {
  * @goal Ensure basic 16-bit conversions return expected numeric results.
  */
 void test_convert_raw_to_value_uint16_and_int16() {
+    // Arrange (UINT16)
     ModbusRegisterDef def{};
     def.conversionFactor = 1.0f;
     def.offset = 0.0f;
     def.dataType = ModbusDataType::UINT16;
-        uint16_t raw1[] = {12345}; // AAA start
-        TEST_ASSERT_FLOAT_WITHIN(0.001f, 12345.0f, convertModbusRawToValue(def, raw1)); // AAA end
+    // Rationale: choose 12345 as a mid-range UINT16 to avoid edge cases
+    // (0 and 65535) and make the expected value obvious in assertions.
+    uint16_t raw1[] = {12345};
 
+    // Act & Assert
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 12345.0f, convertModbusRawToValue(def, raw1));
+
+    // Arrange (INT16)
     def.dataType = ModbusDataType::INT16;
+    // Rationale: 0xFFFF encodes -1 for signed 16-bit; use it to confirm sign handling.
     uint16_t raw2[] = {0xFFFF}; // -1
-        TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, convertModbusRawToValue(def, raw2)); // AAA end
+    
+    // Act & Assert
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, convertModbusRawToValue(def, raw2)); // AAA end
 }
 
 /**

@@ -28,6 +28,8 @@ void test_uint32_be_and_le() {
     def.offset = 0.0f;
 
     // Arrange (big-endian uint32)
+    // Rationale: pick small numeric sequences (0x0001,0x0002) so the
+    // reconstructed integer values are easy to calculate and verify by hand.
     def.dataType = ModbusDataType::UINT32_BE;
     uint16_t raw_be[] = {0x0001, 0x0002}; // 0x00010002 = 65538
     // Act
@@ -36,6 +38,8 @@ void test_uint32_be_and_le() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 65538.0f, out_be);
 
     // Arrange (little-endian uint32)
+    // Rationale: reuse the same raw words to emphasize how endianess affects
+    // interpretation without introducing different numeric patterns.
     def.dataType = ModbusDataType::UINT32_LE;
     uint16_t raw_le[] = {0x0001, 0x0002}; // LE => 0x00020001 = 131073
     // Act
@@ -55,6 +59,8 @@ void test_int32_signed_behaviour() {
     def.offset = 0.0f;
 
     def.dataType = ModbusDataType::INT32_BE;
+    // Rationale: use all-ones words to represent -1 in two's complement
+    // and verify negative value handling for signed 32-bit integers.
     uint16_t raw_neg[] = {0xFFFF, 0xFFFF}; // 0xFFFFFFFF == -1 as int32
     // Arrange & Act
     float v = convertModbusRawToValue(def, raw_neg);
@@ -80,6 +86,8 @@ void test_float32_le_and_conversion() {
     def.offset = 0.0f;
 
     def.dataType = ModbusDataType::FLOAT32_LE;
+    // Rationale: choose 2.5f (small decimal) to make the reconstructed
+    // float easy to check while still exercising the IEEE-754 path.
     // 2.5f as bits
     float fv = 2.5f;
     uint32_t bits;
@@ -92,6 +100,9 @@ void test_float32_le_and_conversion() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6, fv, out);
 
     // test conversion factor and offset
+    // Rationale: choose conversionFactor=0.1 and offset=1.0 so that
+    // raw value 100 maps to a simple expected result (11.0), making
+    // the assertion straightforward.
     def.dataType = ModbusDataType::UINT16;
     def.conversionFactor = 0.1f;
     def.offset = 1.0f;

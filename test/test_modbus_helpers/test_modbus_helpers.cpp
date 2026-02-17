@@ -26,6 +26,9 @@ void tearDown(void) {}
  */
 static void test_crc_with_appended_bytes_should_verify_zero_residual(void) {
     // Arrange
+    // Use a short, typical Modbus read request fragment: unit=1, fc=3,
+    // two data bytes (0x00,0x0A). This small, deterministic payload is
+    // easy to verify and produces a known CRC for the test.
     uint8_t data[] = {0x01, 0x03, 0x02, 0x00, 0x0A};
     size_t len = sizeof(data)/sizeof(data[0]);
 
@@ -46,6 +49,9 @@ static void test_crc_with_appended_bytes_should_verify_zero_residual(void) {
  */
 static void test_format_hex_basic(void) {
     // Arrange
+    // A short byte sequence chosen to exercise formatting: includes a
+    // single-byte low values and a high byte (0xAB) to verify hex width
+    // and spacing in the output.
     uint8_t data[] = {0x01, 0x02, 0xAB};
 
     // Act
