@@ -6,8 +6,8 @@
  * @brief Serial interface abstraction used by the Modbus layer
  *
  * `ISerial` provides a minimal subset of the Arduino `HardwareSerial`
- * functionality required by the transport layer. Implementations adapt
- * platform-specific serial classes to this interface for easier testing.
+ * functionality required by the transport layer. 
+ * Needed for mockup/unit testing of Modbus logic without hardware
  */
 struct ISerial {
     /**

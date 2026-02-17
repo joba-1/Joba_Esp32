@@ -37,7 +37,17 @@ Also run tests before commits and suggest tests for uncovered lines when you edi
 - MQTT uses `PubSubClient` with a 1024-byte buffer; base topic publishes retained `<base>/status = online`. Home Assistant discovery is under `homeassistant/...` and uses that availability topic.
 
 - suggest commits before adding new unrelated code/features
-- write unit tests for new features and bug fixes
+- write unit tests for new features and bug fixes and sometimes for existing code when you stumble on it
+  - Make a list of each cpp file to test (all in src)
+  - For each file...
+    - split functions into smaller ones if they contain many if's (consider if more than 6)
+    - split out arduino agnostic helper functions (add _helper to the src name, names of files containing arduino code dont end in _helper.*)
+    - write tests for all helpers to be run on native host
+    - write tests that run on Esp32 for all functions and public methods, such that all code paths (also in used private methods) are passed at least once
+  - Don't directly test private methods. 
+    - Assumption is, all code is useful, i.e. reachable via public functions
+    - Each test needs to have comments documenting the goal of the test from a user perspective
+    - Let ai help find parameters for public functions to reach code paths in private functions
 - create doxygen comments for new public APIs and complex logic; run `pio run -t doxygen` to generate docs in `docs/doxygen/html/index.html`
 - run coverage locally with `./misc/coverage/run_coverage.sh` and check `coverage/html/index.html` for uncovered lines; CI also runs coverage and uploads artifacts
 - suggest unit tests for previously uncovered lines when you edit code in those areas or if you stumble on them during other tasks; see `coverage/coverage.info.filtered` for which lines are uncovered
