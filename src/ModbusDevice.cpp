@@ -378,8 +378,7 @@ bool ModbusDeviceManager::loadDeviceMappings(const char* path) {
         
         _devices[unitId] = instance;
         
-        LOG_I("Mapped unit %d as '%s' (%s)",
-              unitId, name, typeName);
+        LOG_I("Mapped unit %d as '%s' (%s) with polling factor %.2f", unitId, name, typeName, instance.pollIntervalFactor);
     }
     
     return true;
