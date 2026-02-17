@@ -112,6 +112,43 @@ except:
     # Running standalone
     project_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if '__file__' not in dir() else os.path.dirname(os.path.abspath(__file__))
 
+# Prevent running tests against the `ota` environment which does not
+# support test firmware (OTA test firmwares would brick/update mismatch).
+# Detect common indicators of a test run and abort early when building
+# the `ota` env during `platformio test`.
+try:
+    pioenv = ""
+    try:
+        pioenv = env.get("PIOENV") or ""
+    except Exception:
+        pioenv = os.environ.get("PIOENV", "")
+
+    # Heuristics to detect `platformio test` invocation
+    is_test_run = False
+    # Common env vars/platform markers that appear during test runs
+    test_markers = [
+        "PLATFORMIO_TEST",
+        "PLATFORMIO_TESTRUNNER",
+        "PLATFORMIO_CMD",
+        "PIOCOMMAND",
+        "PLATFORMIO_TESTING",
+    ]
+    for m in test_markers:
+        if os.environ.get(m):
+            is_test_run = True
+            break
+    # Also check invocation args for the word 'test'
+    if not is_test_run and any("test" in str(a).lower() for a in sys.argv):
+        is_test_run = True
+
+    if pioenv == "ota" and is_test_run:
+        print("ERROR: The 'ota' environment must not be used for testing. Aborting build.")
+        print("Use a serial or native environment for tests (e.g., 'platformio test -e native').")
+        sys.exit(1)
+except Exception:
+    # Don't let diagnostics here break normal builds; this check is best-effort.
+    pass
+
 config_file = os.path.join(project_dir, "config.ini")
 template_file = os.path.join(project_dir, "config.ini.template")
 
