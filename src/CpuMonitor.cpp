@@ -1,5 +1,6 @@
 #include "CpuMonitor.h"
 #include "LoggingFeature.h"
+#include <string.h>
 
 /**
  * @file CpuMonitor.cpp
@@ -37,11 +38,42 @@ namespace {
     uint32_t s_loopEndUs = 0;
     bool s_inLoop = false;
 
+    // Per-feature statistics
+    static constexpr size_t MAX_FEATURE_STATS = 32;
+    struct FeatureStat {
+        const char* name = nullptr;
+        uint32_t minUs = 0;
+        uint32_t maxUs = 0;
+        uint64_t sumUs = 0;
+        uint32_t count = 0;
+    };
+
+    FeatureStat s_currStats[MAX_FEATURE_STATS];
+    FeatureStat s_lastStats[MAX_FEATURE_STATS];
+    size_t s_currStatCount = 0;
+    size_t s_lastStatCount = 0;
+
     void rollWindow() {
         // Save current window to "last" results
         s_lastBusyUs = s_busyAccumUs;
         s_lastIdleUs = s_idleAccumUs;
         s_lastLoopCount = s_loopCount;
+
+        // Snapshot per-feature stats
+        s_lastStatCount = s_currStatCount;
+        for (size_t i = 0; i < s_lastStatCount && i < MAX_FEATURE_STATS; ++i) {
+            s_lastStats[i] = s_currStats[i];
+        }
+
+        // Reset current per-feature accumulators
+        for (size_t i = 0; i < MAX_FEATURE_STATS; ++i) {
+            s_currStats[i].name = nullptr;
+            s_currStats[i].minUs = 0;
+            s_currStats[i].maxUs = 0;
+            s_currStats[i].sumUs = 0;
+            s_currStats[i].count = 0;
+        }
+        s_currStatCount = 0;
 
         // Reset accumulators for new window
         s_busyAccumUs = 0;
@@ -102,8 +134,49 @@ namespace CpuMonitor {
                     LOG_I("CPU: %.1f%%, loops/s=%u, avgLoop=%uus, heap=%u",
                           usagePercent(), s_lastLoopCount, avgLoopDurationUs(),
                           (unsigned)ESP.getFreeHeap());
+
+                    // Log per-feature min/avg/max for last window
+                    for (size_t i = 0; i < s_lastStatCount && i < MAX_FEATURE_STATS; ++i) {
+                        const FeatureStat& st = s_lastStats[i];
+                        if (!st.name || st.count == 0) continue;
+                        uint32_t avg = (uint32_t)(st.sumUs / st.count);
+                        LOG_I(" Feature %-12s min=%3uus avg=%3uus max=%3uus",
+                              st.name, st.minUs, avg, st.maxUs);
+                    }
                 }
             }
+        }
+    }
+
+    void recordFeatureDuration(const char* name, uint32_t durUs) {
+        if (!name) return;
+
+        // Try to find existing entry
+        for (size_t i = 0; i < s_currStatCount; ++i) {
+            FeatureStat& st = s_currStats[i];
+            if (st.name == name || (st.name && strcmp(st.name, name) == 0)) {
+                if (st.count == 0) {
+                    st.minUs = st.maxUs = durUs;
+                    st.sumUs = durUs;
+                    st.count = 1;
+                } else {
+                    if (durUs < st.minUs) st.minUs = durUs;
+                    if (durUs > st.maxUs) st.maxUs = durUs;
+                    st.sumUs += durUs;
+                    st.count++;
+                }
+                return;
+            }
+        }
+
+        // Add new entry if space
+        if (s_currStatCount < MAX_FEATURE_STATS) {
+            FeatureStat& st = s_currStats[s_currStatCount++];
+            st.name = name;
+            st.minUs = durUs;
+            st.maxUs = durUs;
+            st.sumUs = durUs;
+            st.count = 1;
         }
     }
 

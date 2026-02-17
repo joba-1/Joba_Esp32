@@ -67,4 +67,12 @@ namespace CpuMonitor {
      * @param intervalMs Interval in milliseconds; 0 to disable
      */
     void setLogInterval(uint32_t intervalMs);
+    
+    /**
+     * @brief Record a single feature loop duration for per-feature stats
+     * @param name   Feature name (pointer is stored; must remain valid)
+     * @param durUs  Duration in microseconds
+     */
+    void recordFeatureDuration(const char* name, uint32_t durUs);
 }
+

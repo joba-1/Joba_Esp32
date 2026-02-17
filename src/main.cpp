@@ -410,6 +410,7 @@ void loop() {
         features[i]->loop();
         const uint32_t durUs = (uint32_t)((uint32_t)micros() - startUs);
         ResetDiagnostics::recordLoopDurationUs(features[i]->getName(), durUs);
+        CpuMonitor::recordFeatureDuration(features[i]->getName(), durUs);
     }
 
     CpuMonitor::markLoopEnd();
