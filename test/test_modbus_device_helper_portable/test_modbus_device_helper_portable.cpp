@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_device_helper_portable.cpp
+ * @brief Portable tests for Modbus device helper conversions (host-friendly).
+ *
+ * Goal: Provide host-executable checks for raw-to-value and value-to-raw
+ *       conversions to enable CI verification of conversion logic.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

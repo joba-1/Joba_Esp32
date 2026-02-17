@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_update_modbus_register_map_more.cpp
+ * @brief Tests for updating the Modbus register map from request/response pairs.
+ *
+ * Goal: Verify that register map updates correctly record values and timestamps
+ *       so tools interpreting the map present accurate device state to users.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

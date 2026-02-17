@@ -1,4 +1,12 @@
 // Consolidated tests for `convertModbusValueToRaw` using the proper API
+#/********************************************************************************
+ * @file test_modbus_value_to_raw.cpp
+ * @brief Tests converting floating-point values into Modbus register words.
+ *
+ * Goal: Ensure round-trip conversion and correct endian/padding behavior when
+ *       preparing values for Modbus writes, from a user's perspective.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

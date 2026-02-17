@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_device_helper.cpp
+ * @brief Tests for Modbus device helper conversions (raw <-> value).
+ *
+ * Goal: Validate register data type parsing and numeric conversions so that
+ *       consumers can rely on correct value interpretation from device frames.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

@@ -1,5 +1,13 @@
 // Unit tests for ModbusRTUFeature (PlatformIO Unity)
 #include <Arduino.h>
+#/********************************************************************************
+ * @file test_modbus_rtu_feature.cpp
+ * @brief Tests for Modbus RTU feature integration (native subset).
+ *
+ * Goal: From a user perspective, ensure the RTU feature's core helpers behave
+ *       correctly under host execution so integration bugs are caught early.
+ */
+
 #include <unity.h>
 
 #include "ISerial.h"

@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_helpers.cpp
+ * @brief Unit tests for Modbus helper utilities (CRC and hex formatting).
+ *
+ * Goal: From a user perspective, ensure low-level Modbus utilities produce
+ *       correct CRCs and human-friendly hex formatting for diagnostics.
+ */
+
 #include <unity.h>
 #include "modbus_helpers.h"
 // For native tests we compile the helper implementation into the test TU

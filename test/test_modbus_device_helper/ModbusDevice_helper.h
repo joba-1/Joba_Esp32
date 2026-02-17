@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file ModbusDevice_helper.h (test helper)
+ * @brief Test helper declarations used by Modbus device helper unit tests.
+ *
+ * Goal: Provide portable helper types and prototypes so test cases can be
+ *       executed on the host and their intent is documented for readers.
+ */
+
 #ifndef TEST_MODBUS_DEVICE_HELPER_H
 #define TEST_MODBUS_DEVICE_HELPER_H
 

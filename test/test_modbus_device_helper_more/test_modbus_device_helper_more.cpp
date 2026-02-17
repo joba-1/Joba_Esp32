@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_device_helper_more.cpp
+ * @brief Additional tests for Modbus device helper edge cases.
+ *
+ * Goal: Cover edge behaviors (endianess, padding, boolean semantics) so users
+ *       gain confidence the conversion logic handles uncommon inputs.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_rtu_determine_length_more.cpp
+ * @brief More tests for determining Modbus RTU frame lengths.
+ *
+ * Goal: Ensure frame-length heuristics correctly identify requests, responses,
+ *       and exception frames so scheduling and parsing remain reliable.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

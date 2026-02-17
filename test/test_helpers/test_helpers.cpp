@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_helpers.cpp
+ * @brief Trivial test helpers smoke test.
+ *
+ * Goal: Provide a minimal passing test to verify the native test harness
+ *       is configured and can run tests on the host system.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_rtu_helper.cpp
+ * @brief Tests exercising Modbus RTU helper functions (frame parsing, CRCs).
+ *
+ * Goal: Ensure frame assembly/parsing and register-map update logic behave
+ *       correctly so users can trust the RTU helper behavior during analysis.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

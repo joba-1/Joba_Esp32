@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_parse_modbus_frame_more.cpp
+ * @brief Extended parsing tests for Modbus frames and exception handling.
+ *
+ * Goal: From a user perspective, verify parser correctness across valid,
+ *       invalid and exceptional frame types to avoid silent failures.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

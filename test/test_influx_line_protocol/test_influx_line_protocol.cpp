@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_influx_line_protocol.cpp
+ * @brief Tests for InfluxDB line protocol escaping helpers.
+ *
+ * Goal: Confirm escaping of measurement and tag strings so users can safely
+ *       construct InfluxDB line-protocol payloads without accidental syntax errors.
+ */
+
 #include <unity.h>
 #include "InfluxLineProtocol_test.h"
 

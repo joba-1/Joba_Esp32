@@ -1,3 +1,12 @@
+#/********************************************************************************
+ * @file test_modbus_rtufunc.cpp
+ * @brief Tests for Modbus RTU frame parsing and length determination.
+ *
+ * Goal: Verify the parsing and frame-length heuristics used to separate
+ *       requests/responses on the wire so users can rely on robust frame
+ *       detection in native test environments.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>

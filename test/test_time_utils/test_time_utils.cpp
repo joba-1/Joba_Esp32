@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_time_utils.cpp
+ * @brief Tests for TimeUtils helpers (validation and ISO formatting).
+ *
+ * Goal: Ensure time validation and ISO formatting behave as expected so users
+ *       consuming timestamps in APIs receive correctly formatted values.
+ */
+
 #include <unity.h>
 #include "TimeUtils_test.h"
 

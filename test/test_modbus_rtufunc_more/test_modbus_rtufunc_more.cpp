@@ -1,3 +1,11 @@
+#/********************************************************************************
+ * @file test_modbus_rtufunc_more.cpp
+ * @brief Additional Modbus RTU function tests covering parsing and map updates.
+ *
+ * Goal: Provide broader coverage of RTU function parsing and update logic so
+ *       users can trust behavior across varied frame shapes.
+ */
+
 #include <unity.h>
 #if defined(ARDUINO)
 #include <Arduino.h>
