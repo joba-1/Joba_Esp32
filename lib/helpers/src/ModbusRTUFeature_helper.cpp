@@ -80,14 +80,31 @@ void updateModbusRegisterMap(ModbusRegisterMap& regMap, const ModbusFrame& reque
 
     if (isReadFunction(fc)) {
         size_t regCount = byteCount / 2;
-        for (size_t i = 0; i < regCount; i++) {
+        auto it = regMap.registers.lower_bound(startReg);
+        uint16_t addr = startReg;
+        for (size_t i = 0; i < regCount; i++, ++addr) {
             uint16_t value = (regData[i * 2] << 8) | regData[i * 2 + 1];
-            regMap.registers[startReg + i] = value;
+            if (it != regMap.registers.end() && it->first == addr) {
+                it->second = value;
+                ++it;
+            } else {
+                it = regMap.registers.emplace_hint(it, addr, value);
+                ++it;
+            }
         }
     } else {
-        for (size_t i = 0; i < byteCount * 8; i++) {
+        auto it = regMap.registers.lower_bound(startReg);
+        uint16_t addr = startReg;
+        size_t bits = byteCount * 8;
+        for (size_t i = 0; i < bits; i++, ++addr) {
             uint16_t value = (regData[i / 8] >> (i % 8)) & 0x01;
-            regMap.registers[startReg + i] = value;
+            if (it != regMap.registers.end() && it->first == addr) {
+                it->second = value;
+                ++it;
+            } else {
+                it = regMap.registers.emplace_hint(it, addr, value);
+                ++it;
+            }
         }
     }
 }

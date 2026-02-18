@@ -609,16 +609,33 @@ void ModbusRTUFeature::loop() {
 void ModbusRTUFeature::processReceivedData() {
     if (_rxBuffer.size() < 4) {
         if (_rxBuffer.size() > 0) onFrameBoundary(_rxBuffer.size());
-        _rxBuffer.clear();
         return;
     }
 
     onFrameBoundary(_rxBuffer.size());
 
-    // Delegate to extracted helpers
-    extractFramesFromRxBuffer();
+    // Delegate to extracted helpers. Only remove bytes that were consumed
+    // (complete frames). Keep any partial trailing bytes in the buffer so
+    // they can be completed on the next loop without blocking here.
+    size_t consumed = extractFramesFromRxBuffer();
+    if (consumed > 0) {
+        if (consumed < _rxBuffer.size()) {
+            // erase consumed prefix
+            _rxBuffer.erase(_rxBuffer.begin(), _rxBuffer.begin() + (ptrdiff_t)consumed);
+        } else {
+            _rxBuffer.clear();
+        }
+    }
 
-    _rxBuffer.clear();
+    // Safety: prevent unbounded RX buffer growth. If buffer gets very large
+    // (likely due to noise), trim it and record an error to avoid memory issues.
+    static const size_t RX_BUFFER_MAX = 2048;
+    if (_rxBuffer.size() > RX_BUFFER_MAX) {
+        _stats.crcErrors++;
+        // keep only the last RX_BUFFER_MAX/2 bytes
+        size_t keep = RX_BUFFER_MAX / 2;
+        _rxBuffer.erase(_rxBuffer.begin(), _rxBuffer.end() - (ptrdiff_t)keep);
+    }
 }
 
 // Extract frames from _rxBuffer and handle them. Returns number of bytes consumed.
@@ -650,7 +667,7 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
     }
 
     (void)extractedCount;
-    return _rxBuffer.size();
+    return consumed;
 }
 
 /**
@@ -882,31 +899,10 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                     if (byteCount >= 2 && (byteCount % 2) == 0 && byteCount <= 250) {
                         size_t expectedLen = (size_t)byteCount + 5; // unit+fc+bc+payload+crc
                         if (remaining < expectedLen && remaining >= expectedLen - 2) {
-                            // Missing 1-2 bytes; wait briefly for them
-                            const uint32_t WAIT_US = 1000;
-                            uint32_t startUs = (uint32_t)micros();
-                            while ((uint32_t)(micros() - startUs) < WAIT_US) {
-                                if (_serial.available()) {
-                                    while (_serial.available()) {
-                                        uint8_t nb = (uint8_t)_serial.read();
-                                        _rxBuffer.push_back(nb);
-                                        _lastByteTime = micros();
-                                        _lastActivityTime = millis();
-                                    }
-                                    // Update pointers and retry
-                                    p = _rxBuffer.data() + i;
-                                    remaining = _rxBuffer.size() - i;
-                                    if (remaining >= expectedLen) break;
-                                }
-                                delayMicroseconds(50);
-                            }
-                            _lastLoopTiming.scanWaitUs += (uint32_t)(micros() - startUs);
-                            waitedForTrailing = true;
-                            // Retry determineFrameLength with updated buffer
-                            if (determineFrameLength(p, remaining, isRequest, frameLen)) {
-                                // Success after wait; fall through to frame processing
-                                goto frame_determined;
-                            }
+                            // Missing 1-2 bytes at end of buffer. Do NOT block/wait here;
+                            // return consumed bytes so far and let the next loop
+                            // iteration complete the frame when bytes arrive.
+                            return i;
                         }
                     }
                 }
@@ -936,42 +932,9 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
             // This avoids false CRC failures when the final CRC byte arrives
             // a few hundred microseconds late.
             if (_waitingForResponse && _hasPendingRequest && frame.unitId == _currentRequest.unitId) {
-                const uint32_t WAIT_US = 500; // short wait window
-                uint32_t startUs = (uint32_t)micros();
-                bool gotExtra = false;
-                while ((uint32_t)(micros() - startUs) < WAIT_US) {
-                    if (_serial.available()) {
-                        // Read any newly arrived bytes into RX buffer
-                        while (_serial.available()) {
-                            uint8_t nb = (uint8_t)_serial.read();
-                            _rxBuffer.push_back(nb);
-                            gotExtra = true;
-                            _lastByteTime = micros();
-                            _lastActivityTime = millis();
-                        }
-                        break;
-                    }
-                    delayMicroseconds(50);
-                }
-                _lastLoopTiming.scanWaitUs += (uint32_t)(micros() - startUs);
-
-                if (gotExtra) {
-                    // Recompute remaining data pointer and attempt to re-parse
-                    p = _rxBuffer.data() + i;
-                    remaining = _rxBuffer.size() - i;
-                    // Try re-determining frame length and reparsing
-                    bool newIsReq = false;
-                    size_t newFrameLen = 0;
-                    if (determineFrameLength(p, remaining, newIsReq, newFrameLen)) {
-                        parseFrameAndComputeMetadata(i, newFrameLen, frame, newIsReq, approxStartMs);
-                        if (frame.isValid) {
-                            // Successfully recovered a valid frame; continue dispatch
-                            // Note: fall through to normal valid-frame handling below
-                        } else {
-                            // fallthrough to existing invalid handling
-                        }
-                    }
-                }
+                // Do not block waiting for late CRC byte(s). Continue with
+                // invalid handling immediately; any additional bytes will be
+                // processed in a later loop when they arrive.
             }
             if (_waitingForResponse && _hasPendingRequest && !frame.isRequest && frame.unitId == _currentRequest.unitId) {
                 // Debug: record the context so we can see why fallback may be rejected
