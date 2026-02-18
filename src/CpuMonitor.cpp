@@ -131,7 +131,7 @@ namespace CpuMonitor {
                 const uint32_t nowMs = (uint32_t)millis();
                 if ((nowMs - s_lastLogMs) >= s_logIntervalMs) {
                     s_lastLogMs = nowMs;
-                    LOG_I("CPU: %.1f%%, loops/s=%u, avgLoop=%uus, heap=%u",
+                    LOG_I("Mon: CPU: %.1f%%, loops/s=%u, avgLoop=%uus, heap=%u",
                           usagePercent(), s_lastLoopCount, avgLoopDurationUs(),
                           (unsigned)ESP.getFreeHeap());
 
@@ -149,7 +149,7 @@ namespace CpuMonitor {
                         if (isSub) continue;
 
                         uint32_t avg = (uint32_t)(st.sumUs / st.count);
-                        LOG_I(" Feature %-12s min=%3uus avg=%3uus max=%3uus",
+                        LOG_I("Mon:  Feature %-12s min=%5uus avg=%5uus max=%5uus",
                               st.name, st.minUs, avg, st.maxUs);
 
                         // If this is the ModbusRTU feature, also print sub-component timings
@@ -160,7 +160,7 @@ namespace CpuMonitor {
                                     if (!subSt.name || subSt.count == 0) continue;
                                     if (strcmp(subSt.name, sub) == 0) {
                                         uint32_t subAvg = (uint32_t)(subSt.sumUs / subSt.count);
-                                        LOG_I("         %-12s min=%3uus avg=%3uus max=%3uus",
+                                        LOG_I("Mon:      %-16s min=%5uus avg=%5uus max=%5uus",
                                               sub, subSt.minUs, subAvg, subSt.maxUs);
                                         break;
                                     }
