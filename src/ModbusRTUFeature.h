@@ -469,6 +469,24 @@ public:
      */
     void detectCycle();
 
+    // ========================================
+    // Loop timing diagnostics
+    // ========================================
+    struct LoopTiming {
+        uint32_t rxReadUs{0};        // time spent reading bytes from UART this loop
+        uint32_t rxProcessUs{0};     // time spent parsing RX buffer this loop
+        uint32_t scanUs{0};          // time spent scanning/parsing rx buffer
+        uint32_t scanWaitUs{0};      // time spent waiting for trailing bytes while scanning
+        uint32_t parseUnitUs{0};     // time spent in parseFrame per-frame
+        uint32_t updateMapUs{0};     // time spent updating register maps
+        uint32_t queueProcessUs{0};  // time spent in processQueue this loop
+        uint32_t txUs{0};           // time spent in sendFrameFromBuffer (driver flush/write)
+        uint32_t loopUs{0};          // total loop time this iteration
+        uint32_t maxLoopUs{0};       // historical max observed loop time
+    };
+
+    LoopTiming getLastLoopTiming() const;
+
 private:
     /**
      * @brief Read incoming serial data, buffer it and process complete frames.
@@ -483,6 +501,10 @@ private:
      * @return Number of frames extracted.
      */
     size_t extractFramesFromRxBuffer();
+
+    // Split responsibilities from large loop() into smaller helpers
+    void handleResponseTimeouts(unsigned long nowUs, unsigned long nowMs);
+    void handleQueueArbitration(unsigned long nowUs, unsigned long nowMs);
 
     /**
      * @brief Handle a frame that has been parsed from the RX buffer.
@@ -710,6 +732,9 @@ private:
     uint32_t _dbgGapUsInLoop{0};
     bool _dbgGapEnoughForTxInLoop{false};
     unsigned long _dbgLastLoopSnapshotMs{0};
+
+    // Last observed loop timing metrics
+    LoopTiming _lastLoopTiming;
     
     // Configurable warning thresholds (set via build flags with defaults)
 #ifndef MODBUS_STATS_INTERVAL_MS

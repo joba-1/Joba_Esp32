@@ -5,6 +5,7 @@
 #include "TimeUtils.h"
 #include "modbus_helpers.h"
 #include "ModbusRTUFeature_helper.h"
+#include "CpuMonitor.h"
 
 static inline bool timeBefore32(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
@@ -264,6 +265,10 @@ void ModbusRTUFeature::setResponseTimeoutMs(uint32_t ms) {
     LOG_I("Modbus response timeout set to %lu ms", (unsigned long)_responseTimeoutMs);
 }
 
+ModbusRTUFeature::LoopTiming ModbusRTUFeature::getLastLoopTiming() const {
+    return _lastLoopTiming;
+}
+
 const ModbusRTUFeature::CrcErrorContext* ModbusRTUFeature::getRecentCrcErrorContexts(size_t& outCount) const {
     outCount = CRC_CONTEXT_SIZE;
     return _crcContexts;
@@ -395,8 +400,15 @@ void ModbusRTUFeature::loop() {
     if (_suspended) return;
 
     _loopCounter++;
+    unsigned long loopStartUs = micros();
+
+    // reset last-loop timing counters for this iteration
+    _lastLoopTiming.rxReadUs = 0;
+    _lastLoopTiming.rxProcessUs = 0;
+    _lastLoopTiming.queueProcessUs = 0;
+    _lastLoopTiming.loopUs = 0;
     
-    unsigned long nowUs = micros();
+    unsigned long nowUs = loopStartUs;
     unsigned long nowMs = millis();
     
     // Track total time for statistics
@@ -417,6 +429,7 @@ void ModbusRTUFeature::loop() {
     // the scanning parser in processReceivedData() to handle concatenated frames.
     const bool wantsToTransmitSoon = (!_waitingForResponse && !_requestQueue.empty());
     const size_t maxRxBytesThisLoop = wantsToTransmitSoon ? 1024 : 256;
+    unsigned long rxReadStartUs = micros();
     size_t rxBytesThisLoop = 0;
     while (_serial.available() && rxBytesThisLoop < maxRxBytesThisLoop) {
         unsigned long byteTimeUs = micros();
@@ -442,6 +455,10 @@ void ModbusRTUFeature::loop() {
         }
     }
 
+    // record RX read duration
+    _lastLoopTiming.rxReadUs = (uint32_t)(micros() - rxReadStartUs);
+    CpuMonitor::recordFeatureDuration("ModbusRX", _lastLoopTiming.rxReadUs);
+
     _dbgRxBytesDrainedInLoop = (uint16_t)rxBytesThisLoop;
 
     // Re-evaluate current time before checking for frame-complete silence
@@ -461,7 +478,12 @@ void ModbusRTUFeature::loop() {
 
     // Check for frame complete (3.5 char silence)
     if (_rxBuffer.size() > 0 && (nowUs - _lastByteTime) > _silenceTimeUs) {
+        unsigned long rxProcStartUs = micros();
         processReceivedData();
+        _lastLoopTiming.rxProcessUs = (uint32_t)(micros() - rxProcStartUs);
+        if (_lastLoopTiming.rxProcessUs > 0) CpuMonitor::recordFeatureDuration("ModbusParse", _lastLoopTiming.rxProcessUs);
+    } else {
+        _lastLoopTiming.rxProcessUs = 0;
     }
     
     // Update bus silence state and end active time tracking
@@ -475,105 +497,8 @@ void ModbusRTUFeature::loop() {
         }
     }
     
-    // Check for response timeout
-    if (_waitingForResponse && (nowMs - _requestSentTime) > _responseTimeoutMs) {
-        _stats.timeouts++;
-        
-        // Throttle individual timeout messages - log at most once per 5 seconds per unit
-        // This prevents timeout spam while still providing visibility
-        uint16_t unitKey = _lastRequest.unitId;
-        unsigned long lastLog = _lastTimeoutPerUnit[unitKey];
-        if ((nowMs - lastLog) >= 5000) {  // 5 second throttle per unit
-            LOG_W("Modbus response timeout for unit %d FC 0x%02X reg %d qty %d (retries: %d)",
-                  _lastRequest.unitId, _lastRequest.functionCode,
-                  _lastRequest.getStartRegister(), _lastRequest.getQuantity(),
-                  _currentRequest.retries);
-            _lastTimeoutPerUnit[unitKey] = nowMs;
-        }
-
-        // Additional diagnostics to help debug timeouts / collisions
-        LOG_D("Timeout diagnostics: nowMs=%lu requestSentAt=%lu elapsedMs=%lu", nowMs, _requestSentTime, (nowMs - _requestSentTime));
-        LOG_D("  Args: serialWasEmpty=%d serialEmptySinceUs=%lu lastByteTimeUs=%lu lastActivityMs=%lu", (int)_serialWasEmpty, (unsigned long)_serialEmptySinceUs, (unsigned long)_lastByteTime, (unsigned long)_lastActivityTime);
-        LOG_D("  Loop dbg: rxDrained=%u gapUs=%u queueSize=%u serialAvail=%u", (unsigned)_dbgRxBytesDrainedInLoop, (unsigned)_dbgGapUsInLoop, (unsigned)_dbgQueueSizeInLoop, (unsigned)_dbgSerialAvailableInLoop);
-        LOG_D("  Gap/scheduler: sentDuringGap=%d lastTxWireMs=%u lastTxElapsedMs=%u hasLastCompletedTx=%d lastCompletedTxKey=%llu", (int)_sentDuringGapWindow, (unsigned)_lastTxWireMs, (unsigned)_lastTxElapsedMs, (int)_hasLastCompletedTx, (unsigned long long)_lastCompletedTxKey);
-        LOG_D("  Request params: unit=%u fc=0x%02X start=%u qty=%u retries=%u", (unsigned)_currentRequest.unitId, (unsigned)_currentRequest.functionCode, (unsigned)_currentRequest.startRegister, (unsigned)_currentRequest.quantity, (unsigned)_currentRequest.retries);
-        
-        // If we sent this request using gap prediction and it timed out,
-        // it likely collided with the foreign master — increase safety margin
-        if (_sentDuringGapWindow) {
-            _gapPredictor.reportCollision(_sentDuringGapWindow, _lastTxElapsedMs, _lastTxWireMs,
-                                          _hasLastCompletedTx, _lastCompletedTxKey);
-            _sentDuringGapWindow = false;
-        }
-
-        // Re-queue on first timeout (retries == 0) instead of immediately failing
-        if (_currentRequest.retries == 0) {
-            LOG_I("Modbus timeout: re-queuing request (unit %d FC 0x%02X retry 1/1)",
-                  _currentRequest.unitId, _currentRequest.functionCode);
-            _currentRequest.retries = 1;
-            _requestQueue.insert(_requestQueue.begin(), _currentRequest);  // Insert at front for immediate retry
-            _waitingForResponse = false;
-            _hasPendingRequest = false;
-            endActiveTime();
-            return;  // Don't call callback yet, let retry happen
-        }
-
-        // Second timeout (retries == 1): now actually fail and trigger callback
-        _stats.ownRequestsFailed++;
-        _intervalStats.ownFailed++;
-        
-        // Track consecutive timeouts per unit to trigger backoff
-        const uint8_t unitId = _currentRequest.unitId;
-        TimeoutBackoffState& st = _backoffByUnit[unitId];
-        st.consecutiveTimeouts++;
-        if (st.consecutiveTimeouts >= 3) {
-            st.pausedUntilMs = (uint32_t)nowMs + st.backoffMs;
-            if (st.consecutiveTimeouts == 3) {
-                LOG_W("Modbus: 3 consecutive timeouts for unit %u, pausing sends for %ums", unitId, st.backoffMs);
-            }
-            // Exponential backoff, capped at 60s.
-            if (st.backoffMs < 60000) {
-                st.backoffMs = std::min<uint32_t>(st.backoffMs * 2, 60000);
-            }
-        }
-        
-        // Invoke callback on final timeout so callers know the request failed.
-        std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
-        if (_currentRequest.callback) {
-            callbackCopy = _currentRequest.callback;
-        }
-
-        _waitingForResponse = false;
-        _hasPendingRequest = false;
-        endActiveTime();
-        
-        // Call callback outside critical section with an empty frame indicating timeout
-        if (callbackCopy) {
-            ModbusFrame emptyFrame;
-            emptyFrame.isValid = false;
-            emptyFrame.isException = false;
-            try {
-                callbackCopy(false, emptyFrame);
-            } catch (...) {
-                LOG_E("Exception in Modbus timeout callback");
-            }
-        }
-        
-        // If the queue is building up, drop requests for the timed-out unit only.
-        // This prevents one unresponsive unit from starving other devices.
-        if (_requestQueue.size() > _maxQueueSize / 2) {
-            const size_t before = _requestQueue.size();
-            _requestQueue.erase(
-                std::remove_if(_requestQueue.begin(), _requestQueue.end(),
-                               [unitId](const ModbusPendingRequest& r) { return r.unitId == unitId; }),
-                _requestQueue.end());
-            const size_t after = _requestQueue.size();
-            if (after != before) {
-                LOG_W("Modbus queue building up (%u items). Dropped %u requests for unit %u",
-                      before, (unsigned)(before - after), unitId);
-            }
-        }
-    }
+    // Response timeout handling moved to helper
+    handleResponseTimeouts(nowUs, nowMs);
     
     // Process request queue when not waiting and there is a detectable inter-frame gap.
     // We attempt two strategies:
@@ -607,7 +532,10 @@ void ModbusRTUFeature::loop() {
         _dbgLastLoopSnapshotMs = millis();
 
         if (gapEnoughForTx) {
+            unsigned long qStartUs = micros();
             processQueue(true);  // Bus is silent, allow probing backoff units
+            _lastLoopTiming.queueProcessUs = (uint32_t)(micros() - qStartUs);
+            if (_lastLoopTiming.queueProcessUs > 0) CpuMonitor::recordFeatureDuration("ModbusQueue", _lastLoopTiming.queueProcessUs);
         } else if (!_requestQueue.empty()) {
             // Try to find a quiet window, bounded to keep the firmware responsive.
             static constexpr uint32_t TX_ARBITRATION_WINDOW_US = 8000;
@@ -643,7 +571,10 @@ void ModbusRTUFeature::loop() {
                 if ((uint32_t)(nowArbUs - lastRxUs) >= requiredIdleUs) {
                     _serialWasEmpty = true;
                     _serialEmptySinceUs = nowArbUs;
+                    unsigned long qStartUs = micros();
                     processQueue(true);  // Bus is silent, allow probing backoff units
+                    _lastLoopTiming.queueProcessUs = (uint32_t)(micros() - qStartUs);
+                    if (_lastLoopTiming.queueProcessUs > 0) CpuMonitor::recordFeatureDuration("ModbusQueue", _lastLoopTiming.queueProcessUs);
                     break;
                 }
 
@@ -657,6 +588,14 @@ void ModbusRTUFeature::loop() {
     if (nowMs - _lastWarningCheckMs >= MODBUS_STATS_INTERVAL_MS) {
         checkAndLogWarnings();
         _lastWarningCheckMs = nowMs;
+    }
+
+    // Record total loop time and update historical max
+    {
+        unsigned long loopEndUs = micros();
+        uint32_t loopUs = (uint32_t)(loopEndUs - loopStartUs);
+        _lastLoopTiming.loopUs = loopUs;
+        if (loopUs > _lastLoopTiming.maxLoopUs) _lastLoopTiming.maxLoopUs = loopUs;
     }
 }
 
@@ -698,8 +637,13 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
     bool sawNoise = false;
 
     // Use scan-and-dispatch helper to keep main loop concise
+    unsigned long scanStartUs = micros();
     size_t consumed = scanAndAdvanceIndex();
-    (void)consumed;
+    _lastLoopTiming.scanUs = (uint32_t)(micros() - scanStartUs);
+    if (_lastLoopTiming.scanUs > 0) CpuMonitor::recordFeatureDuration("ModbusScan", _lastLoopTiming.scanUs);
+    if (_lastLoopTiming.scanWaitUs > 0) CpuMonitor::recordFeatureDuration("ModbusWait", _lastLoopTiming.scanWaitUs);
+    if (_lastLoopTiming.parseUnitUs > 0) CpuMonitor::recordFeatureDuration("ModbusParseUnit", _lastLoopTiming.parseUnitUs);
+    if (_lastLoopTiming.updateMapUs > 0) CpuMonitor::recordFeatureDuration("ModbusUpdateMap", _lastLoopTiming.updateMapUs);
 
     if ((i < _rxBuffer.size()) || (sawNoise && extractedCount == 0)) {
         _stats.crcErrors++;
@@ -728,7 +672,10 @@ bool ModbusRTUFeature::determineFrameLength(const uint8_t* p, size_t remaining, 
 
 void ModbusRTUFeature::parseFrameAndComputeMetadata(size_t offset, size_t frameLen, ModbusFrame& frame, bool isRequest, uint32_t approxStartMs) {
     // parseFrame expects pointer to start of frame
+    unsigned long pStart = micros();
     parseFrame(_rxBuffer.data() + offset, frameLen, frame);
+    uint32_t pUs = (uint32_t)(micros() - pStart);
+    _lastLoopTiming.parseUnitUs += pUs;
     frame.timestamp = approxStartMs;
     frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
     frame.isRequest = isRequest;
@@ -953,6 +900,7 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                                 }
                                 delayMicroseconds(50);
                             }
+                            _lastLoopTiming.scanWaitUs += (uint32_t)(micros() - startUs);
                             waitedForTrailing = true;
                             // Retry determineFrameLength with updated buffer
                             if (determineFrameLength(p, remaining, isRequest, frameLen)) {
@@ -1005,6 +953,7 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
                     }
                     delayMicroseconds(50);
                 }
+                _lastLoopTiming.scanWaitUs += (uint32_t)(micros() - startUs);
 
                 if (gotExtra) {
                     // Recompute remaining data pointer and attempt to re-parse
@@ -1107,6 +1056,88 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
 
     (void)sawNoise; (void)extractedCount;
     return i;
+}
+
+void ModbusRTUFeature::handleResponseTimeouts(unsigned long nowUs, unsigned long nowMs) {
+    if (!(_waitingForResponse && (nowMs - _requestSentTime) > _responseTimeoutMs)) return;
+
+    _stats.timeouts++;
+
+    uint16_t unitKey = _lastRequest.unitId;
+    unsigned long lastLog = _lastTimeoutPerUnit[unitKey];
+    if ((nowMs - lastLog) >= 5000) {  // 5 second throttle per unit
+        LOG_W("Modbus response timeout for unit %d FC 0x%02X reg %d qty %d (retries: %d)",
+              _lastRequest.unitId, _lastRequest.functionCode,
+              _lastRequest.getStartRegister(), _lastRequest.getQuantity(),
+              _currentRequest.retries);
+        _lastTimeoutPerUnit[unitKey] = nowMs;
+    }
+
+    LOG_D("Timeout diagnostics: nowMs=%lu requestSentAt=%lu elapsedMs=%lu", nowMs, _requestSentTime, (nowMs - _requestSentTime));
+    LOG_D("  Args: serialWasEmpty=%d serialEmptySinceUs=%lu lastByteTimeUs=%lu lastActivityMs=%lu", (int)_serialWasEmpty, (unsigned long)_serialEmptySinceUs, (unsigned long)_lastByteTime, (unsigned long)_lastActivityTime);
+    LOG_D("  Loop dbg: rxDrained=%u gapUs=%u queueSize=%u serialAvail=%u", (unsigned)_dbgRxBytesDrainedInLoop, (unsigned)_dbgGapUsInLoop, (unsigned)_dbgQueueSizeInLoop, (unsigned)_dbgSerialAvailableInLoop);
+    LOG_D("  Gap/scheduler: sentDuringGap=%d lastTxWireMs=%u lastTxElapsedMs=%u hasLastCompletedTx=%d lastCompletedTxKey=%llu", (int)_sentDuringGapWindow, (unsigned)_lastTxWireMs, (unsigned)_lastTxElapsedMs, (int)_hasLastCompletedTx, (unsigned long long)_lastCompletedTxKey);
+    LOG_D("  Request params: unit=%u fc=0x%02X start=%u qty=%u retries=%u", (unsigned)_currentRequest.unitId, (unsigned)_currentRequest.functionCode, (unsigned)_currentRequest.startRegister, (unsigned)_currentRequest.quantity, (unsigned)_currentRequest.retries);
+
+    if (_sentDuringGapWindow) {
+        _gapPredictor.reportCollision(_sentDuringGapWindow, _lastTxElapsedMs, _lastTxWireMs,
+                                      _hasLastCompletedTx, _lastCompletedTxKey);
+        _sentDuringGapWindow = false;
+    }
+
+    if (_currentRequest.retries == 0) {
+        LOG_I("Modbus timeout: re-queuing request (unit %d FC 0x%02X retry 1/1)",
+              _currentRequest.unitId, _currentRequest.functionCode);
+        _currentRequest.retries = 1;
+        _requestQueue.insert(_requestQueue.begin(), _currentRequest);
+        _waitingForResponse = false;
+        _hasPendingRequest = false;
+        endActiveTime();
+        return;
+    }
+
+    _stats.ownRequestsFailed++;
+    _intervalStats.ownFailed++;
+
+    const uint8_t unitId = _currentRequest.unitId;
+    TimeoutBackoffState& st = _backoffByUnit[unitId];
+    st.consecutiveTimeouts++;
+    if (st.consecutiveTimeouts >= 3) {
+        st.pausedUntilMs = (uint32_t)nowMs + st.backoffMs;
+        if (st.consecutiveTimeouts == 3) {
+            LOG_W("Modbus: 3 consecutive timeouts for unit %u, pausing sends for %ums", unitId, st.backoffMs);
+        }
+        if (st.backoffMs < 60000) {
+            st.backoffMs = std::min<uint32_t>(st.backoffMs * 2, 60000);
+        }
+    }
+
+    std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
+    if (_currentRequest.callback) callbackCopy = _currentRequest.callback;
+
+    _waitingForResponse = false;
+    _hasPendingRequest = false;
+    endActiveTime();
+
+    if (callbackCopy) {
+        ModbusFrame emptyFrame;
+        emptyFrame.isValid = false;
+        emptyFrame.isException = false;
+        try { callbackCopy(false, emptyFrame); } catch (...) { LOG_E("Exception in Modbus timeout callback"); }
+    }
+
+    if (_requestQueue.size() > _maxQueueSize / 2) {
+        const size_t before = _requestQueue.size();
+        _requestQueue.erase(
+            std::remove_if(_requestQueue.begin(), _requestQueue.end(),
+                           [unitId](const ModbusPendingRequest& r) { return r.unitId == unitId; }),
+            _requestQueue.end());
+        const size_t after = _requestQueue.size();
+        if (after != before) {
+            LOG_W("Modbus queue building up (%u items). Dropped %u requests for unit %u",
+                  before, (unsigned)(before - after), unitId);
+        }
+    }
 }
 
 void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isRequest, size_t frameLen) {
@@ -1323,7 +1354,10 @@ bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFram
 
 void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response) {
     ModbusRegisterMap& regMap = ensureRegisterMap(response.unitId, response.functionCode);
+    unsigned long uStart = micros();
     ModbusRTUHelper::updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
+    uint32_t uUs = (uint32_t)(micros() - uStart);
+    _lastLoopTiming.updateMapUs += uUs;
 }
 
 /**
@@ -1587,6 +1621,7 @@ bool ModbusRTUFeature::sendRequest(const ModbusPendingRequest& request) {
 }
 
 bool ModbusRTUFeature::sendFrameFromBuffer() {
+    unsigned long txStartUs = micros();
     // Last-moment safety check: if bytes are already pending in the UART RX
     // buffer, a foreign frame is arriving (or just arrived).  Abort TX to
     // avoid colliding on the bus.
@@ -1613,6 +1648,10 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
     delayMicroseconds(100);
     
     setDE(false);  // Back to receive mode
+
+    uint32_t txUs = (uint32_t)(micros() - txStartUs);
+    _lastLoopTiming.txUs = txUs;
+    if (txUs > 0) CpuMonitor::recordFeatureDuration("ModbusTX", txUs);
 
     // Back to receive mode and give transceiver time to settle
     // Mark end-of-TX as last bus activity for accurate silence detection.

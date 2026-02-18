@@ -74,5 +74,12 @@ namespace CpuMonitor {
      * @param durUs  Duration in microseconds
      */
     void recordFeatureDuration(const char* name, uint32_t durUs);
+
+    /**
+     * @brief Retrieve aggregated stats (min/avg/max) for a named feature from the
+     *        last completed window.
+     * @return true if stats were found, false otherwise
+     */
+    bool getLastFeatureStats(const char* name, uint32_t& outMinUs, uint32_t& outAvgUs, uint32_t& outMaxUs);
 }
 

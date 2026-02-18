@@ -136,12 +136,37 @@ namespace CpuMonitor {
                           (unsigned)ESP.getFreeHeap());
 
                     // Log per-feature min/avg/max for last window
+                    const char* subNames[] = {"ModbusRX", "ModbusParse", "ModbusQueue", "ModbusScan", "ModbusWait", "ModbusParseUnit", "ModbusUpdateMap", "ModbusTX"};
                     for (size_t i = 0; i < s_lastStatCount && i < MAX_FEATURE_STATS; ++i) {
                         const FeatureStat& st = s_lastStats[i];
                         if (!st.name || st.count == 0) continue;
+
+                        // Skip printing sub-components at top-level; they'll be shown indented under ModbusRTU
+                        bool isSub = false;
+                        for (const char* sub : subNames) {
+                            if (strcmp(st.name, sub) == 0) { isSub = true; break; }
+                        }
+                        if (isSub) continue;
+
                         uint32_t avg = (uint32_t)(st.sumUs / st.count);
                         LOG_I(" Feature %-12s min=%3uus avg=%3uus max=%3uus",
                               st.name, st.minUs, avg, st.maxUs);
+
+                        // If this is the ModbusRTU feature, also print sub-component timings
+                        if (strcmp(st.name, "ModbusRTU") == 0) {
+                            for (const char* sub : subNames) {
+                                for (size_t j = 0; j < s_lastStatCount && j < MAX_FEATURE_STATS; ++j) {
+                                    const FeatureStat& subSt = s_lastStats[j];
+                                    if (!subSt.name || subSt.count == 0) continue;
+                                    if (strcmp(subSt.name, sub) == 0) {
+                                        uint32_t subAvg = (uint32_t)(subSt.sumUs / subSt.count);
+                                        LOG_I("         %-12s min=%3uus avg=%3uus max=%3uus",
+                                              sub, subSt.minUs, subAvg, subSt.maxUs);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -227,5 +252,20 @@ namespace CpuMonitor {
     void setLogInterval(uint32_t intervalMs) {
         s_logIntervalMs = intervalMs;
         s_lastLogMs = (uint32_t)millis();
+    }
+
+    bool getLastFeatureStats(const char* name, uint32_t& outMinUs, uint32_t& outAvgUs, uint32_t& outMaxUs) {
+        if (!name) return false;
+        for (size_t i = 0; i < s_lastStatCount && i < MAX_FEATURE_STATS; ++i) {
+            const FeatureStat& st = s_lastStats[i];
+            if (!st.name) continue;
+            if (strcmp(st.name, name) == 0 && st.count > 0) {
+                outMinUs = st.minUs;
+                outAvgUs = (uint32_t)(st.sumUs / st.count);
+                outMaxUs = st.maxUs;
+                return true;
+            }
+        }
+        return false;
     }
 }

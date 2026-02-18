@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdarg>
 #include "TimeUtils.h"
+#include "CpuMonitor.h"
 
 /**
  * @brief Web interface for Modbus devices
@@ -476,6 +477,31 @@ public:
                 debug["dbgGapUsInLoop"] = modbus.getDbgGapUsInLoop();
                 debug["dbgGapEnoughForTxInLoop"] = modbus.getDbgGapEnoughForTxInLoop();
                 debug["dbgLastLoopSnapshotMs"] = (uint32_t)modbus.getDbgLastLoopSnapshotMs();
+
+                // Loop timing diagnostics (microseconds)
+                auto lt = modbus.getLastLoopTiming();
+                JsonObject ltObj = debug["loopTiming"].to<JsonObject>();
+                ltObj["rxReadUs"] = lt.rxReadUs;
+                ltObj["rxProcessUs"] = lt.rxProcessUs;
+                ltObj["queueProcessUs"] = lt.queueProcessUs;
+                ltObj["loopUs"] = lt.loopUs;
+                ltObj["maxLoopUs"] = lt.maxLoopUs;
+
+                // Include last-window min/avg/max from CpuMonitor for sub-steps
+                JsonObject statsObj = ltObj["stats"].to<JsonObject>();
+                uint32_t mn, av, mx;
+                if (CpuMonitor::getLastFeatureStats("ModbusRX", mn, av, mx)) {
+                    JsonObject e = statsObj["ModbusRX"].to<JsonObject>();
+                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx;
+                }
+                if (CpuMonitor::getLastFeatureStats("ModbusParse", mn, av, mx)) {
+                    JsonObject e = statsObj["ModbusParse"].to<JsonObject>();
+                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx;
+                }
+                if (CpuMonitor::getLastFeatureStats("ModbusQueue", mn, av, mx)) {
+                    JsonObject e = statsObj["ModbusQueue"].to<JsonObject>();
+                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx;
+                }
 
                 JsonObject updated = doc["updated"].to<JsonObject>();
                 updated["uptimeMs"] = (uint32_t)millis();
