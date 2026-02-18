@@ -489,18 +489,18 @@ public:
 
                 // Include last-window min/avg/max from CpuMonitor for sub-steps
                 JsonObject statsObj = ltObj["stats"].to<JsonObject>();
-                uint32_t mn, av, mx;
-                if (CpuMonitor::getLastFeatureStats("ModbusRX", mn, av, mx)) {
+                uint32_t mn, av, mx, cnt;
+                if (CpuMonitor::getLastFeatureStats("ModbusRX", mn, av, mx, cnt)) {
                     JsonObject e = statsObj["ModbusRX"].to<JsonObject>();
-                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx;
+                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx; e["count"] = cnt;
                 }
-                if (CpuMonitor::getLastFeatureStats("ModbusParse", mn, av, mx)) {
+                if (CpuMonitor::getLastFeatureStats("ModbusParse", mn, av, mx, cnt)) {
                     JsonObject e = statsObj["ModbusParse"].to<JsonObject>();
-                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx;
+                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx; e["count"] = cnt;
                 }
-                if (CpuMonitor::getLastFeatureStats("ModbusQueue", mn, av, mx)) {
+                if (CpuMonitor::getLastFeatureStats("ModbusQueue", mn, av, mx, cnt)) {
                     JsonObject e = statsObj["ModbusQueue"].to<JsonObject>();
-                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx;
+                    e["minUs"] = mn; e["avgUs"] = av; e["maxUs"] = mx; e["count"] = cnt;
                 }
 
                 JsonObject updated = doc["updated"].to<JsonObject>();

@@ -80,6 +80,6 @@ namespace CpuMonitor {
      *        last completed window.
      * @return true if stats were found, false otherwise
      */
-    bool getLastFeatureStats(const char* name, uint32_t& outMinUs, uint32_t& outAvgUs, uint32_t& outMaxUs);
+    bool getLastFeatureStats(const char* name, uint32_t& outMinUs, uint32_t& outAvgUs, uint32_t& outMaxUs, uint32_t& outCount);
 }
 

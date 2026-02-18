@@ -755,6 +755,16 @@ private:
         bool hasRequest{false};
         bool hasResponse{false};
         size_t responseLen{0};
+        // Bookkeeping flags/params
+        uint16_t incRegistersRead{0};
+        bool noteGapSuccess{false};
+        bool setStatsEnabled{false};
+        bool reportCollision{false};
+        bool reportCollision_sentDuringGapWindow{false};
+        uint32_t reportCollision_lastTxElapsedMs{0};
+        uint32_t reportCollision_lastTxWireMs{0};
+        bool reportCollision_hasLastCompletedTx{false};
+        uint64_t reportCollision_lastCompletedTxKey{0};
     };
     ParsedWork _parsedQueue[PARSED_QUEUE_SIZE];
     size_t _parsedQueueHead{0};
@@ -762,7 +772,11 @@ private:
     size_t _parsedQueueCount{0};
 
     // Enqueue a register-map update to be processed later. Non-blocking.
-    void scheduleRegisterUpdate(const ModbusFrame& request, const ModbusFrame& response, size_t responseLen=0);
+    void scheduleRegisterUpdate(const ModbusFrame& request, const ModbusFrame& response, size_t responseLen=0,
+                                uint16_t incRegistersRead = 0, bool noteGapSuccess = false);
+
+    // Enqueue an arbitrary parsed work item
+    void scheduleParsedWork(const ParsedWork& work);
 
     // Process up to `maxCount` parsed frames or until `maxUs` microseconds elapsed.
     // Returns number of items processed.

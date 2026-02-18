@@ -149,8 +149,8 @@ namespace CpuMonitor {
                         if (isSub) continue;
 
                         uint32_t avg = (uint32_t)(st.sumUs / st.count);
-                        LOG_I("Mon:  Feature %-12s min=%5uus avg=%5uus max=%5uus",
-                              st.name, st.minUs, avg, st.maxUs);
+                        LOG_I("Mon:  Feature %-12s min=%5uus avg=%5uus max=%5uus cnt=%5u",
+                            st.name, st.minUs, avg, st.maxUs, st.count);
 
                         // If this is the ModbusRTU feature, also print sub-component timings
                         if (strcmp(st.name, "ModbusRTU") == 0) {
@@ -160,8 +160,8 @@ namespace CpuMonitor {
                                     if (!subSt.name || subSt.count == 0) continue;
                                     if (strcmp(subSt.name, sub) == 0) {
                                         uint32_t subAvg = (uint32_t)(subSt.sumUs / subSt.count);
-                                        LOG_I("Mon:      %-16s min=%5uus avg=%5uus max=%5uus",
-                                              sub, subSt.minUs, subAvg, subSt.maxUs);
+                                            LOG_I("Mon:      %-16s min=%5uus avg=%5uus max=%5uus cnt=%5u",
+                                                sub, subSt.minUs, subAvg, subSt.maxUs, subSt.count);
                                         break;
                                     }
                                 }
@@ -254,7 +254,7 @@ namespace CpuMonitor {
         s_lastLogMs = (uint32_t)millis();
     }
 
-    bool getLastFeatureStats(const char* name, uint32_t& outMinUs, uint32_t& outAvgUs, uint32_t& outMaxUs) {
+    bool getLastFeatureStats(const char* name, uint32_t& outMinUs, uint32_t& outAvgUs, uint32_t& outMaxUs, uint32_t& outCount) {
         if (!name) return false;
         for (size_t i = 0; i < s_lastStatCount && i < MAX_FEATURE_STATS; ++i) {
             const FeatureStat& st = s_lastStats[i];
@@ -263,6 +263,7 @@ namespace CpuMonitor {
                 outMinUs = st.minUs;
                 outAvgUs = (uint32_t)(st.sumUs / st.count);
                 outMaxUs = st.maxUs;
+                outCount = st.count;
                 return true;
             }
         }

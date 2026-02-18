@@ -794,10 +794,8 @@ void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameL
     if (!frame.isException) {
         _stats.ownRequestsSuccess++;
         _intervalStats.ownSuccess++;
-        _gapPredictor.stats().registersRead += _currentRequest.quantity;
-        if (_sentDuringGapWindow) {
-                    _gapPredictor.noteGapSuccess();
-        }
+        // Defer stats updates to parsed worker
+        scheduleRegisterUpdate(_lastRequest, frame, 0, (uint16_t)_currentRequest.quantity, _sentDuringGapWindow);
         _sentDuringGapWindow = false;
     } else {
         _stats.ownRequestsFailed++;
@@ -806,6 +804,8 @@ void ModbusRTUFeature::handleOurResponse(const ModbusFrame& frame, size_t frameL
         LOG_W("Modbus exception 0x%02X from unit %d", frame.exceptionCode, frame.unitId);
     }
 
+    // updateRegisterMap enqueues work; ensure bookkeeping above is scheduled
+    // (we already scheduled via scheduleRegisterUpdate when needed)
     updateRegisterMap(_lastRequest, frame);
 
     std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
@@ -844,11 +844,16 @@ void ModbusRTUFeature::handleForeignRequest(const ModbusFrame& frame) {
     }
 
     // Re-enable stats gathering now that we've seen the next foreign request cleanly
-    _gapPredictor.setStatsEnabled(true);
+    {
+        ParsedWork w;
+        w.hasRequest = true;
+        w.request = frame;
+        w.setStatsEnabled = true;
+        scheduleParsedWork(w);
+    }
 
     _lastRequestPerUnit[frame.unitId] = frame;
     _stats.otherRequestsSeen++;
-    recordBusPattern(frame);
     _sawForeignRequest = true;
     _foreignRequestTimeMs = millis();
     _gapWindowActive = false;
@@ -1105,8 +1110,14 @@ void ModbusRTUFeature::handleResponseTimeouts(unsigned long nowUs, unsigned long
     LOG_D("  Request params: unit=%u fc=0x%02X start=%u qty=%u retries=%u", (unsigned)_currentRequest.unitId, (unsigned)_currentRequest.functionCode, (unsigned)_currentRequest.startRegister, (unsigned)_currentRequest.quantity, (unsigned)_currentRequest.retries);
 
     if (_sentDuringGapWindow) {
-        _gapPredictor.reportCollision(_sentDuringGapWindow, _lastTxElapsedMs, _lastTxWireMs,
-                                      _hasLastCompletedTx, _lastCompletedTxKey);
+        ParsedWork w;
+        w.reportCollision = true;
+        w.reportCollision_sentDuringGapWindow = _sentDuringGapWindow;
+        w.reportCollision_lastTxElapsedMs = _lastTxElapsedMs;
+        w.reportCollision_lastTxWireMs = _lastTxWireMs;
+        w.reportCollision_hasLastCompletedTx = _hasLastCompletedTx;
+        w.reportCollision_lastCompletedTxKey = _lastCompletedTxKey;
+        scheduleParsedWork(w);
         _sentDuringGapWindow = false;
     }
 
@@ -1203,10 +1214,8 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
         if (!frame.isException) {
             _stats.ownRequestsSuccess++;
             _intervalStats.ownSuccess++;
-            _gapPredictor.stats().registersRead += _currentRequest.quantity;
-            if (_sentDuringGapWindow) {
-                        _gapPredictor.noteGapSuccess();
-            }
+            // defer bookkeeping to parsed worker
+            scheduleRegisterUpdate(_lastRequest, frame, 0, (uint16_t)_currentRequest.quantity, _sentDuringGapWindow);
             _sentDuringGapWindow = false;
         } else {
             _stats.ownRequestsFailed++;
@@ -1215,7 +1224,8 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
             LOG_W("Modbus exception 0x%02X from unit %d", frame.exceptionCode, frame.unitId);
         }
 
-        updateRegisterMap(_lastRequest, frame);
+        // enqueue map update (no extra flags)
+        scheduleRegisterUpdate(_lastRequest, frame, 0);
 
         std::function<void(bool, const ModbusFrame&)> callbackCopy = nullptr;
         if (_currentRequest.callback) callbackCopy = _currentRequest.callback;
@@ -1382,19 +1392,26 @@ void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const Modbu
     scheduleRegisterUpdate(request, response, 0);
 }
 
-void ModbusRTUFeature::scheduleRegisterUpdate(const ModbusFrame& request, const ModbusFrame& response, size_t responseLen) {
-    if (_parsedQueueCount >= PARSED_QUEUE_SIZE) {
-        // queue full; drop and account for it
-        _stats.crcErrors++; // reuse CRC error counter as a generic error metric
-        LOG_W("Parsed queue full; dropping update for unit %u", response.unitId);
-        return;
-    }
-    ParsedWork& w = _parsedQueue[_parsedQueueTail];
+void ModbusRTUFeature::scheduleRegisterUpdate(const ModbusFrame& request, const ModbusFrame& response, size_t responseLen,
+                                              uint16_t incRegistersRead, bool noteGapSuccess) {
+    ParsedWork w;
     w.request = request;
     w.response = response;
     w.hasRequest = true;
     w.hasResponse = true;
     w.responseLen = responseLen;
+    w.incRegistersRead = incRegistersRead;
+    w.noteGapSuccess = noteGapSuccess;
+    scheduleParsedWork(w);
+}
+
+void ModbusRTUFeature::scheduleParsedWork(const ParsedWork& work) {
+    if (_parsedQueueCount >= PARSED_QUEUE_SIZE) {
+        _stats.crcErrors++; // reuse CRC error counter as a generic error metric
+        LOG_W("Parsed queue full; dropping work item");
+        return;
+    }
+    _parsedQueue[_parsedQueueTail] = work;
     _parsedQueueTail = (_parsedQueueTail + 1) % PARSED_QUEUE_SIZE;
     ++_parsedQueueCount;
 }
@@ -1408,16 +1425,38 @@ size_t ModbusRTUFeature::processParsedFrames(size_t maxCount, uint32_t maxUs) {
         _parsedQueueHead = (_parsedQueueHead + 1) % PARSED_QUEUE_SIZE;
         --_parsedQueueCount;
 
-        unsigned long uStart = micros();
-        ModbusRegisterMap& regMap = ensureRegisterMap(w.response.unitId, w.response.functionCode);
-        ModbusRTUHelper::updateModbusRegisterMap(regMap, w.request, w.response, (uint32_t)millis());
-        uint32_t uUs = (uint32_t)(micros() - uStart);
-        _lastLoopTiming.updateMapUs += uUs;
-        CpuMonitor::recordFeatureDuration("ModbusUpdateMap", uUs);
-        recordDebugSample("ModbusUpdateMap", uUs);
+        // If this work item contains a response, update register map
+        if (w.hasResponse) {
+            unsigned long uStart = micros();
+            ModbusRegisterMap& regMap = ensureRegisterMap(w.response.unitId, w.response.functionCode);
+            ModbusRTUHelper::updateModbusRegisterMap(regMap, w.request, w.response, (uint32_t)millis());
+            uint32_t uUs = (uint32_t)(micros() - uStart);
+            _lastLoopTiming.updateMapUs += uUs;
+            CpuMonitor::recordFeatureDuration("ModbusUpdateMap", uUs);
+            recordDebugSample("ModbusUpdateMap", uUs);
+        }
 
-        // Also record bus pattern / other light-weight post-processing
-        recordBusPattern(w.response);
+        // Record bus pattern for any frame present
+        if (w.hasResponse) recordBusPattern(w.response);
+        if (w.hasRequest) recordBusPattern(w.request);
+
+        // Apply deferred bookkeeping flags
+        if (w.incRegistersRead > 0) {
+            _gapPredictor.stats().registersRead += w.incRegistersRead;
+        }
+        if (w.noteGapSuccess) {
+            _gapPredictor.noteGapSuccess();
+        }
+        if (w.setStatsEnabled) {
+            _gapPredictor.setStatsEnabled(true);
+        }
+        if (w.reportCollision) {
+            _gapPredictor.reportCollision(w.reportCollision_sentDuringGapWindow,
+                                          w.reportCollision_lastTxElapsedMs,
+                                          w.reportCollision_lastTxWireMs,
+                                          w.reportCollision_hasLastCompletedTx,
+                                          w.reportCollision_lastCompletedTxKey);
+        }
 
         processed++;
         if ((uint32_t)(micros() - startUs) >= maxUs) break;
