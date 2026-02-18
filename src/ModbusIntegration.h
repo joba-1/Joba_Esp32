@@ -84,7 +84,7 @@ public:
                                  kv.first.c_str(),
                                  kv.second.value,
                                  baseTopic,
-                                 true /* retain */);
+                                 false /* retain */);
         }
     }
     
@@ -276,7 +276,7 @@ private:
         String payload;
         serializeJson(doc, payload);
         
-        mqtt->publish(discoveryTopic.c_str(), payload.c_str(), true);  // retained
+        mqtt->publish(discoveryTopic.c_str(), payload.c_str(), false);
     }
     
     /**

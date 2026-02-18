@@ -148,7 +148,8 @@ private:
     static void uploadTaskFunc(void* param);
     void resolveAndCacheUrl();      // DNS resolve once at setup
 
-    static constexpr size_t MAX_BUFFER_LINES = 100;  // Cap to prevent heap exhaustion
+    // Lower cap to reduce retained memory for line-protocol during heavy load
+    static constexpr size_t MAX_BUFFER_LINES = 32;  // Cap to prevent heap exhaustion
     static constexpr int    MAX_RETRIES      = 2;    // Retry failed uploads
     static constexpr int    RETRY_DELAY_MS   = 1000; // Delay between retries
 

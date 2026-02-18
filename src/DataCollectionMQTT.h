@@ -127,7 +127,7 @@ public:
             String payload;
             serializeJson(doc, payload);
             
-            mqtt->publish(discoveryTopic.c_str(), payload.c_str(), true);
+            mqtt->publish(discoveryTopic.c_str(), payload.c_str(), false);
             LOG_D("HA discovery: %s", discoveryTopic.c_str());
         }
     }
@@ -206,7 +206,7 @@ public:
             String discoveryTopic = "homeassistant/sensor/" + String(deviceId) + "/" + uniqueId + "/config";
             
             // Publish empty payload to remove
-            mqtt->publish(discoveryTopic.c_str(), "", true);
+            mqtt->publish(discoveryTopic.c_str(), "", false);
         }
     }
 };

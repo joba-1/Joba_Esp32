@@ -748,7 +748,8 @@ private:
 
     // Parsed-frame queue to defer heavy per-frame work (updateRegisterMap, pattern tracking)
     // Keep modest to avoid large static memory usage on embedded target.
-    static constexpr size_t PARSED_QUEUE_SIZE = 16;
+    // Reduced parsed queue to lower peak heap usage under heavy load
+    static constexpr size_t PARSED_QUEUE_SIZE = 8;
     struct ParsedWork {
         ModbusFrame request;
         ModbusFrame response;
