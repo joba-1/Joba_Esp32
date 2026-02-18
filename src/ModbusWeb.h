@@ -137,6 +137,7 @@ public:
                 
                 uint8_t unitId = request->getParam("unit")->value().toInt();
                 WebServerFeature::noteResponse(request);
+                if (!WebServerFeature::ensureHeapForResponse(request)) return;
                 auto* response = request->beginResponseStream("application/json");
                 if (request->hasParam("meta")) {
                     devices.writeDeviceMetaJson(unitId, *response);
@@ -638,6 +639,7 @@ public:
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
                 WebServerFeature::noteResponse(request);
+                if (!WebServerFeature::ensureHeapForResponse(request)) return;
                 AsyncResponseStream* response = request->beginResponseStream("application/json");
                 response->setCode(200);
                 response->print("[");
@@ -740,6 +742,7 @@ public:
                     size_t tempPos = 0;
                 };
 
+                if (!WebServerFeature::ensureHeapForResponse(request)) return;
                 PatternCtx* ctx = new PatternCtx();
                 ctx->maxPatterns = maxPatterns;
                 ctx->patterns = &modbus.getBusPatterns();
@@ -1165,6 +1168,7 @@ public:
                     ? (gs.gapSufficient * 100.0f / (gs.gapSufficient + gs.gapInsufficient)) : 0;
 
                 WebServerFeature::noteResponse(request);
+                if (!WebServerFeature::ensureHeapForResponse(request)) return;
                 auto* response = request->beginResponseStream("application/json");
                 response->print(F("{\"txDecisions\":{"));
                 response->printf("\"inGap\":%u,\"fallback\":%u,\"deferred\":%u,\"total\":%u,\"gapPct\":%.1f",
@@ -1458,6 +1462,7 @@ refresh();startA();
                 if (!server.authenticate(request)) return request->requestAuthentication();
 
                 WebServerFeature::noteResponse(request);
+                if (!WebServerFeature::ensureHeapForResponse(request)) return;
                 AsyncResponseStream* response = request->beginResponseStream("application/json");
                 response->print(F("{\"status\":{"));
                 response->printf("\"silent\":%s,", modbus.isBusSilent() ? "true" : "false");
@@ -2220,6 +2225,7 @@ fetchData();setInterval(fetchData,5000);
                 }
                 
                 WebServerFeature::noteResponse(request);
+                if (!WebServerFeature::ensureHeapForResponse(request)) return;
                 AsyncResponseStream* response = request->beginResponseStream("application/json");
                 serializeJson(doc, *response);
                 request->send(response);

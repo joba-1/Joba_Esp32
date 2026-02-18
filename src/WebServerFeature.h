@@ -80,6 +80,12 @@ public:
      */
     static void noteResponse(AsyncWebServerRequest* request);
 
+    /**
+     * @brief Ensure there's sufficient free heap to start a streamed response.
+     * @return true when it's safe to start the response, false and a 503 sent otherwise.
+     */
+    static bool ensureHeapForResponse(AsyncWebServerRequest* request, size_t minFreeHeap = 20000);
+
 private:
     void setupDefaultRoutes();
     

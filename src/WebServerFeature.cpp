@@ -45,6 +45,19 @@ void WebServerFeature::noteResponse(AsyncWebServerRequest* request) {
     LOG_D("noteResponse: %s", s_lastResponsePath.c_str());
 }
 
+bool WebServerFeature::ensureHeapForResponse(AsyncWebServerRequest* request, size_t minFreeHeap) {
+    (void)minFreeHeap;
+    if (!request) return false;
+    size_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < minFreeHeap) {
+        LOG_W("Low heap (%u bytes) - rejecting response for %s", (unsigned)freeHeap, request->url().c_str());
+        noteResponse(request);
+        request->send(503, "application/json", "{\"error\":\"low_heap\"}");
+        return false;
+    }
+    return true;
+}
+
 /**
  * @file WebServerFeature.cpp
  * @brief Async web server feature and HTTP API handlers.

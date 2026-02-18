@@ -6,6 +6,7 @@
 #include "ModbusDevice.h"
 #include "MQTTFeature.h"
 #include "InfluxDBFeature.h"
+#include <WiFi.h>
 #include "DataCollectionMQTT.h"
 #include "LoggingFeature.h"
 #include "InfluxLineProtocol.h"
@@ -143,10 +144,34 @@ public:
                                  const ModbusDeviceManager& devices,
                                  const char* measurement = "modbus") {
         if (!influx) return;
-        
+        // Avoid queuing when network is unavailable to prevent unbounded
+        // accumulation while offline. Use a soft threshold to stop adding
+        // more lines when the pending buffer is nearly full.
+        if (WiFi.status() != WL_CONNECTED && !influx->isConnected()) {
+            LOG_W("InfluxDB: skipping batch queueing, network unavailable");
+            return;
+        }
+
         auto lines = devices.allToLineProtocol(measurement);
+        const size_t softCap = (InfluxDBFeature::maxBufferLines() * 80) / 100; // 80% of max
+        size_t pending = influx->pendingCount();
         for (const auto& line : lines) {
+            if (pending >= softCap) {
+                // If network looks healthy, try to force an upload to drain the buffer
+                if (WiFi.status() == WL_CONNECTED) {
+                    LOG_I("InfluxDB: soft cap reached (%u), attempting immediate upload", (unsigned)pending);
+                    influx->upload();
+                    // re-evaluate pending after upload handoff
+                    pending = influx->pendingCount();
+                }
+                if (pending >= softCap) {
+                    LOG_W("InfluxDB: soft cap reached (%u), skipping remaining batch lines", (unsigned)pending);
+                    break;
+                }
+            }
+
             influx->queue(line);
+            pending++;
         }
     }
     
@@ -169,7 +194,28 @@ public:
                                       const char* unit,
                                       const char* measurement = "modbus") {
         if (!influx) return;
-        
+
+        // If network to InfluxDB is down, skip queueing to avoid filling buffer
+        if (WiFi.status() != WL_CONNECTED && !influx->isConnected()) {
+            LOG_W("InfluxDB: skipping value queue (network unavailable) %s/%s", deviceName, registerName);
+            return;
+        }
+
+        // Soft cap check
+        const size_t softCap = (InfluxDBFeature::maxBufferLines() * 80) / 100;
+        size_t pending = influx->pendingCount();
+        if (pending >= softCap) {
+            if (WiFi.status() == WL_CONNECTED) {
+                LOG_I("InfluxDB: pendingCount %u >= softCap, attempting immediate upload before dropping", (unsigned)pending);
+                influx->upload();
+                pending = influx->pendingCount();
+            }
+        }
+        if (pending >= softCap) {
+            LOG_W("InfluxDB: pendingCount %u >= softCap, dropping value %s/%s", (unsigned)pending, deviceName, registerName);
+            return;
+        }
+
         // Build line protocol
         String line = InfluxLineProtocol::escapeMeasurement(measurement);
         line += ",device=";
@@ -184,7 +230,7 @@ public:
         }
         line += " value=";
         line += String(value, 4);
-        
+
         influx->queue(line);
     }
     

@@ -76,6 +76,11 @@ public:
      */
     size_t pendingCount() const { return _buffer.size(); }
 
+    /**
+     * @brief Return the compile-time max number of buffered lines
+     */
+    static constexpr size_t maxBufferLines() { return MAX_BUFFER_LINES; }
+
 private:
     // Throttle repeated error logging to avoid spamming the serial console
     // when the InfluxDB server is unreachable or the database/bucket is missing.
@@ -149,7 +154,7 @@ private:
     void resolveAndCacheUrl();      // DNS resolve once at setup
 
     // Lower cap to reduce retained memory for line-protocol during heavy load
-    static constexpr size_t MAX_BUFFER_LINES = 32;  // Cap to prevent heap exhaustion
+    static constexpr size_t MAX_BUFFER_LINES = 64;   // Cap to prevent heap exhaustion
     static constexpr int    MAX_RETRIES      = 2;    // Retry failed uploads
     static constexpr int    RETRY_DELAY_MS   = 1000; // Delay between retries
 
