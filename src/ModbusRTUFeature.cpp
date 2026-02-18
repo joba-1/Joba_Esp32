@@ -269,6 +269,20 @@ ModbusRTUFeature::LoopTiming ModbusRTUFeature::getLastLoopTiming() const {
     return _lastLoopTiming;
 }
 
+void ModbusRTUFeature::recordDebugSample(const char* name, uint32_t durUs) {
+    if (_dbgSampleCount < DBG_MAX_SAMPLES) {
+        _dbgSamples[_dbgSampleCount].name = name;
+        _dbgSamples[_dbgSampleCount].durUs = durUs;
+        ++_dbgSampleCount;
+    } else {
+        // overwrite oldest (simple circular behavior)
+        int idx = _dbgSampleCount % DBG_MAX_SAMPLES;
+        _dbgSamples[idx].name = name;
+        _dbgSamples[idx].durUs = durUs;
+        ++_dbgSampleCount;
+    }
+}
+
 const ModbusRTUFeature::CrcErrorContext* ModbusRTUFeature::getRecentCrcErrorContexts(size_t& outCount) const {
     outCount = CRC_CONTEXT_SIZE;
     return _crcContexts;
@@ -402,6 +416,10 @@ void ModbusRTUFeature::loop() {
     _loopCounter++;
     unsigned long loopStartUs = micros();
 
+    // Start a new debug loop id and clear per-loop samples
+    _dbgLoopId++;
+    _dbgSampleCount = 0;
+
     // reset last-loop timing counters for this iteration
     _lastLoopTiming.rxReadUs = 0;
     _lastLoopTiming.rxProcessUs = 0;
@@ -458,6 +476,7 @@ void ModbusRTUFeature::loop() {
     // record RX read duration
     _lastLoopTiming.rxReadUs = (uint32_t)(micros() - rxReadStartUs);
     CpuMonitor::recordFeatureDuration("ModbusRX", _lastLoopTiming.rxReadUs);
+    recordDebugSample("ModbusRX", _lastLoopTiming.rxReadUs);
 
     _dbgRxBytesDrainedInLoop = (uint16_t)rxBytesThisLoop;
 
@@ -481,7 +500,10 @@ void ModbusRTUFeature::loop() {
         unsigned long rxProcStartUs = micros();
         processReceivedData();
         _lastLoopTiming.rxProcessUs = (uint32_t)(micros() - rxProcStartUs);
-        if (_lastLoopTiming.rxProcessUs > 0) CpuMonitor::recordFeatureDuration("ModbusParse", _lastLoopTiming.rxProcessUs);
+        if (_lastLoopTiming.rxProcessUs > 0) {
+            CpuMonitor::recordFeatureDuration("ModbusParse", _lastLoopTiming.rxProcessUs);
+            recordDebugSample("ModbusParse", _lastLoopTiming.rxProcessUs);
+        }
     } else {
         _lastLoopTiming.rxProcessUs = 0;
     }
@@ -535,7 +557,10 @@ void ModbusRTUFeature::loop() {
             unsigned long qStartUs = micros();
             processQueue(true);  // Bus is silent, allow probing backoff units
             _lastLoopTiming.queueProcessUs = (uint32_t)(micros() - qStartUs);
-            if (_lastLoopTiming.queueProcessUs > 0) CpuMonitor::recordFeatureDuration("ModbusQueue", _lastLoopTiming.queueProcessUs);
+            if (_lastLoopTiming.queueProcessUs > 0) {
+                CpuMonitor::recordFeatureDuration("ModbusQueue", _lastLoopTiming.queueProcessUs);
+                recordDebugSample("ModbusQueue", _lastLoopTiming.queueProcessUs);
+            }
         } else if (!_requestQueue.empty()) {
             // Try to find a quiet window, bounded to keep the firmware responsive.
             static constexpr uint32_t TX_ARBITRATION_WINDOW_US = 8000;
@@ -574,7 +599,10 @@ void ModbusRTUFeature::loop() {
                     unsigned long qStartUs = micros();
                     processQueue(true);  // Bus is silent, allow probing backoff units
                     _lastLoopTiming.queueProcessUs = (uint32_t)(micros() - qStartUs);
-                    if (_lastLoopTiming.queueProcessUs > 0) CpuMonitor::recordFeatureDuration("ModbusQueue", _lastLoopTiming.queueProcessUs);
+                    if (_lastLoopTiming.queueProcessUs > 0) {
+                        CpuMonitor::recordFeatureDuration("ModbusQueue", _lastLoopTiming.queueProcessUs);
+                        recordDebugSample("ModbusQueue", _lastLoopTiming.queueProcessUs);
+                    }
                     break;
                 }
 
@@ -596,6 +624,31 @@ void ModbusRTUFeature::loop() {
         uint32_t loopUs = (uint32_t)(loopEndUs - loopStartUs);
         _lastLoopTiming.loopUs = loopUs;
         if (loopUs > _lastLoopTiming.maxLoopUs) _lastLoopTiming.maxLoopUs = loopUs;
+    }
+
+    // Process a few deferred parsed frames to spread heavy work across loops
+    // Keep budget small to avoid reintroducing large spikes.
+    (void)processParsedFrames(4, 2000);
+
+    // Correlation check: ensure no single recorded subfeature exceeds this loop's total
+    // Add small slack for measurement jitter.
+    {
+        const uint32_t slackUs = 50;
+        uint32_t loopUs = _lastLoopTiming.loopUs;
+        int count = (_dbgSampleCount < DBG_MAX_SAMPLES) ? _dbgSampleCount : DBG_MAX_SAMPLES;
+        for (int si = 0; si < count; ++si) {
+            const LoopSample& s = _dbgSamples[si];
+            if (s.durUs > loopUs + slackUs) {
+                LOG_W("Modbus loop-correlation anomaly: loopId=%u loopUs=%u sub=%s dur=%u (slack=%u)",
+                      (unsigned)_dbgLoopId, (unsigned)loopUs, s.name ? s.name : "<null>", (unsigned)s.durUs, (unsigned)slackUs);
+                // Also dump all samples for this loop at verbose level for further inspection
+                for (int sj = 0; sj < count; ++sj) {
+                    const LoopSample& ss = _dbgSamples[sj];
+                    LOG_D("  sample[%d]=%s %uus", sj, ss.name ? ss.name : "<null>", (unsigned)ss.durUs);
+                }
+                break; // one report is enough per loop
+            }
+        }
     }
 }
 
@@ -657,10 +710,16 @@ size_t ModbusRTUFeature::extractFramesFromRxBuffer() {
     unsigned long scanStartUs = micros();
     size_t consumed = scanAndAdvanceIndex();
     _lastLoopTiming.scanUs = (uint32_t)(micros() - scanStartUs);
-    if (_lastLoopTiming.scanUs > 0) CpuMonitor::recordFeatureDuration("ModbusScan", _lastLoopTiming.scanUs);
-    if (_lastLoopTiming.scanWaitUs > 0) CpuMonitor::recordFeatureDuration("ModbusWait", _lastLoopTiming.scanWaitUs);
-    if (_lastLoopTiming.parseUnitUs > 0) CpuMonitor::recordFeatureDuration("ModbusParseUnit", _lastLoopTiming.parseUnitUs);
-    if (_lastLoopTiming.updateMapUs > 0) CpuMonitor::recordFeatureDuration("ModbusUpdateMap", _lastLoopTiming.updateMapUs);
+    if (_lastLoopTiming.scanUs > 0) {
+        CpuMonitor::recordFeatureDuration("ModbusScan", _lastLoopTiming.scanUs);
+        recordDebugSample("ModbusScan", _lastLoopTiming.scanUs);
+    }
+    if (_lastLoopTiming.scanWaitUs > 0) {
+        CpuMonitor::recordFeatureDuration("ModbusWait", _lastLoopTiming.scanWaitUs);
+        recordDebugSample("ModbusWait", _lastLoopTiming.scanWaitUs);
+    }
+    // per-frame parse/update durations are recorded individually in
+    // parseFrameAndComputeMetadata() and updateRegisterMap()
 
     if ((i < _rxBuffer.size()) || (sawNoise && extractedCount == 0)) {
         _stats.crcErrors++;
@@ -693,6 +752,9 @@ void ModbusRTUFeature::parseFrameAndComputeMetadata(size_t offset, size_t frameL
     parseFrame(_rxBuffer.data() + offset, frameLen, frame);
     uint32_t pUs = (uint32_t)(micros() - pStart);
     _lastLoopTiming.parseUnitUs += pUs;
+    // record per-frame parse duration so CpuMonitor tracks min/avg/max per-sample
+    CpuMonitor::recordFeatureDuration("ModbusParseUnit", pUs);
+    recordDebugSample("ModbusParseUnit", pUs);
     frame.timestamp = approxStartMs;
     frame.unixTimestamp = TimeUtils::nowUnixSecondsOrZero();
     frame.isRequest = isRequest;
@@ -1316,11 +1378,51 @@ bool ModbusRTUFeature::parseFrame(const uint8_t* data, size_t length, ModbusFram
 }
 
 void ModbusRTUFeature::updateRegisterMap(const ModbusFrame& request, const ModbusFrame& response) {
-    ModbusRegisterMap& regMap = ensureRegisterMap(response.unitId, response.functionCode);
-    unsigned long uStart = micros();
-    ModbusRTUHelper::updateModbusRegisterMap(regMap, request, response, (uint32_t)millis());
-    uint32_t uUs = (uint32_t)(micros() - uStart);
-    _lastLoopTiming.updateMapUs += uUs;
+    // Defer heavy update work: enqueue a parsed-pair for later processing.
+    scheduleRegisterUpdate(request, response, 0);
+}
+
+void ModbusRTUFeature::scheduleRegisterUpdate(const ModbusFrame& request, const ModbusFrame& response, size_t responseLen) {
+    if (_parsedQueueCount >= PARSED_QUEUE_SIZE) {
+        // queue full; drop and account for it
+        _stats.crcErrors++; // reuse CRC error counter as a generic error metric
+        LOG_W("Parsed queue full; dropping update for unit %u", response.unitId);
+        return;
+    }
+    ParsedWork& w = _parsedQueue[_parsedQueueTail];
+    w.request = request;
+    w.response = response;
+    w.hasRequest = true;
+    w.hasResponse = true;
+    w.responseLen = responseLen;
+    _parsedQueueTail = (_parsedQueueTail + 1) % PARSED_QUEUE_SIZE;
+    ++_parsedQueueCount;
+}
+
+size_t ModbusRTUFeature::processParsedFrames(size_t maxCount, uint32_t maxUs) {
+    if (_parsedQueueCount == 0) return 0;
+    unsigned long startUs = micros();
+    size_t processed = 0;
+    while (processed < maxCount && _parsedQueueCount > 0) {
+        ParsedWork w = _parsedQueue[_parsedQueueHead];
+        _parsedQueueHead = (_parsedQueueHead + 1) % PARSED_QUEUE_SIZE;
+        --_parsedQueueCount;
+
+        unsigned long uStart = micros();
+        ModbusRegisterMap& regMap = ensureRegisterMap(w.response.unitId, w.response.functionCode);
+        ModbusRTUHelper::updateModbusRegisterMap(regMap, w.request, w.response, (uint32_t)millis());
+        uint32_t uUs = (uint32_t)(micros() - uStart);
+        _lastLoopTiming.updateMapUs += uUs;
+        CpuMonitor::recordFeatureDuration("ModbusUpdateMap", uUs);
+        recordDebugSample("ModbusUpdateMap", uUs);
+
+        // Also record bus pattern / other light-weight post-processing
+        recordBusPattern(w.response);
+
+        processed++;
+        if ((uint32_t)(micros() - startUs) >= maxUs) break;
+    }
+    return processed;
 }
 
 /**
@@ -1614,7 +1716,10 @@ bool ModbusRTUFeature::sendFrameFromBuffer() {
 
     uint32_t txUs = (uint32_t)(micros() - txStartUs);
     _lastLoopTiming.txUs = txUs;
-    if (txUs > 0) CpuMonitor::recordFeatureDuration("ModbusTX", txUs);
+    if (txUs > 0) {
+        CpuMonitor::recordFeatureDuration("ModbusTX", txUs);
+        recordDebugSample("ModbusTX", txUs);
+    }
 
     // Back to receive mode and give transceiver time to settle
     // Mark end-of-TX as last bus activity for accurate silence detection.

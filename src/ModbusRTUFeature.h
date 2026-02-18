@@ -735,6 +735,38 @@ private:
 
     // Last observed loop timing metrics
     LoopTiming _lastLoopTiming;
+
+    // Per-loop debug samples for correlation checks (avoid heap)
+    static constexpr int DBG_MAX_SAMPLES = 16;
+    struct LoopSample { const char* name; uint32_t durUs; };
+    LoopSample _dbgSamples[DBG_MAX_SAMPLES];
+    int _dbgSampleCount{0};
+    uint32_t _dbgLoopId{0};
+
+    // Record a per-loop subfeature sample (used to correlate with parent loop)
+    void recordDebugSample(const char* name, uint32_t durUs);
+
+    // Parsed-frame queue to defer heavy per-frame work (updateRegisterMap, pattern tracking)
+    // Keep modest to avoid large static memory usage on embedded target.
+    static constexpr size_t PARSED_QUEUE_SIZE = 16;
+    struct ParsedWork {
+        ModbusFrame request;
+        ModbusFrame response;
+        bool hasRequest{false};
+        bool hasResponse{false};
+        size_t responseLen{0};
+    };
+    ParsedWork _parsedQueue[PARSED_QUEUE_SIZE];
+    size_t _parsedQueueHead{0};
+    size_t _parsedQueueTail{0};
+    size_t _parsedQueueCount{0};
+
+    // Enqueue a register-map update to be processed later. Non-blocking.
+    void scheduleRegisterUpdate(const ModbusFrame& request, const ModbusFrame& response, size_t responseLen=0);
+
+    // Process up to `maxCount` parsed frames or until `maxUs` microseconds elapsed.
+    // Returns number of items processed.
+    size_t processParsedFrames(size_t maxCount = 4, uint32_t maxUs = 2000);
     
     // Configurable warning thresholds (set via build flags with defaults)
 #ifndef MODBUS_STATS_INTERVAL_MS
