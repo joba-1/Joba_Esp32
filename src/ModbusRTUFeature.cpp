@@ -843,7 +843,10 @@ void ModbusRTUFeature::handleForeignRequest(const ModbusFrame& frame) {
         }
     }
 
-    // Re-enable stats gathering now that we've seen the next foreign request cleanly
+    // Re-enable stats gathering immediately so transitions are captured
+    // even if the parsed work queue is full. Also enqueue a parsed work
+    // item for heavier bookkeeping to avoid doing that in the RX path.
+    _gapPredictor.setStatsEnabled(true);
     {
         ParsedWork w;
         w.hasRequest = true;
@@ -898,9 +901,13 @@ void ModbusRTUFeature::handleForeignResponse(const ModbusFrame& frame, size_t fr
     if (reqIt != _lastRequestPerUnit.end()) {
         const ModbusFrame& req = reqIt->second;
         if (req.isValid && ((req.functionCode & 0x7F) == (frame.functionCode & 0x7F)) && req.dataLen == 4) {
-            if ((frame.timestamp - req.timestamp) < 2000) {
-                updateRegisterMap(req, frame);
-                updated = true;
+                if ((frame.timestamp - req.timestamp) < 2000) {
+                    // Ensure stats are enabled so that the subsequent observed
+                    // successor (the next request) will be recorded against
+                    // this completed transaction.
+                    _gapPredictor.setStatsEnabled(true);
+                    updateRegisterMap(req, frame);
+                    updated = true;
                 uint32_t respEndMs = frame.timestamp + (uint32_t)((uint64_t)frameLen * _charTimeUs / 1000ULL);
                 uint32_t rtt = (uint32_t)(respEndMs - req.timestamp);
                 _busTransactionStats.record(rtt);
@@ -1069,7 +1076,7 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
             }
             // Notify listeners unless we've explicitly suppressed callbacks for this frame
             if (!skipFrameCallback && _frameCallback) _frameCallback(frame, isRequest);
-            i += frameLen; extractedCount++; continue;
+            i += frameLen; extracterecordTransitiondCount++; continue;
         }
 
         if (frame.isRequest) {
@@ -1109,7 +1116,7 @@ void ModbusRTUFeature::handleResponseTimeouts(unsigned long nowUs, unsigned long
     LOG_D("  Gap/scheduler: sentDuringGap=%d lastTxWireMs=%u lastTxElapsedMs=%u hasLastCompletedTx=%d lastCompletedTxKey=%llu", (int)_sentDuringGapWindow, (unsigned)_lastTxWireMs, (unsigned)_lastTxElapsedMs, (int)_hasLastCompletedTx, (unsigned long long)_lastCompletedTxKey);
     LOG_D("  Request params: unit=%u fc=0x%02X start=%u qty=%u retries=%u", (unsigned)_currentRequest.unitId, (unsigned)_currentRequest.functionCode, (unsigned)_currentRequest.startRegister, (unsigned)_currentRequest.quantity, (unsigned)_currentRequest.retries);
 
-    if (_sentDuringGapWindow) {
+    if (_sentDuringGapWindow) {recordTransition
         ParsedWork w;
         w.reportCollision = true;
         w.reportCollision_sentDuringGapWindow = _sentDuringGapWindow;
@@ -1282,6 +1289,10 @@ void ModbusRTUFeature::handleParsedFrame(const ModbusFrame& frame, bool isReques
 
         _lastRequestPerUnit[frame.unitId] = frame;
         _stats.otherRequestsSeen++;
+        // Re-enable GapPredictor stats before recording this observed foreign
+        // request so the successor transition can be captured even if stats
+        // were disabled during our own TX.
+        _gapPredictor.setStatsEnabled(true);
         recordBusPattern(frame);
         _sawForeignRequest = true;
         _foreignRequestTimeMs = millis();
@@ -1436,11 +1447,11 @@ size_t ModbusRTUFeature::processParsedFrames(size_t maxCount, uint32_t maxUs) {
             recordDebugSample("ModbusUpdateMap", uUs);
         }
 
-        // Record bus pattern for any frame present
-        if (w.hasResponse) recordBusPattern(w.response);
-        if (w.hasRequest) recordBusPattern(w.request);
-
-        // Apply deferred bookkeeping flags
+        // Apply deferred bookkeeping flags BEFORE recording bus patterns.
+        // Re-enabling stats early ensures the `GapPredictor` can capture the
+        // successor transition for this foreign transaction instead of
+        // skipping it due to `_statsEnabled == false` (which was set during
+        // our own TX to avoid polluting learned data).
         if (w.incRegistersRead > 0) {
             _gapPredictor.stats().registersRead += w.incRegistersRead;
         }
@@ -1457,6 +1468,10 @@ size_t ModbusRTUFeature::processParsedFrames(size_t maxCount, uint32_t maxUs) {
                                           w.reportCollision_hasLastCompletedTx,
                                           w.reportCollision_lastCompletedTxKey);
         }
+
+        // Record bus pattern for any frame present (after stats re-enabled)
+        if (w.hasResponse) recordBusPattern(w.response);
+        if (w.hasRequest) recordBusPattern(w.request);
 
         processed++;
         if ((uint32_t)(micros() - startUs) >= maxUs) break;
@@ -2188,7 +2203,13 @@ void ModbusRTUFeature::recordBusPattern(const ModbusFrame& frame) {
 
     auto res = _patternTracker.recordFrame(frame, minInterframeMs,
                                            _hasLastCompletedTx, _lastCompletedTxKey, _lastTransactionEndMs);
-    if (res.hasTransition) {
+    // If the BusPatternTracker has a transition callback installed it will
+    // forward transitions to `GapPredictor`. In some runtime paths the
+    // callback may not be set yet (early initialization or alternate code
+    // paths) — in that case forward the discovered transition here. This
+    // avoids losing samples while preventing duplicate recordings when the
+    // callback is present.
+    if (res.hasTransition && !_patternTracker.hasTransitionCallback()) {
         _gapPredictor.recordTransition(res.predecessorKey, res.successorKey, res.gapMs);
     }
 }

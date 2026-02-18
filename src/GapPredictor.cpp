@@ -84,6 +84,13 @@ void GapPredictor::recordTransition(uint64_t predecessorKey, uint64_t successorK
         }
         if (gapMs < _globalMinGapMs) _globalMinGapMs = gapMs;
     }
+
+    // Log unusually large observed gaps for diagnostics (e.g., >10 seconds)
+    static constexpr uint32_t LOG_LARGE_GAP_MS = 10000;
+    if (gapMs >= LOG_LARGE_GAP_MS) {
+        LOG_I("GapPredictor: observed large gap %ums predKey=%llu succKey=%llu samplesEnabled=%d",
+              (unsigned)gapMs, (unsigned long long)predecessorKey, (unsigned long long)successorKey, _statsEnabled ? 1 : 0);
+    }
 }
 
 /**
@@ -186,6 +193,12 @@ GapPrediction GapPredictor::predictCurrentGap(uint64_t predecessorKey) const {
     result.minObservedMs = hardMinObserved;
     result.sampleCount = totalSamples;
     xSemaphoreGive(_mutex);
+    // Log unexpectedly large predictions to aid in debugging remote reports
+    static constexpr uint32_t LOG_LARGE_PRED_MS = 60000; // 1 minute
+    if (result.valid && result.predictedGapMs >= LOG_LARGE_PRED_MS) {
+        LOG_W("GapPredictor: large prediction %ums (samples=%u bestCount=%u minObs=%u safety=%.2f) predKey=%llu",
+              (unsigned)result.predictedGapMs, (unsigned)result.sampleCount, (unsigned)bestCount, (unsigned)result.minObservedMs, _stats.safetyMargin, (unsigned long long)predecessorKey);
+    }
     return result;
 }
 

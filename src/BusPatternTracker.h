@@ -175,6 +175,9 @@ public:
      */
     void setTransitionCallback(TransitionCallback cb) { _transitionCb = cb; }
 
+    // Return true when a transition callback is installed.
+    bool hasTransitionCallback() const { return (bool)_transitionCb; }
+
     const BusPatternMap& getBusPatterns() const { return _busPatterns; }
     const std::vector<BusCycleEntry>& getDetectedCycle() const { return _detectedCycle; }
     const std::vector<CycleStepStats>& getCycleStepGaps() const { return _cycleStepGaps; }
