@@ -1076,7 +1076,7 @@ size_t ModbusRTUFeature::scanAndAdvanceIndex() {
             }
             // Notify listeners unless we've explicitly suppressed callbacks for this frame
             if (!skipFrameCallback && _frameCallback) _frameCallback(frame, isRequest);
-            i += frameLen; extracterecordTransitiondCount++; continue;
+            i += frameLen; extractedCount++; continue;
         }
 
         if (frame.isRequest) {
@@ -1116,7 +1116,7 @@ void ModbusRTUFeature::handleResponseTimeouts(unsigned long nowUs, unsigned long
     LOG_D("  Gap/scheduler: sentDuringGap=%d lastTxWireMs=%u lastTxElapsedMs=%u hasLastCompletedTx=%d lastCompletedTxKey=%llu", (int)_sentDuringGapWindow, (unsigned)_lastTxWireMs, (unsigned)_lastTxElapsedMs, (int)_hasLastCompletedTx, (unsigned long long)_lastCompletedTxKey);
     LOG_D("  Request params: unit=%u fc=0x%02X start=%u qty=%u retries=%u", (unsigned)_currentRequest.unitId, (unsigned)_currentRequest.functionCode, (unsigned)_currentRequest.startRegister, (unsigned)_currentRequest.quantity, (unsigned)_currentRequest.retries);
 
-    if (_sentDuringGapWindow) {recordTransition
+    if (_sentDuringGapWindow) {
         ParsedWork w;
         w.reportCollision = true;
         w.reportCollision_sentDuringGapWindow = _sentDuringGapWindow;
